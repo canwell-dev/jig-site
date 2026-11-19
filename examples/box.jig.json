@@ -1,11 +1,11 @@
 {
   "jig": "0.1",
-  "//": "A crate: one parameter drives all three sides.",
-  "params": {
-    "size": { "default": 0.6, "min": 0.2, "max": 2 }
-  },
-  "box": {
-    "size": ["size", "size * 0.75", "size"],
-    "color": "#b07a45"
-  }
+  "//": "Two crates: one parameter drives all sides; the second is turned 45 degrees.",
+  "params": { "size": { "default": 0.6, "min": 0.2, "max": 2 } },
+  "vars": { "gap": "size * 0.6" },
+  "meshes": [ { "box": { "size": ["size", "size * 0.75", "size"] } } ],
+  "nodes": [
+    { "mesh": 0, "translation": ["-gap", 0, 0] },
+    { "mesh": 0, "translation": ["gap", 0, 0], "rotation": [0, 0.3827, 0, 0.9239] }
+  ]
 }

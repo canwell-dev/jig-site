@@ -11,8 +11,21 @@
   body { margin: 0; height: 100vh; display: grid; grid-template-columns: minmax(320px, 40%) 1fr; background: var(--bg); color: var(--fg); font: 14px system-ui, sans-serif; }
   #side { display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--panel); min-height: 0; }
   textarea { flex: 1; resize: none; border: 0; padding: 12px; background: transparent; color: inherit; font: 13px/1.5 ui-monospace, monospace; outline: none; }
-  #params { padding: 12px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
-  #params label { display: grid; grid-template-columns: 7em 1fr 4em; gap: 8px; align-items: center; }
+  #defs { padding: 10px 12px; border-bottom: 1px solid var(--line); overflow: auto; max-height: 45%; display: grid; gap: 6px; }
+  #defs h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; margin: 6px 0 0; opacity: .7; }
+  #defs .row { display: grid; gap: 4px; align-items: center; }
+  #defs .param { grid-template-columns: 1.4fr 1fr 1fr 1fr 2em; }
+  #defs .var { grid-template-columns: 1.4fr 3fr 4em 2em; }
+  #defs .head { font-size: 11px; opacity: .6; }
+  #defs input { min-width: 0; padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: inherit; font: 13px ui-monospace, monospace; }
+  #defs output { font: 12px ui-monospace, monospace; opacity: .7; text-align: right; }
+  #defs button { padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: inherit; cursor: pointer; font: inherit; }
+  #defs .add { justify-self: start; }
+  #defs[aria-disabled=true] { opacity: .5; pointer-events: none; }
+  #sliders { position: absolute; left: 12px; bottom: 12px; display: grid; gap: 6px; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--line); max-width: calc(100% - 24px); }
+  #sliders:empty { display: none; }
+  #sliders label { display: grid; grid-template-columns: 7em minmax(80px, 220px) 4em; gap: 8px; align-items: center; }
+  #sliders output { font: 12px ui-monospace, monospace; text-align: right; }
   #err { padding: 8px 12px; color: var(--err); font-family: ui-monospace, monospace; min-height: 2.2em; border-top: 1px solid var(--line); }
   #view { position: relative; min-height: 0; }
   canvas { display: block; width: 100%; height: 100%; }
@@ -27,18 +40,18 @@
 </head>
 <body>
 <div id="side">
+  <section id="defs" aria-label="Parameters and variables"></section>
   <textarea id="src" spellcheck="false" aria-label="JIG document"></textarea>
-  <div id="params"></div>
   <div id="err" role="status"></div>
 </div>
-<div id="view"></div>
+<div id="view"><div id="sliders" aria-label="Parameter values"></div></div>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { read } from './jig.js';
 
-const src = document.getElementById('src'), paramsEl = document.getElementById('params'), errEl = document.getElementById('err');
-const view = document.getElementById('view');
+const src = document.getElementById('src'), defsEl = document.getElementById('defs'), errEl = document.getElementById('err');
+const view = document.getElementById('view'), slidersEl = document.getElementById('sliders');
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(devicePixelRatio);
@@ -48,36 +61,134 @@ const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 100);
 camera.position.set(1.6, 1.2, 2);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 0.3, 0);
-scene.add(new THREE.HemisphereLight(0xffffff, 0x666655, 2), new THREE.GridHelper(4, 40, 0x888888, 0x888888));
+const grid = new THREE.GridHelper(4, 40, 0x888888, 0x888888);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x666655, 2), grid);
 const sun = new THREE.DirectionalLight(0xffffff, 1.5); sun.position.set(2, 4, 3); scene.add(sun);
-const mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial());
-scene.add(mesh);
+const model = new THREE.Group(), unitBox = new THREE.BoxGeometry(), material = new THREE.MeshStandardMaterial({ color: 0xcccccc });
+scene.add(model);
 
-const values = {};
-let shownParams = '';
+const values = {}; // slider settings, by parameter name
+let shownParams = '', sliderInputs = {}, varOutputs = {};
 
 function rebuild() {
   let out;
   try { out = read(JSON.parse(src.value), values); errEl.textContent = ''; }
   catch (e) { errEl.textContent = e.message; return; }
-  const [x, y, z] = out.shape.size;
-  mesh.scale.set(x, y, z);
-  mesh.position.y = y / 2; // origin on the floor
-  mesh.material.color.set(out.shape.color);
+  model.replaceChildren(...out.nodes.map((n) => {
+    const m = new THREE.Mesh(unitBox, material);
+    m.scale.fromArray(out.meshes[n.mesh].size);
+    const node = new THREE.Group().add(m);
+    node.position.fromArray(n.translation);
+    node.quaternion.fromArray(n.rotation);
+    node.scale.fromArray(n.scale);
+    return node;
+  }));
+  model.position.y = -out.floor; // stand the model's floor on the grid
   // Rebuild the sliders only when the parameter set changes, so dragging keeps focus.
   const key = JSON.stringify(Object.entries(out.params).map(([k, p]) => [k, p.min, p.max]));
   if (key !== shownParams) { shownParams = key; sliders(out.params); }
+  for (const [name, p] of Object.entries(out.params)) {
+    const s = sliderInputs[name];
+    if (document.activeElement !== s.input) s.input.value = p.value;
+    s.out.value = round(p.value);
+  }
+  for (const [name, v] of Object.entries(out.vars)) if (varOutputs[name]) varOutputs[name].value = round(v);
 }
 
+const round = (v) => String(+v.toFixed(3));
+
 function sliders(params) {
-  paramsEl.replaceChildren(...Object.entries(params).map(([name, p]) => {
-    const label = document.createElement('label');
-    const input = Object.assign(document.createElement('input'), { type: 'range', min: p.min, max: p.max, step: (p.max - p.min) / 200, value: p.value });
-    const out = Object.assign(document.createElement('output'), { value: p.value });
-    input.oninput = () => { values[name] = Number(input.value); out.value = input.value; rebuild(); };
-    label.append(name, input, out);
-    return label;
+  sliderInputs = {};
+  slidersEl.replaceChildren(...Object.entries(params).map(([name, p]) => {
+    const input = el('input', { type: 'range', min: p.min, max: p.max, step: (p.max - p.min) / 200 || 'any', value: p.value });
+    const out = el('output');
+    input.oninput = () => { values[name] = Number(input.value); rebuild(); };
+    sliderInputs[name] = { input, out };
+    return el('label', {}, name, input, out);
   }));
+}
+
+// --- Parameters and variables form: edits the JSON text, which stays the source of truth. ---
+
+function el(tag, props = {}, ...kids) {
+  const e = Object.assign(document.createElement(tag), props);
+  e.append(...kids);
+  return e;
+}
+
+// Apply fn to the parsed document and write it back.
+// shortcut: reformats the whole text (// comment keys survive, hand layout does not); keep layout if that hurts.
+function edit(fn, redraw = false) {
+  let doc;
+  try { doc = JSON.parse(src.value); } catch { return; }
+  fn(doc);
+  src.value = format(doc);
+  if (redraw) form(); else rebuild();
+}
+
+// Pretty JSON: anything that fits in 90 columns goes on one line.
+function format(v, indent = '') {
+  const one = oneLine(v);
+  if (v === null || typeof v !== 'object' || indent.length + one.length <= 90) return one;
+  const inner = indent + '  ';
+  const items = Array.isArray(v)
+    ? v.map((x) => inner + format(x, inner))
+    : Object.entries(v).map(([k, x]) => `${inner}${JSON.stringify(k)}: ${format(x, inner)}`);
+  return Array.isArray(v) ? `[\n${items.join(',\n')}\n${indent}]` : `{\n${items.join(',\n')}\n${indent}}`;
+}
+function oneLine(v) {
+  if (Array.isArray(v)) return `[${v.map(oneLine).join(', ')}]`;
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  const e = Object.entries(v);
+  return e.length ? `{ ${e.map(([k, x]) => `${JSON.stringify(k)}: ${oneLine(x)}`).join(', ')} }` : '{}';
+}
+
+// Rename a key, keeping its place in the object.
+const renamed = (o, from, to) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k === from ? to : k, v]));
+const fresh = (prefix, taken) => { let i = 1; while (taken.has(prefix + i)) i++; return prefix + i; };
+const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+
+function form() {
+  let doc;
+  try { doc = JSON.parse(src.value); } catch { defsEl.setAttribute('aria-disabled', 'true'); rebuild(); return; }
+  defsEl.removeAttribute('aria-disabled');
+  const params = isObj(doc.params) ? doc.params : {}, vars = isObj(doc.vars) ? doc.vars : {};
+  const taken = new Set([...Object.keys(params), ...Object.keys(vars)]);
+  varOutputs = {};
+  const nameIn = (list, key) => el('input', { value: key, ariaLabel: `${key} name`,
+    onchange: (e) => edit((d) => { d[list] = renamed(d[list], key, e.target.value.trim()); }, true) });
+  const numIn = (key, field) => el('input', { type: 'number', step: 'any', value: params[key][field], ariaLabel: `${key} ${field}`,
+    oninput: (e) => { const v = e.target.valueAsNumber; if (Number.isFinite(v)) edit((d) => { d.params[key][field] = v; }); } });
+  const del = (list, key) => el('button', { textContent: '×', title: `Remove ${key}`, ariaLabel: `Remove ${key}`,
+    onclick: () => edit((d) => { delete d[list][key]; if (!Object.keys(d[list]).length) delete d[list]; }, true) });
+  // New lists go right after "jig"/"params" so the JSON reads top-down.
+  const put = (d, list, entry) => {
+    const all = { ...d, [list]: { ...d[list], ...entry } };
+    const order = ['jig', 'params', 'vars'].filter((k) => k in all);
+    for (const k of Object.keys(d)) delete d[k];
+    for (const k of [...order, ...Object.keys(all).filter((k) => !order.includes(k))]) d[k] = all[k];
+  };
+  defsEl.replaceChildren(
+    el('h2', { textContent: 'Parameters' }),
+    el('div', { className: 'row param head' }, el('span', {}, 'name'), el('span', {}, 'default'), el('span', {}, 'min'), el('span', {}, 'max')),
+    ...Object.keys(params).filter((k) => isObj(params[k])).map((k) =>
+      el('div', { className: 'row param' }, nameIn('params', k), numIn(k, 'default'), numIn(k, 'min'), numIn(k, 'max'), del('params', k))),
+    el('button', { className: 'add', textContent: '+ parameter',
+      onclick: () => edit((d) => put(d, 'params', { [fresh('p', taken)]: { default: 1, min: 0, max: 2 } }), true) }),
+    el('h2', { textContent: 'Variables' }),
+    el('div', { className: 'row var head' }, el('span', {}, 'name'), el('span', {}, 'expression'), el('span', {}, 'value')),
+    ...Object.entries(vars).map(([k, v]) => {
+      const out = varOutputs[k] = el('output');
+      const expr = el('input', { value: String(v), ariaLabel: `${k} expression`, oninput: (e) => edit((d) => {
+        const t = e.target.value.trim();
+        d.vars[k] = t !== '' && Number.isFinite(Number(t)) ? Number(t) : t;
+      }) });
+      return el('div', { className: 'row var' }, nameIn('vars', k), expr, out, del('vars', k));
+    }),
+    el('button', { className: 'add', textContent: '+ variable',
+      onclick: () => edit((d) => put(d, 'vars', { [fresh('v', taken)]: 1 }), true) }),
+  );
+  rebuild();
 }
 
 function resize() {
@@ -87,9 +198,9 @@ function resize() {
 new ResizeObserver(resize).observe(view);
 renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
 
-src.addEventListener('input', rebuild);
+src.addEventListener('input', form);
 src.value = await (await fetch('examples/box.jig.json')).text();
-rebuild();
+form();
 </script>
 </body>
 </html>
