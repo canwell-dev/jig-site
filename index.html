@@ -28,7 +28,7 @@
   #sliders output { font: 12px ui-monospace, monospace; text-align: right; }
   #bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); }
   #bar input[type=file] { max-width: 14em; font: inherit; }
-  #bar button { padding: 3px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: inherit; cursor: pointer; font: inherit; }
+  #bar button, #bar select { padding: 3px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: inherit; cursor: pointer; font: inherit; }
   #err { padding: 8px 12px; color: var(--err); font-family: ui-monospace, monospace; min-height: 2.2em; border-top: 1px solid var(--line); }
   #view { position: relative; min-height: 0; }
   canvas { display: block; width: 100%; height: 100%; }
@@ -61,6 +61,7 @@
 <body>
 <div id="side">
   <div id="bar"><label>Open .gltf <input id="open" type="file" accept=".gltf,model/gltf+json"></label>
+    <select id="example" aria-label="Open example"></select>
     <button id="bake" type="button">Bake &amp; download</button></div>
   <section id="defs" aria-label="Parameters and variables"></section>
   <textarea id="src" spellcheck="false" aria-label="JIG document"></textarea>
@@ -79,7 +80,7 @@ if (!HTMLScriptElement.supports?.('importmap')) showError('this browser does not
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { read, bake, stringify, geometry, loftCurve, loftFrame, outline, EXT } from './jig.js?v=0491128';
+import { read, bake, strip, stringify, geometry, sectionAt, loftCurve, loftFrame, outline, EXT } from './jig.js?v=19d317f';
 
 const src = document.getElementById('src'), defsEl = document.getElementById('defs'), errEl = document.getElementById('err');
 const view = document.getElementById('view'), slidersEl = document.getElementById('sliders');
@@ -370,10 +371,9 @@ canvas.addEventListener('pointerdown', (e) => {
       sel = { mesh, point: at };
       startPointDrag(pick, p.applyMatrix4(pick.group.matrixWorld));
     } else {
-      const t = tOnCurve(onCurve), secs = last.meshes[mesh].sections;
-      const near = secs.reduce((a, s, j) => (Math.abs(s.t - t) < Math.abs(secs[a].t - t) ? j : a), 0);
+      const t = tOnCurve(onCurve), points = sectionAt(last.meshes[mesh], t).map((p) => p.map(r3)); // the shape already there
       let section;
-      edit((r) => { const l = loftOf(r, mesh); section = l.sections.push({ t, points: structuredClone(l.sections[near].points) }) - 1; });
+      edit((r) => { section = loftOf(r, mesh).sections.push({ t, points }) - 1; });
       sel = { mesh, section };
       drag = { kind: 't', mesh, section };
     }
@@ -527,19 +527,31 @@ renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, came
 src.addEventListener('input', form);
 
 // Open a .gltf (its baked_values set the sliders) and download it baked at the slider values (D-14, D-23).
-const load = (text) => { for (const k of Object.keys(values)) delete values[k]; shownParams = ''; src.value = text; form(); };
+// The text shows the recipe without the bake's cache; the download carries a fresh one.
+const unbaked = (text) => { try { return stringify(strip(JSON.parse(text))); } catch { return text; } }; // show bad JSON as is, read() reports it
+const load = (text) => { for (const k of Object.keys(values)) delete values[k]; shownParams = ''; src.value = unbaked(text); form(); };
 document.getElementById('open').onchange = async (e) => { const f = e.target.files[0]; if (f) load(await f.text()); };
 document.getElementById('bake').onclick = () => {
   let gltf;
   try { gltf = bake(JSON.parse(src.value), values).gltf; } catch (e) { errEl.textContent = e.message; return; }
   load(stringify(gltf));
-  const a = el('a', { href: URL.createObjectURL(new Blob([src.value + '\n'], { type: 'model/gltf+json' })), download: 'model.gltf' });
+  const a = el('a', { href: URL.createObjectURL(new Blob([stringify(gltf) + '\n'], { type: 'model/gltf+json' })), download: 'model.gltf' });
   a.click();
   URL.revokeObjectURL(a.href);
 };
-const examples = { box: 'examples/box.gltf?v=0491128', loft: 'examples/loft.gltf?v=0491128', star: 'examples/star.gltf?v=0491128' };
-const example = examples[new URLSearchParams(location.search).get('example')] ?? examples.box;
-load(await (await fetch(example)).text());
+const examples = { box: 'examples/box.gltf?v=19d317f', loft: 'examples/loft.gltf?v=19d317f', star: 'examples/star.gltf?v=19d317f' };
+const pick = document.getElementById('example');
+pick.append(el('option', { value: '', textContent: 'Open example…', disabled: true }),
+  ...Object.keys(examples).map((name) => el('option', { value: name, textContent: name })));
+const openExample = async (name) => {
+  pick.value = name;
+  load(await (await fetch(examples[name])).text());
+  history.replaceState(null, '', `?example=${name}`); // a reload keeps the example
+};
+pick.onchange = () => openExample(pick.value);
+document.getElementById('open').addEventListener('change', () => { pick.value = ''; });
+const asked = new URLSearchParams(location.search).get('example');
+await openExample(examples[asked] ? asked : 'box');
 </script>
 </body>
 </html>

@@ -388,7 +388,7 @@ export function loftFrame(curve, t) {
 
 function loftGeometry(m) {
   const curve = loftCurve(m), sorted = [...m.sections].sort((a, b) => a.t - b.t);
-  const matched = rings(sorted, m.sides, m.match), n = matched[0].length;
+  const matched = rings(sorted, m.sides, m.match).rings, n = matched[0].length;
   const secs = sorted.map((s, i) => ({ t: s.t, ring: matched[i] }));
   const ts = [...new Set([...Array.from({ length: m.steps + 1 }, (_, i) => i / m.steps), ...secs.map((s) => s.t)])].sort((a, b) => a - b);
   const shapeAt = (t) => {
@@ -478,8 +478,25 @@ function rings(sections, sides, match) {
   const all = prep.map((p) => gaps(p.anchors));
   // + 1e-9: equal spans round alike despite float error (a quarter of 6 is 1.5 or 1.4999...).
   const spans = all[0].map((_, j) => Math.max(1, Math.round((sides * all.reduce((s, g) => s + g[j], 0)) / all.length + 1e-9)));
-  return prep.map((p, i) => p.anchors.flatMap((a, j) =>
-    Array.from({ length: spans[j] }, (_, k) => pointAt(p.ring, a + (all[i][j] * k) / spans[j]))));
+  const starts = spans.map((_, j) => spans.slice(0, j).reduce((a, b) => a + b, 0)); // ring index of anchor j
+  return { starts, rings: prep.map((p, i) => p.anchors.flatMap((a, j) =>
+    Array.from({ length: spans[j] }, (_, k) => pointAt(p.ring, a + (all[i][j] * k) / spans[j])))) };
+}
+
+// The loft's cross-section at t as section points, for a new section that keeps the shape (sketch). Between two
+// sections with the same kinds of points, every point and handle is interpolated. Otherwise the matched rings are:
+// their anchors become corners (exact for polygons), or, with fewer than 3 anchors, every ring point does.
+// Outside the sections, the end section is copied.
+export function sectionAt(m, t) {
+  const sorted = [...m.sections].sort((a, b) => a.t - b.t), j = sorted.findIndex((s) => s.t > t);
+  if (j <= 0) return structuredClone(sorted[j < 0 ? sorted.length - 1 : 0].points);
+  const a = sorted[j - 1], b = sorted[j], f = (t - a.t) / (b.t - a.t);
+  const lerp = (p, q) => p.map((c, k) => c + (q[k] - c) * f);
+  if (a.points.length === b.points.length && a.points.every((p, k) => p.length === b.points[k].length)) {
+    return a.points.map((p, k) => lerp(p, b.points[k]));
+  }
+  const { rings: r, starts } = rings(sorted, m.sides, m.match), ring = r[j - 1].map((p, k) => lerp(p, r[j][k]));
+  return starts.length >= 3 ? starts.map((k) => ring[k]) : ring;
 }
 
 // Distance along a closed polygon to each of its points; the last entry is the whole perimeter.
