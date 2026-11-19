@@ -26,6 +26,9 @@
   #sliders:empty { display: none; }
   #sliders label { display: grid; grid-template-columns: minmax(3em, 7em) minmax(60px, 220px) 3.5em; gap: 8px; align-items: center; }
   #sliders output { font: 12px ui-monospace, monospace; text-align: right; }
+  #bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  #bar input[type=file] { max-width: 14em; font: inherit; }
+  #bar button { padding: 3px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: inherit; cursor: pointer; font: inherit; }
   #err { padding: 8px 12px; color: var(--err); font-family: ui-monospace, monospace; min-height: 2.2em; border-top: 1px solid var(--line); }
   #view { position: relative; min-height: 0; }
   canvas { display: block; width: 100%; height: 100%; }
@@ -40,6 +43,8 @@
 </head>
 <body>
 <div id="side">
+  <div id="bar"><label>Open .gltf <input id="open" type="file" accept=".gltf,model/gltf+json"></label>
+    <button id="bake" type="button">Bake &amp; download</button></div>
   <section id="defs" aria-label="Parameters and variables"></section>
   <textarea id="src" spellcheck="false" aria-label="JIG document"></textarea>
   <div id="err" role="status"></div>
@@ -55,7 +60,7 @@ if (!HTMLScriptElement.supports?.('importmap')) showError('this browser does not
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { read } from './jig.js';
+import { read, bake, stringify, EXT } from './jig.js';
 
 const src = document.getElementById('src'), defsEl = document.getElementById('defs'), errEl = document.getElementById('err');
 const view = document.getElementById('view'), slidersEl = document.getElementById('sliders');
@@ -82,13 +87,12 @@ function rebuild() {
   try { out = read(JSON.parse(src.value), values); errEl.textContent = ''; }
   catch (e) { errEl.textContent = e.message; return; }
   model.clear(); // three.js Object3D, not a DOM node: no replaceChildren
-  for (const n of out.nodes) {
+  for (const i of out.instances) {
     const m = new THREE.Mesh(unitBox, material);
-    m.scale.fromArray(out.meshes[n.mesh].size);
+    m.scale.fromArray(out.meshes[i.mesh].size);
     const node = new THREE.Group().add(m);
-    node.position.fromArray(n.translation);
-    node.quaternion.fromArray(n.rotation);
-    node.scale.fromArray(n.scale);
+    node.matrixAutoUpdate = false;
+    node.matrix.fromArray(i.matrix); // world transform, column-major like glTF and three.js
     model.add(node);
   }
   model.position.y = -out.floor; // stand the model's floor on the grid
@@ -129,26 +133,15 @@ function el(tag, props = {}, ...kids) {
 function edit(fn, redraw = false) {
   let doc;
   try { doc = JSON.parse(src.value); } catch { return; }
-  fn(doc);
-  src.value = format(doc);
+  if (!isObj(doc.extensions?.[EXT])) return;
+  const r = doc.extensions[EXT];
+  fn(r); // fn edits the recipe: params, vars, ...
+  // baked_values holds every parameter (D-16): follow added, removed and renamed parameters.
+  if (isObj(r.baked_values) && isObj(r.params)) {
+    r.baked_values = Object.fromEntries(Object.entries(r.params).map(([k, p]) => [k, r.baked_values[k] ?? p?.default]));
+  }
+  src.value = stringify(doc);
   if (redraw) form(); else rebuild();
-}
-
-// Pretty JSON: anything that fits in 90 columns goes on one line.
-function format(v, indent = '') {
-  const one = oneLine(v);
-  if (v === null || typeof v !== 'object' || indent.length + one.length <= 90) return one;
-  const inner = indent + '  ';
-  const items = Array.isArray(v)
-    ? v.map((x) => inner + format(x, inner))
-    : Object.entries(v).map(([k, x]) => `${inner}${JSON.stringify(k)}: ${format(x, inner)}`);
-  return Array.isArray(v) ? `[\n${items.join(',\n')}\n${indent}]` : `{\n${items.join(',\n')}\n${indent}}`;
-}
-function oneLine(v) {
-  if (Array.isArray(v)) return `[${v.map(oneLine).join(', ')}]`;
-  if (v === null || typeof v !== 'object') return JSON.stringify(v);
-  const e = Object.entries(v);
-  return e.length ? `{ ${e.map(([k, x]) => `${JSON.stringify(k)}: ${oneLine(x)}`).join(', ')} }` : '{}';
 }
 
 // Rename a key, keeping its place in the object.
@@ -160,7 +153,8 @@ function form() {
   let doc;
   try { doc = JSON.parse(src.value); } catch { defsEl.setAttribute('aria-disabled', 'true'); rebuild(); return; }
   defsEl.removeAttribute('aria-disabled');
-  const params = isObj(doc.params) ? doc.params : {}, vars = isObj(doc.vars) ? doc.vars : {};
+  const r = isObj(doc.extensions?.[EXT]) ? doc.extensions[EXT] : {};
+  const params = isObj(r.params) ? r.params : {}, vars = isObj(r.vars) ? r.vars : {};
   const taken = new Set([...Object.keys(params), ...Object.keys(vars)]);
   varOutputs = {};
   const nameIn = (list, key) => el('input', { value: key, ariaLabel: `${key} name`,
@@ -169,10 +163,10 @@ function form() {
     oninput: (e) => { const v = e.target.valueAsNumber; if (Number.isFinite(v)) edit((d) => { d.params[key][field] = v; }); } });
   const del = (list, key) => el('button', { textContent: '×', title: `Remove ${key}`, ariaLabel: `Remove ${key}`,
     onclick: () => edit((d) => { delete d[list][key]; if (!Object.keys(d[list]).length) delete d[list]; }, true) });
-  // New lists go right after "jig"/"params" so the JSON reads top-down.
+  // New lists go right after "version"/"params" so the recipe reads top-down.
   const put = (d, list, entry) => {
     const all = { ...d, [list]: { ...d[list], ...entry } };
-    const order = ['jig', 'params', 'vars'].filter((k) => k in all);
+    const order = ['version', 'params', 'vars'].filter((k) => k in all);
     for (const k of Object.keys(d)) delete d[k];
     for (const k of [...order, ...Object.keys(all).filter((k) => !order.includes(k))]) d[k] = all[k];
   };
@@ -207,8 +201,19 @@ new ResizeObserver(resize).observe(view);
 renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
 
 src.addEventListener('input', form);
-src.value = await (await fetch('examples/box.jig.json')).text();
-form();
+
+// Open a .gltf (its baked_values set the sliders) and download it baked at the slider values (D-14, D-23).
+const load = (text) => { for (const k of Object.keys(values)) delete values[k]; shownParams = ''; src.value = text; form(); };
+document.getElementById('open').onchange = async (e) => { const f = e.target.files[0]; if (f) load(await f.text()); };
+document.getElementById('bake').onclick = () => {
+  let gltf;
+  try { gltf = bake(JSON.parse(src.value), values).gltf; } catch (e) { errEl.textContent = e.message; return; }
+  load(stringify(gltf));
+  const a = el('a', { href: URL.createObjectURL(new Blob([src.value + '\n'], { type: 'model/gltf+json' })), download: 'model.gltf' });
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+load(await (await fetch('examples/box.gltf')).text());
 </script>
 </body>
 </html>

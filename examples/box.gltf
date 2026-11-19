@@ -1,0 +1,90 @@
+{
+  "asset": { "version": "2.0" },
+  "extensionsUsed": ["JIG_recipe"],
+  "extensions": {
+    "JIG_recipe": {
+      "version": "0.1",
+      "//": "Two crates: one parameter drives all sides; the second is turned 45 degrees.",
+      "params": { "size": { "default": 0.6, "min": 0.2, "max": 2 } },
+      "vars": { "gap": "size * 0.6" },
+      "meshes": [{ "box": { "size": ["size", "size * 0.75", "size"] } }],
+      "baked_values": { "size": 0.6 }
+    }
+  },
+  "scene": 0,
+  "scenes": [{ "nodes": [0, 1] }],
+  "nodes": [
+    {
+      "extensions": { "JIG_recipe": { "mesh": 0, "translation": ["-gap", 0, 0] } },
+      "mesh": 0,
+      "translation": [-0.36, 0, 0]
+    },
+    {
+      "rotation": [0, 0.3827, 0, 0.9239],
+      "extensions": { "JIG_recipe": { "mesh": 0, "translation": ["gap", 0, 0] } },
+      "mesh": 0,
+      "translation": [0.36, 0, 0]
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 288,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 576,
+      "byteLength": 72,
+      "target": 34963,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "min": [-0.30000001192092896, -0.22499999403953552, -0.30000001192092896],
+      "max": [0.30000001192092896, 0.22499999403953552, 0.30000001192092896],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [{ "attributes": { "POSITION": 0, "NORMAL": 1 }, "indices": 2 }],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 648,
+      "uri": "data:application/octet-stream;base64,mpmZPmZmZr6amZm+mpmZPmZmZj6amZm+mpmZPmZmZj6amZk+mpmZPmZmZr6amZk+mpmZvmZmZr6amZk+mpmZvmZmZj6amZk+mpmZvmZmZj6amZm+mpmZvmZmZr6amZm+mpmZvmZmZj6amZm+mpmZvmZmZj6amZk+mpmZPmZmZj6amZk+mpmZPmZmZj6amZm+mpmZPmZmZr6amZm+mpmZPmZmZr6amZk+mpmZvmZmZr6amZk+mpmZvmZmZr6amZm+mpmZvmZmZr6amZk+mpmZPmZmZr6amZk+mpmZPmZmZj6amZk+mpmZvmZmZj6amZk+mpmZvmZmZj6amZm+mpmZPmZmZj6amZm+mpmZPmZmZr6amZm+mpmZvmZmZr6amZm+AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcA",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ]
+}
