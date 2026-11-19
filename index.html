@@ -63,7 +63,8 @@
   <div id="bar"><label>Open .gltf <input id="open" type="file" accept=".gltf,model/gltf+json"></label>
     <select id="example" aria-label="Open example"></select>
     <button id="bake" type="button">Bake &amp; download</button>
-    <label title="Fit a loft to one tube-like mesh (sketch)">Scan mesh <input id="scan" type="file" accept=".glb,.gltf"></label></div>
+    <label title="Fit a loft to one tube-like mesh (sketch)">Scan mesh <input id="scan" type="file" accept=".glb,.gltf"></label>
+    <select id="scanPart" aria-label="Part to scan" hidden></select></div>
   <section id="defs" aria-label="Parameters and variables"></section>
   <textarea id="src" spellcheck="false" aria-label="JIG document"></textarea>
   <div id="err" role="status"></div>
@@ -81,9 +82,9 @@ if (!HTMLScriptElement.supports?.('importmap')) showError('this browser does not
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { scanLoft } from './scan.js?v=80efbe7';
-import { read, bake, strip, stringify, geometry, sectionAt, loftCurve, loftFrame, outline, EXT, VERSION } from './jig.js?v=80efbe7';
+import { scanLoft } from './scan.js?v=6b7ceff';
+import { parseGltf, namedParts } from './glb.js?v=6b7ceff';
+import { read, bake, strip, stringify, geometry, sectionAt, loftCurve, loftFrame, outline, EXT, VERSION } from './jig.js?v=6b7ceff';
 
 const src = document.getElementById('src'), defsEl = document.getElementById('defs'), errEl = document.getElementById('err');
 const view = document.getElementById('view'), slidersEl = document.getElementById('sliders');
@@ -329,34 +330,48 @@ function addLoft(loft = { path: [[0, 0, 0], [0, 0.4, 0], [0.2, 0.7, 0]], section
 }
 
 // Scan: fit a loft to a .glb or self-contained .gltf (sketch, viewer/scan.js). The loft goes into the open document
-// with no node transform, so it sits where the mesh does; the mesh stays on screen, faint, to compare.
-// shortcut: one file only (no external .bin or textures), every mesh in it fitted as one piece.
+// with no node transform, so it sits where the mesh does; the part scanned stays on screen, faint, to compare.
+// A file with named parts offers each one (viewer/glb.js): every named mesh, and for a skinned mesh every named bone.
+// Each pick adds one loft. tools/scan.mjs does the same from the command line, with merged parts and joint guides.
+// shortcut: one file only (no external .bin).
 const ghost = new THREE.MeshStandardMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.25, depthWrite: false });
-document.getElementById('scan').onchange = async (e) => {
-  const f = e.target.files[0];
-  e.target.value = '';
-  if (!f) return;
+const partEl = document.getElementById('scanPart');
+let scanFile = '', scanParts = [];
+
+function scanPart(k) {
+  const p = scanParts[k];
   try {
-    const { scene: object } = await new GLTFLoader().parseAsync(await f.arrayBuffer(), '');
-    object.updateMatrixWorld(true);
-    const positions = [], indices = [], v = new THREE.Vector3();
-    object.traverse((o) => {
-      if (!o.isMesh) return;
-      const p = o.geometry.attributes.position, base = positions.length / 3;
-      for (let i = 0; i < p.count; i++) positions.push(...v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld).toArray());
-      for (let i = 0; i < (o.geometry.index?.count ?? p.count); i++) indices.push(base + (o.geometry.index ? o.geometry.index.getX(i) : i));
-      o.material = ghost;
-    });
-    const { loft, error, size } = scanLoft(positions, indices);
-    const mm = (x) => `${+(x * 1000).toFixed(1)} mm`;
-    scan = { object, note: `${f.name}: ${loft.sections.length} sections, ${loft.path.length} path points; off by ${mm(error.mean)} mean, ${mm(error.max)} max (size ${mm(size)}, units taken as metres)` };
+    const { loft, error, size } = scanLoft(p.positions, p.indices, { guide: p.guide, reach: p.reach });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(p.positions, 3));
+    g.setIndex(p.indices);
+    g.computeVertexNormals();
+    const object = new THREE.Mesh(g, ghost), mm = (x) => `${+(x * 1000).toFixed(1)} mm`;
+    scan = { object, note: `${scanFile}, ${p.name}: ${loft.sections.length} sections, ${loft.path.length} path points; off by ${mm(error.mean)} mean, ${mm(error.max)} max (size ${mm(size)}, units taken as metres)` };
     if (addLoft(loft, {}) === undefined) throw new Error('open a JIG document first');
     // Frame the scan: it may be far from the origin or another size than the 2 m the camera starts at.
     const box = new THREE.Box3().setFromObject(object), c = box.getCenter(new THREE.Vector3());
     camera.far = Math.max(100, size * 20); camera.updateProjectionMatrix();
     controls.target.copy(c); camera.position.copy(c).add(new THREE.Vector3(0.8, 0.6, 1).multiplyScalar(size));
   } catch (err) { scan = null; rebuild(); errEl.textContent = `scan: ${err.message}`; }
+}
+
+document.getElementById('scan').onchange = async (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  try {
+    scanFile = f.name;
+    scanParts = namedParts(parseGltf(await f.arrayBuffer()));
+  } catch (err) { errEl.textContent = `scan: ${err.message}`; return; }
+  // One mesh (named or not): scan it now. Named parts: pick one, then another for the next loft.
+  partEl.hidden = scanParts.length <= 2;
+  partEl.replaceChildren(el('option', { value: '', textContent: 'Scan part…', disabled: true }),
+    ...scanParts.map((p, k) => el('option', { value: k, textContent: `${p.name} (${p.kind}, ${p.indices.length / 3} triangles)` })));
+  partEl.value = '';
+  if (partEl.hidden) scanPart(0);
 };
+partEl.onchange = () => { scanPart(+partEl.value); partEl.value = ''; }; // so the same part can be picked again
 
 function remove() {
   if (sel?.node !== undefined) { removeNode(sel.node); return; }
@@ -604,7 +619,7 @@ document.getElementById('bake').onclick = () => {
   a.click();
   URL.revokeObjectURL(a.href);
 };
-const examples = { box: 'examples/box.gltf?v=80efbe7', loft: 'examples/loft.gltf?v=80efbe7', star: 'examples/star.gltf?v=80efbe7' };
+const examples = { box: 'examples/box.gltf?v=6b7ceff', loft: 'examples/loft.gltf?v=6b7ceff', star: 'examples/star.gltf?v=6b7ceff' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };

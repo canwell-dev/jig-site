@@ -250,7 +250,7 @@ function oneLine(v) {
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
 // glTF TRS to a column-major matrix: scale, then rotation, then translation.
-function compose(t, [x, y, z, w], s) {
+export function compose(t, [x, y, z, w], s) {
   return [
     (1 - 2 * (y * y + z * z)) * s[0], 2 * (x * y + z * w) * s[0], 2 * (x * z - y * w) * s[0], 0,
     2 * (x * y - z * w) * s[1], (1 - 2 * (x * x + z * z)) * s[1], 2 * (y * z + x * w) * s[1], 0,
@@ -259,7 +259,7 @@ function compose(t, [x, y, z, w], s) {
   ];
 }
 
-function mul(a, b) {
+export function mul(a, b) {
   const m = new Array(16).fill(0);
   for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) for (let k = 0; k < 4; k++) m[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k];
   return m;
