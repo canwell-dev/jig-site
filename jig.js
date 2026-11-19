@@ -17,7 +17,7 @@ export function read(doc, values = {}) {
   const rat = `/extensions/${EXT}`;
   const r = doc.extensions?.[EXT];
   need(isObj(r), rat, 'must be an object');
-  only(r, ['version', 'params', 'vars', 'floor', 'meshes', 'baked_values'], rat);
+  only(r, ['version', 'params', 'sets', 'vars', 'floor', 'meshes', 'baked_values', 'baked_set'], rat);
   need(r.version === VERSION, `${rat}/version`, `must be "${VERSION}"`);
 
   need(r.params === undefined || isObj(r.params), `${rat}/params`, 'must be an object');
@@ -55,6 +55,23 @@ export function read(doc, values = {}) {
     const v = values[name] ?? baked?.[name] ?? p.default;
     params[name] = { ...p, value: Math.min(p.max, Math.max(p.min, v)) };
   }
+  // Draft f8: named sets of parameter values, as OpenSCAD's parameterSets. A host applies one by passing its
+  // values; the reader only checks them. A set may name some parameters only.
+  need(r.sets === undefined || isObj(r.sets), `${rat}/sets`, 'must be an object');
+  const sets = {};
+  for (const [name, set] of Object.entries(r.sets ?? {})) {
+    const at = `${rat}/sets/${name}`;
+    need(name.trim() !== '', at, 'name must not be empty');
+    need(isObj(set), at, 'must be an object of parameter values');
+    for (const [k, v] of Object.entries(set)) {
+      const p = params[k];
+      need(p !== undefined, `${at}/${k}`, 'is not a parameter');
+      need(p.type === 'bool' ? typeof v === 'boolean' : p.type === 'color' ? isColor(v) : typeof v === 'number', `${at}/${k}`,
+        p.type === 'bool' ? 'must be true or false' : p.type === 'color' ? 'must be a color: linear [r, g, b, a], numbers 0..1' : 'must be a number');
+    }
+    sets[name] = set;
+  }
+  need(r.baked_set === undefined || Object.hasOwn(sets, r.baked_set), `${rat}/baked_set`, 'must name a set');
   const scope = Object.fromEntries(Object.entries(params).filter(([, p]) => p.type !== 'color').map(([k, p]) => [k, +p.value]));
 
   // Sketch (draft f2): named expressions, in order; each sees the params and the vars before it.
@@ -74,7 +91,7 @@ export function read(doc, values = {}) {
   need(doc.materials === undefined || Array.isArray(doc.materials), '/materials', 'must be a list');
   const materials = (doc.materials ?? []).map((m, i) => {
     const x = m?.extensions?.[EXT], at = `/materials/${i}/extensions/${EXT}`;
-    if (x === undefined) return null;
+    if (x === undefined || isBaked(m)) return null;
     need(isObj(x), at, 'must be an object');
     only(x, Object.keys(MATERIAL_SLOTS), at);
     const unit = (v) => Math.min(1, Math.max(0, v));
@@ -141,7 +158,7 @@ export function read(doc, values = {}) {
   // y of the floor in model space; hosts stand the model there. Default: the lowest point on the vertical line
   // through the origin, or 0 when no shape crosses that line.
   const floor = r.floor === undefined ? lowestOnAxis(meshes, instances) : num(r.floor, scope, `${rat}/floor`);
-  return { params, vars, floor, materials, meshes, nodes, instances, tree };
+  return { params, sets, vars, floor, materials, meshes, nodes, instances, tree };
 }
 
 // A node's `repeat` (D-44): count rounded and clamped to 0..1024; the index is a fresh lower_snake_case name.
@@ -217,7 +234,8 @@ function mesh(m, scope, at, materialCount) {
 
 // --- Bake (D-11, D-14..D-17, D-23) ---
 
-const OWNED = ['meshes', 'accessors', 'bufferViews', 'buffers', 'nodes'];
+const OWNED = ['meshes', 'accessors', 'bufferViews', 'buffers', 'nodes', 'materials'];
+const KHR_VARIANTS = 'KHR_materials_variants';
 const isBaked = (o) => o?.extensions?.[EXT]?.baked === true;
 
 // Remove the bake's cache: every item marked baked, and the core node slots that have a twin in JIG_recipe.
@@ -232,6 +250,10 @@ export function strip(doc) {
     need(late < 0, `/${k}/${late}`, 'baked items must come after all other items (D-17)');
     d[k] = d[k].slice(0, first);
     if (!d[k].length) delete d[k];
+  }
+  if (d.extensions?.[EXT]?.sets !== undefined && d.extensions[KHR_VARIANTS] !== undefined) { // variants come from the sets
+    delete d.extensions[KHR_VARIANTS];
+    if (Array.isArray(d.extensionsUsed)) d.extensionsUsed = d.extensionsUsed.filter((e) => e !== KHR_VARIANTS);
   }
   for (const m of Array.isArray(d.materials) ? d.materials : []) {
     const x = m?.extensions?.[EXT];
@@ -257,13 +279,40 @@ export function strip(doc) {
 // Bake at `values` (over baked_values, over defaults). Returns { gltf, bin }: gltf is the document with a fresh
 // cache and baked_values; bin is the buffer's bytes. The buffer is embedded as a data URI unless `uri` names a
 // separate file (D-23). The same document and values give the same bytes (D-15).
-export function bake(doc, values = {}, { uri } = {}) {
+// `set` names a set to bake with (its values under `values`) and records it as baked_set; null drops baked_set;
+// left out, baked_set stays as it is.
+export function bake(doc, values = {}, { uri, set } = {}) {
   const d = strip(doc);
+  const r = d.extensions?.[EXT];
+  if (typeof set === 'string') {
+    need(isObj(r?.sets?.[set]), `/extensions/${EXT}/sets`, `has no set named "${set}"`);
+    values = { ...r.sets[set], ...values };
+  }
   const out = read(d, values);
-  d.extensions[EXT].baked_values = Object.fromEntries(Object.entries(out.params).map(([k, p]) => [k, p.value]));
+  r.baked_values = Object.fromEntries(Object.entries(out.params).map(([k, p]) => [k, p.value]));
+  if (set !== undefined) { delete r.baked_set; if (set !== null) r.baked_set = set; }
 
   const base = Object.fromEntries(OWNED.map((k) => [k, d[k]?.length ?? 0]));
-  const add = (k, item) => (d[k] ??= []).push({ ...item, extensions: { [EXT]: { baked: true } } }) - 1;
+  const add = (k, item) => (d[k] ??= []).push({ ...item, extensions: { ...item.extensions, [EXT]: { baked: true } } }) - 1;
+  const authored = structuredClone(d.materials ?? []); // before the cache: the base of variant materials
+
+  // Sets as KHR_materials_variants (draft f8): each set is a variant; a material whose recipe slots differ at a set's
+  // values (over this bake's) gets a baked copy with them, mapped on every primitive that uses the material.
+  const names = Object.keys(out.sets), mapping = {};
+  names.forEach((name, v) => {
+    const mats = read(d, { ...r.baked_values, ...out.sets[name] }).materials;
+    mats.forEach((m, i) => {
+      if (!m || JSON.stringify(m) === JSON.stringify(out.materials[i])) return;
+      const { extensions: { [EXT]: _, ...ext } = {}, ...rest } = authored[i];
+      const copy = slots({ ...rest, ...(Object.keys(ext).length && { extensions: ext }) }, m);
+      if (rest.name !== undefined) copy.name = `${rest.name} (${name})`;
+      (mapping[i] ??= []).push({ material: add('materials', copy), variants: [v] });
+    });
+  });
+  if (names.length) {
+    d.extensions[KHR_VARIANTS] = { variants: names.map((name) => ({ name })) };
+    if (!d.extensionsUsed.includes(KHR_VARIANTS)) d.extensionsUsed.push(KHR_VARIANTS);
+  }
   const chunks = [];
   let offset = 0;
   const view = (array, target) => {
@@ -285,14 +334,10 @@ export function bake(doc, values = {}, { uri } = {}) {
       type: 'VEC3', min, max });
     const nor = add('accessors', { bufferView: view(normals, 34962), componentType: 5126, count: normals.length / 3, type: 'VEC3' });
     const idx = add('accessors', { bufferView: view(indices, 34963), componentType: short ? 5123 : 5125, count: indices.length, type: 'SCALAR' });
-    add('meshes', { primitives: [{ attributes: { POSITION: pos, NORMAL: nor }, indices: idx, ...(m.material !== undefined && { material: m.material }) }] });
+    add('meshes', { primitives: [{ attributes: { POSITION: pos, NORMAL: nor }, indices: idx, ...(m.material !== undefined && { material: m.material }),
+      ...(mapping[m.material] && { extensions: { [KHR_VARIANTS]: { mappings: mapping[m.material] } } }) }] });
   }
-  out.materials.forEach((m, i) => { // the material cache (D-6 amended): recipe slots into their core places
-    if (!m) return;
-    const core = d.materials[i], pbr = Object.fromEntries(Object.entries(m).filter(([k]) => MATERIAL_SLOTS[k] === 'pbr'));
-    if (Object.keys(pbr).length) core.pbrMetallicRoughness = { ...pbr, ...core.pbrMetallicRoughness };
-    if (m.emissiveFactor) core.emissiveFactor = m.emissiveFactor;
-  });
+  out.materials.forEach((m, i) => { if (m) slots(d.materials[i], m); }); // the material cache (D-57)
   const bin = new Uint8Array(offset);
   let at = 0;
   for (const c of chunks) { bin.set(c, at); at += c.byteLength; }
@@ -730,6 +775,13 @@ const FUNCS = {
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 // Material slots a recipe may set, and where glTF keeps them (D-6 amended).
 const MATERIAL_SLOTS = { baseColorFactor: 'pbr', metallicFactor: 'pbr', roughnessFactor: 'pbr', emissiveFactor: 'top' };
+// Write evaluated material slots into their core glTF places; returns the material.
+function slots(core, m) {
+  const pbr = Object.fromEntries(Object.entries(m).filter(([k]) => MATERIAL_SLOTS[k] === 'pbr'));
+  if (Object.keys(pbr).length) core.pbrMetallicRoughness = { ...pbr, ...core.pbrMetallicRoughness };
+  if (m.emissiveFactor) core.emissiveFactor = m.emissiveFactor;
+  return core;
+}
 // A color value: linear [r, g, b, a], numbers 0..1, as glTF's baseColorFactor and Blender's color sockets.
 const isColor = (c) => Array.isArray(c) && c.length === 4 && c.every((x) => typeof x === 'number' && x >= 0 && x <= 1);
 // A recipe slot that sets core slot k: euler sets rotation.

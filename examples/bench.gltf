@@ -1,6 +1,6 @@
 {
   "asset": { "version": "2.0" },
-  "extensionsUsed": ["JIG_recipe"],
+  "extensionsUsed": ["JIG_recipe", "KHR_materials_variants"],
   "extensions": {
     "JIG_recipe": {
       "version": "0.1",
@@ -13,6 +13,16 @@
         "arm_rests": { "type": "bool", "default": false },
         "wood": { "type": "color", "default": [0.35, 0.16, 0.05, 1] },
         "metal": { "type": "color", "default": [0.033, 0.038, 0.043, 1] }
+      },
+      "sets": {
+        "oak": { "wood": [0.5, 0.3, 0.12, 1], "metal": [0.033, 0.038, 0.043, 1], "recline": 10 },
+        "painted": {
+          "wood": [0.08, 0.25, 0.12, 1],
+          "metal": [0.02, 0.02, 0.02, 1],
+          "recline": 14,
+          "arm_rests": true
+        },
+        "picnic": { "backrest": false, "arm_rests": false, "wood": [0.3, 0.2, 0.1, 1] }
       },
       "vars": {
         "// legs": "a pair of legs at each end, and more pairs so they stand at most 1.2 m apart",
@@ -47,7 +57,8 @@
         "wood": [0.35, 0.16, 0.05, 1],
         "metal": [0.033, 0.038, 0.043, 1]
       }
-    }
+    },
+    "KHR_materials_variants": { "variants": [{ "name": "oak" }, { "name": "painted" }, { "name": "picnic" }] }
   },
   "materials": [
     {
@@ -67,6 +78,42 @@
         "roughnessFactor": 0.5
       },
       "extensions": { "JIG_recipe": { "baseColorFactor": "metal" } }
+    },
+    {
+      "name": "wood (oak)",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.5, 0.3, 0.12, 1],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.8
+      },
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "wood (painted)",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.08, 0.25, 0.12, 1],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.8
+      },
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "metal (painted)",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.02, 0.02, 0.02, 1],
+        "metallicFactor": 0.6,
+        "roughnessFactor": 0.5
+      },
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "wood (picnic)",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.3, 0.2, 0.1, 1],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.8
+      },
+      "extensions": { "JIG_recipe": { "baked": true } }
     }
   ],
   "scene": 0,
@@ -570,31 +617,112 @@
   ],
   "meshes": [
     {
-      "primitives": [{ "attributes": { "POSITION": 0, "NORMAL": 1 }, "indices": 2, "material": 0 }],
+      "primitives": [
+        {
+          "attributes": { "POSITION": 0, "NORMAL": 1 },
+          "indices": 2,
+          "material": 0,
+          "extensions": {
+            "KHR_materials_variants": {
+              "mappings": [
+                { "material": 2, "variants": [0] },
+                { "material": 3, "variants": [1] },
+                { "material": 5, "variants": [2] }
+              ]
+            }
+          }
+        }
+      ],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [{ "attributes": { "POSITION": 3, "NORMAL": 4 }, "indices": 5, "material": 1 }],
+      "primitives": [
+        {
+          "attributes": { "POSITION": 3, "NORMAL": 4 },
+          "indices": 5,
+          "material": 1,
+          "extensions": {
+            "KHR_materials_variants": { "mappings": [{ "material": 4, "variants": [1] }] }
+          }
+        }
+      ],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [{ "attributes": { "POSITION": 6, "NORMAL": 7 }, "indices": 8, "material": 1 }],
+      "primitives": [
+        {
+          "attributes": { "POSITION": 6, "NORMAL": 7 },
+          "indices": 8,
+          "material": 1,
+          "extensions": {
+            "KHR_materials_variants": { "mappings": [{ "material": 4, "variants": [1] }] }
+          }
+        }
+      ],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [{ "attributes": { "POSITION": 9, "NORMAL": 10 }, "indices": 11, "material": 1 }],
+      "primitives": [
+        {
+          "attributes": { "POSITION": 9, "NORMAL": 10 },
+          "indices": 11,
+          "material": 1,
+          "extensions": {
+            "KHR_materials_variants": { "mappings": [{ "material": 4, "variants": [1] }] }
+          }
+        }
+      ],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [{ "attributes": { "POSITION": 12, "NORMAL": 13 }, "indices": 14, "material": 0 }],
+      "primitives": [
+        {
+          "attributes": { "POSITION": 12, "NORMAL": 13 },
+          "indices": 14,
+          "material": 0,
+          "extensions": {
+            "KHR_materials_variants": {
+              "mappings": [
+                { "material": 2, "variants": [0] },
+                { "material": 3, "variants": [1] },
+                { "material": 5, "variants": [2] }
+              ]
+            }
+          }
+        }
+      ],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [{ "attributes": { "POSITION": 15, "NORMAL": 16 }, "indices": 17, "material": 1 }],
+      "primitives": [
+        {
+          "attributes": { "POSITION": 15, "NORMAL": 16 },
+          "indices": 17,
+          "material": 1,
+          "extensions": {
+            "KHR_materials_variants": { "mappings": [{ "material": 4, "variants": [1] }] }
+          }
+        }
+      ],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [{ "attributes": { "POSITION": 18, "NORMAL": 19 }, "indices": 20, "material": 0 }],
+      "primitives": [
+        {
+          "attributes": { "POSITION": 18, "NORMAL": 19 },
+          "indices": 20,
+          "material": 0,
+          "extensions": {
+            "KHR_materials_variants": {
+              "mappings": [
+                { "material": 2, "variants": [0] },
+                { "material": 3, "variants": [1] },
+                { "material": 5, "variants": [2] }
+              ]
+            }
+          }
+        }
+      ],
       "extensions": { "JIG_recipe": { "baked": true } }
     }
   ],

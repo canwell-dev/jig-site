@@ -116,6 +116,9 @@ input.f.expr { color: var(--expr); border-color: color-mix(in srgb, var(--expr) 
 #sketch .hline { stroke: var(--accent); }
 #sketch .hdl { fill: var(--panel); stroke: var(--accent); cursor: grab; }
 #sketch .hdl.locked { stroke: var(--expr); cursor: not-allowed; }
+.setbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px 12px 0; }
+.setbar label { font: 10.5px var(--mono); color: var(--mute); text-transform: uppercase; letter-spacing: .05em; }
+.setbar .f { width: auto; min-width: 90px; }
 .ptable { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(90px, 2fr) 54px 64px 64px 64px 22px; gap: 4px 6px; align-items: center; padding: 8px 12px; }
 .vtable { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(120px, 3fr) 64px 22px; gap: 4px 6px; align-items: center; padding: 0 12px 10px; }
 .ptable .hd, .vtable .hd { font: 10.5px var(--mono); color: var(--mute); text-transform: uppercase; letter-spacing: .05em; }
@@ -243,11 +246,11 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=3a5cc4d';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=0efcfe6';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=3a5cc4d', loft: 'examples/loft.gltf?v=3a5cc4d', star: 'examples/star.gltf?v=3a5cc4d', bench: 'examples/bench.gltf?v=3a5cc4d' };
+const examples = { box: 'examples/box.gltf?v=0efcfe6', loft: 'examples/loft.gltf?v=0efcfe6', star: 'examples/star.gltf?v=0efcfe6', bench: 'examples/bench.gltf?v=0efcfe6' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -817,7 +820,7 @@ function sketchMove(e) {
 function sketchUp() { if (sketchDrag) { sketchDrag = null; commit(); } }
 
 // ---------- parameters ----------
-let varOut = {}, sliderOut = {};
+let varOut = {}, sliderOut = {}, chosenSet = '';
 // Color forms to type a color in. The file always holds linear [r, g, b, a] 0..1 (glTF, Blender); the others are
 // sRGB like a color picker: hex, 0..255 channels, HSV (h 0..360, s and v 0..100). Alpha is never converted.
 let colorForm = 'hex';
@@ -856,11 +859,11 @@ function params() {
   varOut = {}; sliderOut = {};
   const nameIn = (list, key) => {
     const e = el('input', { id: `${list}-name-${key}`, className: 'f', value: key, autocomplete: 'off', spellcheck: false,
-      onchange: (ev) => { const to = ev.target.value.trim(); if (!to || to === key) return; r[list] = renamed(r[list], key, to); if (key in values) { values[to] = values[key]; delete values[key]; } note = `Renamed ${key} to ${to}. Expressions that use ${key} still say ${key}.`; commit(); } });
+      onchange: (ev) => { const to = ev.target.value.trim(); if (!to || to === key) return; r[list] = renamed(r[list], key, to); if (list === 'params' && isObj(r.sets)) for (const n in r.sets) r.sets[n] = renamed(r.sets[n], key, to); if (key in values) { values[to] = values[key]; delete values[key]; } note = `Renamed ${key} to ${to}. Expressions that use ${key} still say ${key}.`; commit(); } });
     e.setAttribute('aria-label', `${key} name`); return e;
   };
   const del = (list, key) => el('button', { type: 'button', className: 'x', textContent: '×', title: `Remove ${key}`, ariaLabel: `Remove ${key}`,
-    onclick: () => { delete r[list][key]; delete values[key]; if (!Object.keys(r[list]).length) delete r[list]; commit(); } });
+    onclick: () => { delete r[list][key]; delete values[key]; if (list === 'params' && isObj(r.sets)) for (const n in r.sets) delete r.sets[n][key]; if (!Object.keys(r[list]).length) delete r[list]; commit(); } });
   const num = (key, k) => {
     const e = el('input', { id: `p-${k}-${key}`, className: 'f wide', type: 'number', step: 'any', value: P[key][k],
       onchange: (ev) => { const v = ev.target.valueAsNumber; if (Number.isFinite(v)) { P[key][k] = v; commit(); } } });
@@ -907,7 +910,23 @@ function params() {
       return [nameIn('vars', k), ex, o, del('vars', k)];
     }),
     el('div', { style: 'grid-column:1/-1' }, btn('+ Variable', () => { r.vars = { ...(r.vars ?? {}), [fresh('v', taken)]: 1 }; commit(); })));
-  $('#paneParams').replaceChildren(grid1, grid2);
+  // Sets (draft f8): named parameter values. Choosing one tries its values; the document keeps its defaults.
+  const S = isObj(r.sets) ? r.sets : {};
+  if (!(chosenSet in S)) chosenSet = '';
+  const pickSet = el('select', { id: 'set-pick', className: 'f', onchange: (ev) => { chosenSet = ev.target.value; if (chosenSet) { for (const k in values) delete values[k]; Object.assign(values, structuredClone(S[chosenSet])); } live(); params(); } },
+    el('option', { value: '', textContent: '— none —' }), ...Object.keys(S).map((n) => el('option', { value: n, textContent: n, selected: n === chosenSet })));
+  pickSet.setAttribute('aria-label', 'Set');
+  const setName = chosenSet && el('input', { id: 'set-name', className: 'f', value: chosenSet, autocomplete: 'off', spellcheck: false,
+    onchange: (ev) => { const to = ev.target.value.trim(); if (!to || to in S) return; r.sets = renamed(S, chosenSet, to); chosenSet = to; commit(); } });
+  if (setName) setName.setAttribute('aria-label', 'Set name');
+  const setBar = el('div', { className: 'setbar' }, el('label', { htmlFor: 'set-pick', textContent: 'Set' }), pickSet, setName,
+    btn(chosenSet ? 'Save values to set' : '+ Set from values', () => {
+      const now = Object.fromEntries(Object.entries(out?.params ?? {}).map(([k, p]) => [k, p.value]));
+      if (!chosenSet) chosenSet = fresh('set', new Set(Object.keys(S)));
+      r.sets = { ...S, [chosenSet]: now }; commit();
+    }, 'Store the value of every parameter now under this set'),
+    chosenSet && btn('Remove set', () => { delete S[chosenSet]; if (!Object.keys(S).length) delete r.sets; chosenSet = ''; commit(); }));
+  $('#paneParams').replaceChildren(setBar, grid1, grid2);
 }
 // A slider moved: values only, not the document, so no undo step.
 function live() {
@@ -1091,7 +1110,7 @@ async function openExample(name, fresh = false) {
 const save = () => { download(fileName, stringify(doc)); note = `Saved ${fileName} (recipe, no baked meshes).`; status(); };
 function bakeDownload() {
   let gltf;
-  try { gltf = bake(doc, values).gltf; } catch (e) { note = `Bake: ${e.message}`; return status(); }
+  try { gltf = bake(doc, values, { set: chosenSet || null }).gltf; } catch (e) { note = `Bake: ${e.message}`; return status(); }
   download(fileName, stringify(gltf));
   // The bake records the slider values as baked_values; keep them in the document.
   const r = strip(gltf).extensions[EXT];
