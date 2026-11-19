@@ -331,9 +331,13 @@ function loft(l, scope, at) {
     only(s, ['t', 'points'], sat);
     const t = num(s.t, scope, `${sat}/t`);
     need(t >= 0 && t <= 1, `${sat}/t`, `must be in 0..1, is ${t}`);
-    const pts = list(s.points, `${sat}/points`).map((p, j) => vec(p, 2, scope, `${sat}/points/${j}`));
+    const pts = list(s.points, `${sat}/points`).map((p, j) => {
+      const pat = `${sat}/points/${j}`;
+      need(Array.isArray(p) && (p.length === 2 || p.length === 4), pat, 'must be [u, v] or [u, v, hu, hv]');
+      return p.map((e, k) => num(e, scope, `${pat}/${k}`));
+    });
     need(pts.length >= 3, `${sat}/points`, 'needs at least 3 points');
-    need(Math.abs(area(pts)) > 1e-12, `${sat}/points`, 'must enclose an area');
+    need(Math.abs(area(outline(pts))) > 1e-12, `${sat}/points`, 'must enclose an area');
     return { t, points: pts };
   });
   const int = (k, dflt, lo, hi) => {
@@ -383,7 +387,7 @@ function loftGeometry(m) {
   const curve = loftCurve(m), n = m.sides;
   // Rings counter-clockwise, still starting at point 0, so the surface faces out.
   const ccw = (pts) => (area(pts) > 0 ? pts : [pts[0], ...pts.slice(1).reverse()]);
-  const secs = [...m.sections].sort((a, b) => a.t - b.t).map((s) => ({ t: s.t, ring: resample(ccw(s.points), n) }));
+  const secs = [...m.sections].sort((a, b) => a.t - b.t).map((s) => ({ t: s.t, ring: resample(ccw(outline(s.points)), n) }));
   const ts = [...new Set([...Array.from({ length: m.steps + 1 }, (_, i) => i / m.steps), ...secs.map((s) => s.t)])].sort((a, b) => a - b);
   const shapeAt = (t) => {
     const j = secs.findIndex((s) => s.t > t);
@@ -422,6 +426,25 @@ function loftGeometry(m) {
     }
   }
   return { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices) };
+}
+
+const CURVE_STEPS = 16; // polygon edges per bezier edge
+
+// A section's closed outline as a polygon, starting at its point 0. A point [u, v] is a corner; [u, v, hu, hv]
+// is smooth, with bezier handles at (u, v) ± (hu, hv). An edge with a smooth end is a cubic bezier.
+export function outline(pts) {
+  const out = [];
+  pts.forEach((a, i) => {
+    const b = pts[(i + 1) % pts.length];
+    out.push([a[0], a[1]]);
+    if (a.length < 4 && b.length < 4) return;
+    const c1 = [a[0] + (a[2] ?? 0), a[1] + (a[3] ?? 0)], c2 = [b[0] - (b[2] ?? 0), b[1] - (b[3] ?? 0)];
+    for (let k = 1; k < CURVE_STEPS; k++) {
+      const t = k / CURVE_STEPS, s = 1 - t;
+      out.push([0, 1].map((q) => s * s * s * a[q] + 3 * s * s * t * c1[q] + 3 * s * t * t * c2[q] + t * t * t * b[q]));
+    }
+  });
+  return out;
 }
 
 // n points evenly spaced along a closed polygon's perimeter, starting at its point 0.

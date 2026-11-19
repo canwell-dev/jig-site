@@ -45,6 +45,10 @@
   #shape .vtx { fill: var(--accent); cursor: grab; }
   #shape .vtx.first { fill: var(--fg); }
   #shape .mid { fill: var(--panel); stroke: var(--accent); cursor: copy; }
+  #shape .vtx.on { stroke: var(--fg); stroke-width: 0.4%; }
+  #shape .hdl { fill: var(--panel); stroke: var(--accent); stroke-width: 0.4%; cursor: grab; }
+  #shape .points { display: flex; gap: 6px; align-items: center; }
+  #shape .points span { flex: 1; white-space: nowrap; }
   @media (max-width: 700px) { body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); } }
 </style>
 <script type="importmap">
@@ -75,7 +79,7 @@ if (!HTMLScriptElement.supports?.('importmap')) showError('this browser does not
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { read, bake, stringify, geometry, loftCurve, loftFrame, EXT } from './jig.js?v=4368a5a';
+import { read, bake, stringify, geometry, loftCurve, loftFrame, outline, EXT } from './jig.js?v=c62e46c';
 
 const src = document.getElementById('src'), defsEl = document.getElementById('defs'), errEl = document.getElementById('err');
 const view = document.getElementById('view'), slidersEl = document.getElementById('sliders');
@@ -269,7 +273,7 @@ function loftHelpers(out) {
     }
     m.sections.forEach((s, i) => {
       const f = loftFrame(curve, s.t);
-      const ring = s.points.map(([u, v]) => v3(f.p.map((c, a) => c + u * f.x[a] + v * f.y[a])));
+      const ring = outline(s.points).map(([u, v]) => v3(f.p.map((c, a) => c + u * f.x[a] + v * f.y[a])));
       g.add(line(ring, sel?.mesh === k && sel.section === i ? hot : cold, true));
       // The ring's line, and its centre on the curve, so a click there grabs it instead of adding a section.
       if (tool === 'sections') picks.push({ ...helper, kind: 'ring', index: i, local: ring, loop: true },
@@ -354,7 +358,7 @@ canvas.addEventListener('pointerdown', (e) => {
     startPointDrag(point.pick, point.pick.world[0]);
   } else if (ring && ring.d < 8) {
     sel = { mesh: ring.pick.mesh, section: ring.pick.index };
-    drag = { kind: 't', mesh: ring.pick.mesh, section: ring.pick.index };
+    drag = { kind: 't', mesh: ring.pick.mesh, section: ring.pick.index, from: [e.offsetX, e.offsetY] }; // slides once moved
   } else if (onCurve && onCurve.d < 8) {
     const { pick, i, f } = onCurve, mesh = pick.mesh;
     if (tool === 'curve') {
@@ -393,6 +397,8 @@ canvas.addEventListener('pointermove', (e) => {
     if (hit) edit((r) => { loftOf(r, drag.mesh).path[drag.index] = hit.applyMatrix4(drag.toLocal).toArray().map(r3); });
   } else {
     const on = nearest(e, ['curve']);
+    if (drag.from && Math.hypot(e.offsetX - drag.from[0], e.offsetY - drag.from[1]) < 4) return;
+    drag.from = null;
     if (on && on.pick.mesh === drag.mesh) edit((r) => { loftOf(r, drag.mesh).sections[drag.section].t = tOnCurve(on); });
   }
 });
@@ -405,10 +411,21 @@ addEventListener('keydown', (e) => {
 });
 
 // The selected section's shape, in its own plane: u right, v up (the curve runs out of the screen).
+// A point is a corner [u, v] or smooth [u, v, hu, hv] with bezier handles at ± (hu, hv).
 const svgNS = 'http://www.w3.org/2000/svg';
 const svgEl = (tag, attrs) => { const e = document.createElementNS(svgNS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
-const svg = svgEl('svg', {});
-let tInput, shapeDrag = null;
+const svg = svgEl('svg', {}), pointBar = el('div', { className: 'points' });
+let tInput, shapeDrag = null, shapePoint = 0;
+
+// Where a + sits on edge i, and the point that splits the edge there (smooth when the edge curves).
+function midpoint(pts, i) {
+  const a = pts[i], b = pts[(i + 1) % pts.length];
+  if (a.length < 4 && b.length < 4) return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const c1 = [a[0] + (a[2] ?? 0), a[1] + (a[3] ?? 0)], c2 = [b[0] - (b[2] ?? 0), b[1] - (b[3] ?? 0)];
+  // Bezier at 1/2, and the handle that keeps the halves on the same curve: B'(1/2) / 6.
+  return [0, 1].map((q) => (a[q] + 3 * c1[q] + 3 * c2[q] + b[q]) / 8)
+    .concat([0, 1].map((q) => (b[q] + c2[q] - c1[q] - a[q]) / 8));
+}
 
 function shapePanel(out) {
   const s = sel?.section !== undefined ? out.meshes[sel.mesh].sections[sel.section] : null;
@@ -418,50 +435,82 @@ function shapePanel(out) {
   if (key !== shapeFor) {
     // Fit the view once per selection, so it holds still while points move.
     shapeFor = key;
-    shapeScale = Math.max(0.05, ...out.meshes[sel.mesh].sections.flatMap((x) => x.points.flat().map(Math.abs))) * 1.4;
+    shapePoint = 0;
+    shapeScale = Math.max(0.05, ...out.meshes[sel.mesh].sections.flatMap((x) => x.points.flatMap((p) => p.slice(0, 2)).map(Math.abs))) * 1.4;
     tInput = el('input', { type: 'number', step: 0.01, min: 0, max: 1, ariaLabel: 'section t',
       oninput: (e) => { const t = e.target.valueAsNumber; if (t >= 0 && t <= 1) edit((r) => { loftOf(r, sel.mesh).sections[sel.section].t = t; }); } });
     shapeEl.replaceChildren(
       el('header', {}, el('span', {}, `Section ${sel.section} · t`), tInput,
         el('button', { type: 'button', textContent: '×', title: 'Close', onclick: () => { sel = { mesh: sel.mesh }; rebuild(); } })),
-      svg,
-      el('small', {}, 'Drag a point. Drag a + to add one. Double-click a point to remove it.'));
+      svg, pointBar,
+      el('small', {}, 'Drag a point or a handle. Drag a + to add a point. Double-click a point to switch corner / smooth.'));
   }
   if (document.activeElement !== tInput) tInput.value = s.t;
-  const k = shapeScale, pts = s.points;
+  const pts = s.points;
+  shapePoint = Math.min(shapePoint, pts.length - 1);
+  const smooth = pts[shapePoint].length === 4;
+  pointBar.replaceChildren(el('span', {}, `Point ${shapePoint}`),
+    el('button', { type: 'button', textContent: smooth ? 'Make corner' : 'Make smooth', onclick: () => toggleSmooth(shapePoint) }),
+    el('button', { type: 'button', textContent: 'Remove', disabled: pts.length <= 3,
+      onclick: () => editPoints((p) => { if (p.length > 3) p.splice(shapePoint, 1); }) }));
+  const k = shapeScale, r = k * 0.045, thin = k / 150;
   svg.setAttribute('viewBox', `${-k} ${-k} ${2 * k} ${2 * k}`);
-  const r = k * 0.045;
+  const handles = pts.flatMap(([u, v, hu, hv], i) => (hu === undefined ? [] : [
+    svgEl('line', { x1: u - hu, y1: -(v - hv), x2: u + hu, y2: -(v + hv), stroke: 'var(--accent)', 'stroke-width': thin }),
+    svgEl('rect', { class: 'hdl', x: u - hu - r * 0.6, y: -(v - hv) - r * 0.6, width: r * 1.2, height: r * 1.2, 'data-hin': i }),
+    svgEl('rect', { class: 'hdl', x: u + hu - r * 0.6, y: -(v + hv) - r * 0.6, width: r * 1.2, height: r * 1.2, 'data-hout': i }),
+  ]));
   svg.replaceChildren(
-    svgEl('line', { x1: -k, y1: 0, x2: k, y2: 0, stroke: 'currentColor', 'stroke-opacity': 0.2, 'stroke-width': k / 150 }),
-    svgEl('line', { x1: 0, y1: -k, x2: 0, y2: k, stroke: 'currentColor', 'stroke-opacity': 0.2, 'stroke-width': k / 150 }),
-    svgEl('polygon', { points: pts.map(([u, v]) => `${u},${-v}`).join(' '), fill: 'var(--accent)', 'fill-opacity': 0.15,
+    svgEl('line', { x1: -k, y1: 0, x2: k, y2: 0, stroke: 'currentColor', 'stroke-opacity': 0.2, 'stroke-width': thin }),
+    svgEl('line', { x1: 0, y1: -k, x2: 0, y2: k, stroke: 'currentColor', 'stroke-opacity': 0.2, 'stroke-width': thin }),
+    svgEl('polygon', { points: outline(pts).map(([u, v]) => `${u},${-v}`).join(' '), fill: 'var(--accent)', 'fill-opacity': 0.15,
       stroke: 'var(--accent)', 'stroke-width': k / 100 }),
-    ...pts.map(([u, v], i) => {
-      const [u2, v2] = pts[(i + 1) % pts.length];
-      return svgEl('circle', { class: 'mid', cx: (u + u2) / 2, cy: -(v + v2) / 2, r: r * 0.7, 'stroke-width': k / 150, 'data-mid': i });
-    }),
-    ...pts.map(([u, v], i) => svgEl('circle', { class: `vtx${i ? '' : ' first'}`, cx: u, cy: -v, r, 'data-vtx': i })),
+    ...pts.map((_, i) => { const [u, v] = midpoint(pts, i); return svgEl('circle', { class: 'mid', cx: u, cy: -v, r: r * 0.7, 'stroke-width': thin, 'data-mid': i }); }),
+    ...handles,
+    ...pts.map(([u, v], i) => svgEl('circle', { class: `vtx${i ? '' : ' first'}${i === shapePoint ? ' on' : ''}`, cx: u, cy: -v, r, 'data-vtx': i })),
   );
 }
+
+// Corner -> smooth with a handle along the neighbours (a Catmull-Rom tangent); smooth -> corner drops it.
+const toggleSmooth = (i) => editPoints((p) => {
+  if (p[i].length === 4) { p[i] = p[i].slice(0, 2); return; }
+  const [prev, next] = [s0.points[(i + p.length - 1) % p.length], s0.points[(i + 1) % p.length]];
+  p[i] = [p[i][0], p[i][1], r3((next[0] - prev[0]) / 6), r3((next[1] - prev[1]) / 6)];
+});
+// The selected section as evaluated (numbers, even where the JSON has expressions).
+let s0 = null;
 
 const uv = (e) => { const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse()); return [r3(p.x), r3(-p.y)]; };
 const editPoints = (fn) => edit((r) => fn(loftOf(r, sel.mesh).sections[sel.section].points));
 let lastTap = {};
 svg.addEventListener('pointerdown', (e) => {
-  const { vtx, mid } = e.target.dataset ?? {};
-  // A double tap removes a point. Not dblclick: with pointer capture it lands on the svg, not the point.
+  const { vtx, mid, hin, hout } = e.target.dataset ?? {};
+  s0 = last.meshes[sel.mesh].sections[sel.section];
+  // A double tap switches corner / smooth. Not dblclick: with pointer capture it lands on the svg, not the point.
   if (vtx !== undefined && lastTap.vtx === vtx && e.timeStamp - lastTap.time < 400) {
     lastTap = {};
-    editPoints((p) => { if (p.length > 3) p.splice(+vtx, 1); });
+    toggleSmooth(+vtx);
     return;
   }
   lastTap = { vtx, time: e.timeStamp };
-  if (vtx !== undefined) shapeDrag = +vtx;
-  else if (mid !== undefined) { shapeDrag = +mid + 1; editPoints((p) => p.splice(shapeDrag, 0, uv(e))); }
-  else return;
+  if (vtx !== undefined) { shapePoint = +vtx; shapeDrag = { i: +vtx }; rebuild(); }
+  else if (hin !== undefined || hout !== undefined) shapeDrag = { i: +(hin ?? hout), handle: hin !== undefined ? -1 : 1 };
+  else if (mid !== undefined) {
+    const i = +mid + 1;
+    shapePoint = i; shapeDrag = { i };
+    editPoints((p) => p.splice(i, 0, midpoint(s0.points, +mid).map(r3)));
+  } else return;
   svg.setPointerCapture(e.pointerId);
 });
-svg.addEventListener('pointermove', (e) => { if (shapeDrag !== null) editPoints((p) => { p[shapeDrag] = uv(e); }); });
+svg.addEventListener('pointermove', (e) => {
+  if (!shapeDrag) return;
+  const { i, handle } = shapeDrag, q = uv(e);
+  editPoints((p) => {
+    if (!handle) { p[i] = [...q, ...p[i].slice(2)]; return; }
+    const [u, v] = last.meshes[sel.mesh].sections[sel.section].points[i];
+    p[i] = [p[i][0], p[i][1], r3((q[0] - u) * handle), r3((q[1] - v) * handle)];
+  });
+});
 svg.addEventListener('pointerup', () => { shapeDrag = null; });
 svg.addEventListener('pointercancel', () => { shapeDrag = null; });
 
@@ -485,7 +534,7 @@ document.getElementById('bake').onclick = () => {
   a.click();
   URL.revokeObjectURL(a.href);
 };
-const example = new URLSearchParams(location.search).get('example') === 'loft' ? 'examples/loft.gltf?v=4368a5a' : 'examples/box.gltf?v=4368a5a';
+const example = new URLSearchParams(location.search).get('example') === 'loft' ? 'examples/loft.gltf?v=c62e46c' : 'examples/box.gltf?v=c62e46c';
 load(await (await fetch(example)).text());
 </script>
 </body>
