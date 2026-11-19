@@ -132,13 +132,14 @@ function node(n, meshCount, scope, at) {
   const xat = `${at}/extensions/${EXT}`;
   const x = n.extensions?.[EXT] ?? {};
   need(isObj(x), xat, 'must be an object');
-  only(x, ['mesh', 'translation', 'rotation', 'scale', 'repeat'], xat);
+  only(x, ['mesh', 'translation', 'rotation', 'euler', 'scale', 'repeat'], xat);
+  need(x.rotation === undefined || x.euler === undefined, `${xat}/euler`, 'cannot stand next to rotation');
   if (x.mesh !== undefined) {
     need(Number.isInteger(x.mesh) && x.mesh >= 0 && x.mesh < meshCount, `${xat}/mesh`, `must be a recipe mesh index 0..${meshCount - 1}`);
   }
   if (n.matrix !== undefined) {
-    need(['translation', 'rotation', 'scale'].every((k) => x[k] === undefined), `${at}/matrix`,
-      `a node with a matrix cannot take translation, rotation or scale from ${EXT}`);
+    need(['translation', 'rotation', 'euler', 'scale'].every((k) => x[k] === undefined), `${at}/matrix`,
+      `a node with a matrix cannot take translation, rotation, euler or scale from ${EXT}`);
     need(Array.isArray(n.matrix) && n.matrix.length === 16 && n.matrix.every((c) => typeof c === 'number'), `${at}/matrix`, 'must be a list of 16 numbers');
   }
   const pick = (k, size, dflt) => {
@@ -154,10 +155,17 @@ function node(n, meshCount, scope, at) {
     need(len > 1e-9, `${xat}/rotation`, 'must not be all zero');
     rotation = rotation.map((c) => c / len); // normalized (D-9), so the baked glTF is unit
   }
+  if (x.euler !== undefined) rotation = eulerQuat(vec(x.euler, 3, scope, `${xat}/euler`));
   const scale = pick('scale', 3, [1, 1, 1]);
   const children = n.children ?? [];
   need(Array.isArray(children), `${at}/children`, 'must be a list');
   return { mesh: x.mesh, translation, rotation, scale, matrix: n.matrix ?? compose(translation, rotation, scale), children, jig: x };
+}
+
+// Euler angles in degrees, Blender's XYZ order: about world x, then y, then z (matrix Rz·Ry·Rx), as a glTF quaternion.
+export function eulerQuat(deg) {
+  const [cx, cy, cz] = deg.map((d) => Math.cos((d * Math.PI) / 360)), [sx, sy, sz] = deg.map((d) => Math.sin((d * Math.PI) / 360));
+  return [sx * cy * cz - cx * sy * sz, cx * sy * cz + sx * cy * sz, cx * cy * sz - sx * sy * cz, cx * cy * cz + sx * sy * sz];
 }
 
 function mesh(m, scope, at) {
@@ -198,7 +206,7 @@ export function strip(doc) {
       if (kept.length < n.children.length) { if (kept.length) n.children = kept; else delete n.children; }
     }
     const x = n?.extensions?.[EXT];
-    if (isObj(x)) for (const k of ['mesh', 'translation', 'rotation', 'scale']) if (x[k] !== undefined) delete n[k];
+    if (isObj(x)) for (const k of ['mesh', 'translation', 'rotation', 'scale']) if (twin(x, k) !== undefined) delete n[k];
   }
   return d;
 }
@@ -254,7 +262,7 @@ export function bake(doc, values = {}, { uri } = {}) {
   for (const [i, n] of out.nodes.entries()) {
     if (!n || n.repeated) continue;
     if (n.jig.mesh !== undefined) d.nodes[i].mesh = base.meshes + n.jig.mesh;
-    for (const k of ['translation', 'rotation', 'scale']) if (n.jig[k] !== undefined) d.nodes[i][k] = n[k];
+    for (const k of ['translation', 'rotation', 'scale']) if (twin(n.jig, k) !== undefined) d.nodes[i][k] = n[k];
   }
   const place = (recs) => recs.forEach((rec) => {
     if (!rec.rep) return place(rec.kids);
@@ -671,6 +679,8 @@ const FUNCS = {
 };
 
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+// A recipe slot that sets core slot k: euler sets rotation.
+const twin = (x, k) => x[k] ?? (k === 'rotation' ? x.euler : undefined);
 function need(ok, at, msg) { if (!ok) throw new Error(`${at || '/'}: ${msg}`); }
 function only(o, keys, at) {
   for (const k of Object.keys(o)) need(keys.includes(k) || k.startsWith('//'), `${at}/${k}`, 'unknown key');

@@ -240,11 +240,11 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=7b73634';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=a0e63cc';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=7b73634', loft: 'examples/loft.gltf?v=7b73634', star: 'examples/star.gltf?v=7b73634', bench: 'examples/bench.gltf?v=7b73634' };
+const examples = { box: 'examples/box.gltf?v=a0e63cc', loft: 'examples/loft.gltf?v=a0e63cc', star: 'examples/star.gltf?v=a0e63cc', bench: 'examples/bench.gltf?v=a0e63cc' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -268,6 +268,10 @@ const DEFAULTS = { translation: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1,
 const nodeSrc = (i, slot) => doc.nodes[i]?.extensions?.[EXT]?.[slot] ?? doc.nodes[i]?.[slot] ?? DEFAULTS[slot];
 const setNodeSlot = (i, slot, v) => { X(i)[slot] = v; delete doc.nodes[i][slot]; }; // the core slot would be a stale bake cache
 const SLOT = { translate: 'translation', rotate: 'rotation', scale: 'scale' };
+// Rotation in degrees, Blender XYZ (three.js order 'ZYX'); the editor writes it as euler, never as a quaternion.
+const eulerSrc = (i) => doc.nodes[i]?.extensions?.[EXT]?.euler;
+const toDeg = (q) => { const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(...q).normalize(), 'ZYX'); return [e.x, e.y, e.z].map((r) => +((r * 180) / Math.PI).toFixed(2)); };
+const setEuler = (i, a) => { X(i).euler = a; delete X(i).rotation; delete doc.nodes[i].rotation; };
 function el(tag, props = {}, ...kids) {
   const e = Object.assign(document.createElement(tag), props);
   e.append(...kids.filter((k) => k !== null && k !== undefined && k !== false));
@@ -402,7 +406,7 @@ function placeGizmo() {
     if (doc.nodes[sel.node].matrix) { locked = ['matrix']; return; }
     pivot.matrix.fromArray(parentWorld(sel.node));
     proxy.position.fromArray(n.translation); proxy.quaternion.fromArray(n.rotation); proxy.scale.fromArray(n.scale);
-    const src = nodeSrc(sel.node, SLOT[gizmo]);
+    const src = (gizmo === 'rotate' && eulerSrc(sel.node)) || nodeSrc(sel.node, SLOT[gizmo]);
     if (gizmo === 'rotate') { if (src.some(isStr)) { locked = ['rotation']; return; } }
     else locked = src.map((v, k) => (isStr(v) ? 'xyz'[k] : null)).filter(Boolean);
     tc.setMode(gizmo);
@@ -425,8 +429,8 @@ function onGizmo() {
   const keep = (src, now) => now.map((c, k) => (isStr(src[k]) ? src[k] : r4(c)));
   if (mode === 'object') {
     const slot = SLOT[tc.mode], src = nodeSrc(sel.node, slot);
-    const now = slot === 'translation' ? proxy.position.toArray() : slot === 'scale' ? proxy.scale.toArray() : proxy.quaternion.toArray();
-    setNodeSlot(sel.node, slot, keep(src, now));
+    if (slot === 'rotation') setEuler(sel.node, toDeg(proxy.quaternion.toArray()));
+    else setNodeSlot(sel.node, slot, keep(src, slot === 'translation' ? proxy.position.toArray() : proxy.scale.toArray()));
   } else if (sel.point !== undefined) {
     const l = loftOf(sel.node);
     l.path[sel.point] = keep(l.path[sel.point], proxy.position.toArray());
@@ -563,16 +567,9 @@ function props() {
   if (n.matrix) t.append(el('p', {}, 'This node uses a glTF matrix. Edit it in Source.'));
   else {
     t.append(vecRow('Location', 't', nodeSrc(i, 'translation'), on?.translation, (a) => setNodeSlot(i, 'translation', a)));
-    const q = nodeSrc(i, 'rotation');
-    if (q.some(isStr)) t.append(vecRow('Rotation q', 'q', q, on?.rotation, (a) => setNodeSlot(i, 'rotation', a), 'q'));
-    else {
-      const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(...q).normalize());
-      const deg = [e.x, e.y, e.z].map((r) => +((r * 180) / Math.PI).toFixed(2));
-      t.append(vecRow('Rotation °', 'r', deg, deg, (a) => {
-        if (a.some(isStr)) { note = 'Rotation in degrees takes numbers. For an expression, write the quaternion in Source.'; return; }
-        setNodeSlot(i, 'rotation', new THREE.Quaternion().setFromEuler(new THREE.Euler(...a.map((d) => (d * Math.PI) / 180))).toArray().map(r4));
-      }));
-    }
+    const q = nodeSrc(i, 'rotation'), eu = eulerSrc(i);
+    if (!eu && q.some(isStr)) t.append(vecRow('Rotation q', 'q', q, on?.rotation, (a) => setNodeSlot(i, 'rotation', a), 'q'));
+    else t.append(vecRow('Rotation °', 'r', eu ?? toDeg(q), on && toDeg(on.rotation), (a) => setEuler(i, a)));
     t.append(vecRow('Scale', 's', nodeSrc(i, 'scale'), on?.scale, (a) => setNodeSlot(i, 'scale', a)));
   }
   kids.push(t);

@@ -9,6 +9,7 @@
         "depth": { "default": 0.42, "min": 0.3, "max": 0.7 },
         "height": { "default": 0.45, "min": 0.35, "max": 0.6 },
         "backrest": { "type": "bool", "default": true },
+        "recline": { "default": 10, "min": 0, "max": 25 },
         "arm_rests": { "type": "bool", "default": false }
       },
       "vars": {
@@ -36,6 +37,7 @@
         "depth": 0.42,
         "height": 0.45,
         "backrest": true,
+        "recline": 10,
         "arm_rests": false
       }
     }
@@ -79,7 +81,8 @@
       "extensions": {
         "JIG_recipe": {
           "repeat": { "count": "backrest", "index": "b" },
-          "translation": [0, "height", "inset - depth / 2"]
+          "translation": [0, "height", "inset - depth / 2"],
+          "euler": ["-recline", 0, 0]
         }
       }
     },
@@ -221,6 +224,7 @@
     {
       "name": "backrest",
       "translation": [0, 0.45, -0.155],
+      "rotation": [-0.08715574274765817, 0, 0, 0.9961946980917455],
       "children": [22, 23, 24, 25],
       "extensions": { "JIG_recipe": { "baked": true } }
     }
