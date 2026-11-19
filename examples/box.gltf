@@ -44,6 +44,13 @@
     {
       "buffer": 0,
       "byteOffset": 576,
+      "byteLength": 192,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 768,
       "byteLength": 72,
       "target": 34963,
       "extensions": { "JIG_recipe": { "baked": true } }
@@ -68,6 +75,13 @@
     },
     {
       "bufferView": 2,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC2",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 3,
       "componentType": 5123,
       "count": 36,
       "type": "SCALAR",
@@ -76,14 +90,14 @@
   ],
   "meshes": [
     {
-      "primitives": [{ "attributes": { "POSITION": 0, "NORMAL": 1 }, "indices": 2 }],
+      "primitives": [{ "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 3 }],
       "extensions": { "JIG_recipe": { "baked": true } }
     }
   ],
   "buffers": [
     {
-      "byteLength": 648,
-      "uri": "data:application/octet-stream;base64,mpmZPmZmZr6amZm+mpmZPmZmZj6amZm+mpmZPmZmZj6amZk+mpmZPmZmZr6amZk+mpmZvmZmZr6amZk+mpmZvmZmZj6amZk+mpmZvmZmZj6amZm+mpmZvmZmZr6amZm+mpmZvmZmZj6amZm+mpmZvmZmZj6amZk+mpmZPmZmZj6amZk+mpmZPmZmZj6amZm+mpmZPmZmZr6amZm+mpmZPmZmZr6amZk+mpmZvmZmZr6amZk+mpmZvmZmZr6amZm+mpmZvmZmZr6amZk+mpmZPmZmZr6amZk+mpmZPmZmZj6amZk+mpmZvmZmZj6amZk+mpmZvmZmZj6amZm+mpmZPmZmZj6amZm+mpmZPmZmZr6amZm+mpmZvmZmZr6amZm+AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcA",
+      "byteLength": 840,
+      "uri": "data:application/octet-stream;base64,mpmZPmZmZr6amZm+mpmZPmZmZj6amZm+mpmZPmZmZj6amZk+mpmZPmZmZr6amZk+mpmZvmZmZr6amZk+mpmZvmZmZj6amZk+mpmZvmZmZj6amZm+mpmZvmZmZr6amZm+mpmZvmZmZj6amZm+mpmZvmZmZj6amZk+mpmZPmZmZj6amZk+mpmZPmZmZj6amZm+mpmZPmZmZr6amZm+mpmZPmZmZr6amZk+mpmZvmZmZr6amZk+mpmZvmZmZr6amZm+mpmZvmZmZr6amZk+mpmZPmZmZr6amZk+mpmZPmZmZj6amZk+mpmZvmZmZj6amZk+mpmZvmZmZj6amZm+mpmZPmZmZj6amZm+mpmZPmZmZr6amZm+mpmZvmZmZr6amZm+AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAAAAAACAPwAAgD8AAIA/AACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcA",
       "extensions": { "JIG_recipe": { "baked": true } }
     }
   ]

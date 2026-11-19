@@ -95,7 +95,7 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     const x = m?.extensions?.[EXT], at = `/materials/${i}/extensions/${EXT}`;
     if (x === undefined || isBaked(m)) return null;
     need(isObj(x), at, 'must be an object');
-    only(x, Object.keys(MATERIAL_SLOTS), at);
+    only(x, [...Object.keys(MATERIAL_SLOTS), ...Object.keys(TEXTURE_SLOTS)], at);
     const unit = (v) => Math.min(1, Math.max(0, v));
     const color = (c, n, sat) => { // n channels: 4 for baseColorFactor, 3 for emissiveFactor (a parameter's alpha is dropped)
       if (typeof c === 'string' && params[c]?.type === 'color') return params[c].value.slice(0, n);
@@ -106,6 +106,19 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     if (x.baseColorFactor !== undefined) o.baseColorFactor = color(x.baseColorFactor, 4, `${at}/baseColorFactor`);
     for (const k of ['metallicFactor', 'roughnessFactor']) if (x[k] !== undefined) o[k] = unit(num(x[k], scope, `${at}/${k}`));
     if (x.emissiveFactor !== undefined) o.emissiveFactor = color(x.emissiveFactor, 3, `${at}/emissiveFactor`);
+    // Draft f11 (D-81): a texture slot's KHR_texture_transform, its values numbers or expressions.
+    for (const [k, place] of Object.entries(TEXTURE_SLOTS)) {
+      const t = x[k], tat = `${at}/${k}`;
+      if (t === undefined) continue;
+      need(isObj(t), tat, 'must be an object');
+      only(t, ['offset', 'rotation', 'scale'], tat);
+      const core = place === 'pbr' ? m.pbrMetallicRoughness?.[k] : m[k];
+      need(isObj(core) && Number.isInteger(core.index), tat, `needs the core ${place === 'pbr' ? 'pbrMetallicRoughness.' : ''}${k} it transforms`);
+      o[k] = {};
+      if (t.offset !== undefined) o[k].offset = vec(t.offset, 2, scope, `${tat}/offset`);
+      if (t.rotation !== undefined) o[k].rotation = num(t.rotation, scope, `${tat}/rotation`);
+      if (t.scale !== undefined) o[k].scale = vec(t.scale, 2, scope, `${tat}/scale`);
+    }
     return o;
   });
   const meshes = list(r.meshes, `${rat}/meshes`).map((m, i) => mesh(m, scope, `${rat}/meshes/${i}`, materials.length));
@@ -114,6 +127,20 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
   // `document`, or a `uri` as glTF's: a data: URI or a file name looked up in `files`.
   need(r.models === undefined || Array.isArray(r.models), `${rat}/models`, 'must be a list');
   const placed = [], placedKey = new Map(); // draft f10 (D-78): materials of placed documents, as finished glTF materials
+  // Draft f11: the textures those materials use, each { texture, image, sampler } with the image's uri made relative
+  // to this document; a placed material's texture slots index this list.
+  const placedTextures = [], textureKey = new Map();
+  const lift = (mat, lookup, dir, at) => {
+    for (const slot of textureSlots(mat)) {
+      const { texture, image, sampler } = structuredClone(lookup(slot.index));
+      need(typeof image?.uri === 'string', at, "a placed document's image needs a uri");
+      if (!/^([a-z][a-z0-9+.-]*:|\/)/i.test(image.uri)) image.uri = dir + image.uri;
+      const e = { texture, image, ...(sampler && { sampler }) }, key = JSON.stringify(e);
+      if (!textureKey.has(key)) textureKey.set(key, placedTextures.push(e) - 1);
+      slot.index = textureKey.get(key);
+    }
+    return mat;
+  };
   const addPlaced = (mat) => {
     const key = JSON.stringify(mat);
     if (!placedKey.has(key)) placedKey.set(key, placed.push(mat) - 1);
@@ -132,7 +159,7 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
       catch (e) { need(false, `${at}/uri`, `is not a JSON document: ${e.message}`); }
     }
     need(Object.hasOwn(files, m.uri), `${at}/uri`, `no file "${m.uri}" next to this document`);
-    return { doc: files[m.uri], label: m.uri };
+    return { doc: files[m.uri], label: m.uri, dir: m.uri.slice(0, m.uri.lastIndexOf('/') + 1) };
   });
 
   need(doc.nodes === undefined || Array.isArray(doc.nodes), '/nodes', 'must be a list');
@@ -228,11 +255,18 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     const off = meshes.length;
     // Its materials come along (D-78): each one a shape uses, at this copy's values, as a finished glTF material.
     m.stripped ??= strip(m.doc);
+    const dir = m.dir ?? '', sd = m.stripped;
+    const own = (i) => { // a texture of the placed document itself
+      const { source, sampler, ...texture } = sd.textures?.[i] ?? {};
+      need(isObj(sd.textures?.[i]) && isObj(sd.images?.[source]), `${xat}/model`, `in ${m.label}: texture ${i} or its image is missing`);
+      return { texture, image: sd.images[source], sampler: sampler === undefined ? undefined : sd.samplers?.[sampler] };
+    };
     meshes.push(...sub.meshes.map(({ material, placed: pm, ...mesh }) => {
-      if (pm !== undefined) return { ...mesh, placed: addPlaced(sub.placed[pm]) };
+      if (pm !== undefined) return { ...mesh, placed: addPlaced(lift(structuredClone(sub.placed[pm]), (i) => sub.placedTextures[i], dir, `${xat}/model`)) };
       if (material === undefined) return mesh;
-      const { extensions: { [EXT]: _, ...ext } = {}, ...rest } = structuredClone(m.stripped.materials[material]);
-      return { ...mesh, placed: addPlaced(slots({ ...rest, ...(Object.keys(ext).length && { extensions: ext }) }, sub.materials[material] ?? {})) };
+      const { extensions: { [EXT]: _, ...ext } = {}, ...rest } = structuredClone(sd.materials[material]);
+      const mat = slots({ ...rest, ...(Object.keys(ext).length && { extensions: ext }) }, sub.materials[material] ?? {});
+      return { ...mesh, placed: addPlaced(lift(mat, own, dir, `${xat}/model`)) };
     }));
     const skinAt = sub.skins.map(() => (bone ? bone.skin : skins.push([]) - 1));
     if (vis) sub.skins.forEach((js, k) => skins[skinAt[k]].push(...js));
@@ -254,7 +288,7 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
   // y of the floor in model space; hosts stand the model there. Default: the lowest point on the vertical line
   // through the origin, or 0 when no shape crosses that line.
   const floor = r.floor === undefined ? lowestOnAxis(meshes, instances) : num(r.floor, scope, `${rat}/floor`);
-  return { params, sets, vars, floor, materials, meshes, nodes, instances, tree, skins, placed };
+  return { params, sets, vars, floor, materials, meshes, nodes, instances, tree, skins, placed, placedTextures };
 }
 
 // Draft f10: the files a document's models name by relative `uri`, and theirs, as { name: document }, for read's
@@ -347,8 +381,12 @@ export function eulerQuat(deg) {
 
 function mesh(m, scope, at, materialCount) {
   need(isObj(m), at, 'must be an object');
-  only(m, ['box', 'loft', 'extrude', 'material'], at);
-  need(Object.keys(m).filter((k) => !k.startsWith('//') && k !== 'material').length === 1, at, 'must have one shape: box, loft or extrude');
+  only(m, ['box', 'loft', 'extrude', 'material', 'uv'], at);
+  need(Object.keys(m).filter((k) => !k.startsWith('//') && k !== 'material' && k !== 'uv').length === 1, at, 'must have one shape: box, loft or extrude');
+  if (m.uv !== undefined) { // draft f11 (D-80): texture coordinates as fractions of the shape, or in meters
+    need(UV.includes(m.uv), `${at}/uv`, `must be one of ${UV.map((u) => `"${u}"`).join(', ')}`);
+    return { ...mesh({ ...m, uv: undefined }, scope, at, materialCount), uv: m.uv };
+  }
   if (m.material !== undefined) { // sketch (draft f6): glTF's primitive.material
     need(Number.isInteger(m.material) && m.material >= 0 && m.material < materialCount, `${at}/material`, `must be a material index 0..${materialCount - 1}`);
     return { ...mesh({ ...m, material: undefined }, scope, at), material: m.material };
@@ -366,7 +404,8 @@ function mesh(m, scope, at, materialCount) {
 
 // --- Bake (D-11, D-14..D-17, D-23) ---
 
-const OWNED = ['meshes', 'accessors', 'bufferViews', 'buffers', 'nodes', 'materials', 'skins'];
+const OWNED = ['meshes', 'accessors', 'bufferViews', 'buffers', 'nodes', 'materials', 'skins', 'images', 'samplers', 'textures'];
+const KHR_TT = 'KHR_texture_transform';
 const KHR_VARIANTS = 'KHR_materials_variants';
 const isBaked = (o) => o?.extensions?.[EXT]?.baked === true;
 
@@ -395,7 +434,16 @@ export function strip(doc) {
       if (place === 'top') delete m[k];
       else if (isObj(m.pbrMetallicRoughness)) delete m.pbrMetallicRoughness[k];
     }
+    for (const [k, place] of Object.entries(TEXTURE_SLOTS)) { // the cache of a texture transform twin (draft f11)
+      const core = place === 'top' ? m[k] : m.pbrMetallicRoughness?.[k];
+      if (x[k] === undefined || !isObj(core?.extensions)) continue;
+      delete core.extensions[KHR_TT];
+      if (!Object.keys(core.extensions).length) delete core.extensions;
+    }
     if (isObj(m.pbrMetallicRoughness) && !Object.keys(m.pbrMetallicRoughness).length) delete m.pbrMetallicRoughness;
+  }
+  if (Array.isArray(d.extensionsUsed) && !JSON.stringify(d.materials ?? []).includes(`"${KHR_TT}"`)) {
+    d.extensionsUsed = d.extensionsUsed.filter((e) => e !== KHR_TT);
   }
   for (const sc of Array.isArray(d.scenes) ? d.scenes : []) { // drop baked skinned-mesh roots (draft f10)
     if (Array.isArray(sc?.nodes)) sc.nodes = sc.nodes.filter((c) => c < (d.nodes?.length ?? 0));
@@ -461,14 +509,23 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
     return i;
   };
   // Placed documents' materials (D-78): a baked material each, in order of first use.
-  const placedAt = {};
-  const matIndex = (m) => (m.placed === undefined ? m.material : (placedAt[m.placed] ??= add('materials', out.placed[m.placed])));
+  const placedAt = {}, texAt = {};
+  const placedTexture = (i) => { // draft f11: a placed material's texture, with its image and sampler, as baked items
+    const { texture, image, sampler } = out.placedTextures[i];
+    return add('textures', { ...texture, source: add('images', image), ...(sampler && { sampler: add('samplers', sampler) }) });
+  };
+  const placedMaterial = (p) => {
+    const mat = structuredClone(out.placed[p]);
+    for (const slot of textureSlots(mat)) slot.index = (texAt[slot.index] ??= placedTexture(slot.index));
+    return add('materials', mat);
+  };
+  const matIndex = (m) => (m.placed === undefined ? m.material : (placedAt[m.placed] ??= placedMaterial(m.placed)));
   // Only meshes a shown node draws unskinned are baked, in recipe order; meshAt maps recipe mesh to core mesh.
   const used = new Set(out.instances.filter((x) => !x.rec.bound).map((x) => x.mesh)), meshAt = {};
   for (const [mi, m] of out.meshes.entries()) {
     if (!used.has(mi)) continue;
     meshAt[mi] = base.meshes + Object.keys(meshAt).length;
-    const { positions, normals, indices: all } = geometry(m);
+    const { positions, normals, uvs, indices: all } = geometry(m);
     const short = positions.length / 3 <= 65535; // glTF reserves 65535 in 16-bit indices
     const indices = short ? Uint16Array.from(all) : all;
     const min = [0, 1, 2].map((a) => Math.min(...positions.filter((_, i) => i % 3 === a)));
@@ -476,12 +533,14 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
     const pos = add('accessors', { bufferView: view(positions, 34962), componentType: 5126, count: positions.length / 3,
       type: 'VEC3', min, max });
     const nor = add('accessors', { bufferView: view(normals, 34962), componentType: 5126, count: normals.length / 3, type: 'VEC3' });
+    const tex = add('accessors', { bufferView: view(uvs, 34962), componentType: 5126, count: uvs.length / 2, type: 'VEC2' });
     const idx = add('accessors', { bufferView: view(indices, 34963), componentType: short ? 5123 : 5125, count: indices.length, type: 'SCALAR' });
     const mat = matIndex(m);
-    add('meshes', { primitives: [{ attributes: { POSITION: pos, NORMAL: nor }, indices: idx, ...(mat !== undefined && { material: mat }),
+    add('meshes', { primitives: [{ attributes: { POSITION: pos, NORMAL: nor, TEXCOORD_0: tex }, indices: idx, ...(mat !== undefined && { material: mat }),
       ...(mapping[m.material] && { extensions: { [KHR_VARIANTS]: { mappings: mapping[m.material] } } }) }] });
   }
   out.materials.forEach((m, i) => { if (m) slots(d.materials[i], m); }); // the material cache (D-57)
+  if (JSON.stringify(d.materials ?? []).includes(`"${KHR_TT}"`) && !d.extensionsUsed.includes(KHR_TT)) d.extensionsUsed.push(KHR_TT);
 
   // Nodes outside any repeat get their cache in place; each shown copy of a repeated node becomes a baked node,
   // with baked copies of its subtree, appended to the repeated node's children (D-45); so does each shown node of
@@ -538,6 +597,7 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
       const max = [0, 1, 2].map((a) => Math.max(...positions.filter((_, i) => i % 3 === a)));
       const acc = (array, componentType, type, extra = {}) => add('accessors', { bufferView: view(array, 34962), componentType, count: n, type, ...extra });
       const attributes = { POSITION: acc(positions, 5126, 'VEC3', { min, max }), NORMAL: acc(normals, 5126, 'VEC3'),
+        TEXCOORD_0: acc(g.uvs, 5126, 'VEC2'),
         JOINTS_0: acc(new Uint16Array(4 * n).map((_, i) => (i % 4 ? 0 : joint)), 5123, 'VEC4'),
         WEIGHTS_0: acc(new Float32Array(4 * n).map((_, i) => (i % 4 ? 0 : 1)), 5126, 'VEC4') };
       const idx = add('accessors', { bufferView: view(indices, 34963), componentType: short ? 5123 : 5125, count: indices.length, type: 'SCALAR' });
@@ -556,17 +616,27 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
   return { gltf: d, bin };
 }
 
-// Triangles of a recipe mesh: { positions, normals, indices } (Float32Array, Float32Array, Uint32Array).
+// Triangles of a recipe mesh: { positions, normals, uvs, indices } (Float32Array x 3, Uint32Array). uvs are
+// TEXCOORD_0 in glTF's convention (draft f11, D-80): `"uv": "fit"` (default) fractions 0..1 of the shape, "meters"
+// the same layout in meters.
 export function geometry(m) {
-  if (m.type === 'loft') return loftGeometry(m);
-  if (m.type === 'extrude') return extrudeGeometry(m);
-  const g = boxGeometry(m.size);
+  const fit = (m.uv ?? 'fit') === 'fit';
+  if (m.type === 'loft') return loftGeometry(m, fit);
+  if (m.type === 'extrude') return extrudeGeometry(m, fit);
+  const g = boxGeometry(m.size, fit);
   return { ...g, indices: Uint32Array.from(g.indices) };
+}
+const UV = ['fit', 'meters'];
+
+// A flat face's coordinates: (u, v) in its own plane, seen from outside with +v up; fit to its bounds or in meters.
+function planarUv(pts, fit) {
+  const lo = [0, 1].map((a) => Math.min(...pts.map((p) => p[a]))), hi = [0, 1].map((a) => Math.max(...pts.map((p) => p[a])));
+  return pts.map(([u, v]) => (fit ? [(u - lo[0]) / (hi[0] - lo[0] || 1), (hi[1] - v) / (hi[1] - lo[1] || 1)] : [u, -v]));
 }
 
 // Box centred on the origin: 6 faces x 4 corners, outward normals, counter-clockwise seen from outside.
-function boxGeometry(size) {
-  const positions = [], normals = [], indices = [];
+function boxGeometry(size, fit = true) {
+  const positions = [], normals = [], uvs = [], indices = [];
   for (let a = 0; a < 3; a++) for (const s of [1, -1]) {
     const u = (a + 1) % 3, v = (a + 2) % 3, first = positions.length / 3;
     const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]]; // counter-clockwise around +a, since u x v = a
@@ -576,9 +646,11 @@ function boxGeometry(size) {
       p[a] = (s * size[a]) / 2; p[u] = (cu * size[u]) / 2; p[v] = (cv * size[v]) / 2; n[a] = s;
       positions.push(...p); normals.push(...n);
     }
+    // seen from outside: u runs along +u on a + face, back along it on a − face
+    uvs.push(...planarUv(corners.map(([cu, cv]) => [(s * cu * size[u]) / 2, (cv * size[v]) / 2]), fit).flat());
     indices.push(first, first + 1, first + 2, first, first + 2, first + 3);
   }
-  return { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint16Array(indices) };
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uvs), indices: new Uint16Array(indices) };
 }
 
 function base64(bytes) {
@@ -747,7 +819,7 @@ const inside = ([x, y], poly) => poly.reduce((c, p, i) => {
 
 // Caps: ear clipping, holes first bridged to the outline. Walls: a quad per outline edge, smooth normals across
 // curve samples and smooth points, split at corners.
-function extrudeGeometry(m) {
+function extrudeGeometry(m, fit = true) {
   const loops = [m.outline, ...m.holes].map((pts, i) => {
     const { poly, starts } = flatten(pts);
     const hard = new Set(starts.filter((_, k) => pts[k].length === 2));
@@ -755,28 +827,33 @@ function extrudeGeometry(m) {
     const order = keep ? poly.map((_, k) => k) : poly.map((_, k) => (poly.length - k) % poly.length);
     return { poly: order.map((k) => poly[k]), hard: order.map((k) => hard.has(k)) };
   });
-  const positions = [], normals = [], indices = [], h = m.depth / 2;
+  const positions = [], normals = [], uvs = [], indices = [], h = m.depth / 2;
   const flat = loops.flatMap((l) => l.poly);
   const tris = triangulate(loops.map((l) => l.poly));
   for (const [z, s] of [[h, 1], [-h, -1]]) {
     const first = positions.length / 3;
     for (const [x, y] of flat) { positions.push(x, y, z); normals.push(0, 0, s); }
+    uvs.push(...planarUv(flat.map(([x, y]) => [s * x, y]), fit).flat()); // seen from outside
     for (let k = 0; k < tris.length; k += 3) {
       const t = s > 0 ? [tris[k], tris[k + 1], tris[k + 2]] : [tris[k], tris[k + 2], tris[k + 1]];
       indices.push(...t.map((i) => first + i));
     }
   }
   for (const { poly, hard } of loops) {
-    const L = poly.length;
+    const L = poly.length, along = [0];
+    for (let k = 0; k < L; k++) along.push(along[k] + dist(poly[k], poly[(k + 1) % L]));
+    const U = (k) => (fit ? along[k] / along[L] : along[k]), V = (z) => (fit ? (h - z) / m.depth : h - z);
     const edge = (k) => { const a = poly[k % L], b = poly[(k + 1) % L]; return norm([b[1] - a[1], a[0] - b[0], 0]); };
     const at = (k, e) => (hard[k % L] ? edge(e) : norm(edge((k + L - 1) % L).map((c, q) => c + edge(k)[q])));
     for (let k = 0; k < L; k++) {
       const a = poly[k], b = poly[(k + 1) % L], na = at(k, k), nb = at(k + 1, k), first = positions.length / 3;
-      for (const [p, nn, z] of [[a, na, -h], [b, nb, -h], [b, nb, h], [a, na, h]]) { positions.push(p[0], p[1], z); normals.push(...nn); }
+      for (const [p, nn, z, e] of [[a, na, -h, k], [b, nb, -h, k + 1], [b, nb, h, k + 1], [a, na, h, k]]) {
+        positions.push(p[0], p[1], z); normals.push(...nn); uvs.push(U(e), V(z));
+      }
       indices.push(first, first + 1, first + 2, first, first + 2, first + 3);
     }
   }
-  return { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices) };
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uvs), indices: new Uint32Array(indices) };
 }
 
 // Triangles over loops[0] (counter-clockwise) minus the other loops (clockwise), as indices into all loops' points
@@ -856,42 +933,53 @@ export function loftFrame(curve, t) {
   return { p: lerp(a.p, b.p), x: cross(y, z), y, z };
 }
 
-function loftGeometry(m) {
+function loftGeometry(m, fit = true) {
   const curve = loftCurve(m), sorted = [...m.sections].sort((a, b) => a.t - b.t);
-  const spans = edgeSpans(sorted, m.sides), n = spans.reduce((a, b) => a + b, 0);
+  const spans = edgeSpans(sorted, m.sides), n = spans.reduce((a, b) => a + b, 0), w = n + 1; // w: ring + seam vertex
   const ccw = area(outline(sorted[0].points)) > 0;
   const ts = [...new Set([...Array.from({ length: m.steps + 1 }, (_, i) => i / m.steps), ...sorted.map((s) => s.t)])].sort((a, b) => a - b);
   const shapeAt = (t) => {
     const { points, twist } = blendAt(sorted, m.blend, t), ring = turn(resample(points, spans), twist);
     return ccw ? ring : [ring[0], ...ring.slice(1).reverse()]; // counter-clockwise, so the surface faces out
   };
-  const positions = [], indices = [];
-  const frames = ts.map((t) => loftFrame(curve, t));
+  const length = curve.reduce((a, c, i) => (i ? a + dist(c.p, curve[i - 1].p) : 0), 0);
+  // Each ring is closed by a copy of its point 0 (the seam), so u can run from 0 round to its whole length (D-80).
+  const positions = [], uvs = [], indices = [];
+  const frames = ts.map((t) => loftFrame(curve, t)), rings = ts.map(shapeAt);
   ts.forEach((t, r) => {
-    const { p, x, y } = frames[r];
-    for (const [u, v] of shapeAt(t)) positions.push(...[0, 1, 2].map((a) => p[a] + u * x[a] + v * y[a]));
+    const { p, x, y } = frames[r], ring = [...rings[r], rings[r][0]];
+    const round = [0];
+    for (let j = 1; j < w; j++) round.push(round[j - 1] + dist(ring[j], ring[j - 1]));
+    ring.forEach(([u, v], j) => {
+      positions.push(...[0, 1, 2].map((a) => p[a] + u * x[a] + v * y[a]));
+      uvs.push(fit ? round[j] / round[n] : round[j], fit ? t : t * length);
+    });
   });
   for (let r = 0; r < ts.length - 1; r++) for (let j = 0; j < n; j++) {
-    const a = r * n + j, a1 = r * n + ((j + 1) % n), b = a + n, b1 = a1 + n;
+    const a = r * w + j, a1 = a + 1, b = a + w, b1 = a1 + w;
     indices.push(a, a1, b1, a, b1, b);
   }
-  // Smooth normals on the side: area-weighted face normals summed per vertex.
+  // Smooth normals on the side: area-weighted face normals summed per vertex, the seam's two copies together.
   const at = (i) => positions.slice(3 * i, 3 * i + 3);
   const normals = new Array(positions.length).fill(0);
   for (let k = 0; k < indices.length; k += 3) {
     const [a, b, c] = [indices[k], indices[k + 1], indices[k + 2]];
     const f = cross(sub(at(b), at(a)), sub(at(c), at(a)));
-    for (const i of [a, b, c]) for (let q = 0; q < 3; q++) normals[3 * i + q] += f[q];
+    for (const i of [a, b, c]) for (let q = 0; q < 3; q++) normals[3 * (i % w === n ? i - n : i) + q] += f[q];
   }
-  for (let i = 0; i < normals.length; i += 3) normals.splice(i, 3, ...norm(normals.slice(i, i + 3)));
+  for (let i = 0; i < normals.length; i += 3) {
+    const v = i / 3;
+    normals.splice(i, 3, ...norm(normals.slice(3 * (v % w === n ? v - n : v), 3 * (v % w === n ? v - n : v) + 3)));
+  }
   // Flat caps, triangulated in the section plane so concave sections stay right (as extrude caps), facing back
-  // at the start and forward at the end.
+  // at the start and forward at the end; coordinates fit to the section's bounds, seen from outside.
   for (const [r, s] of [[0, -1], [ts.length - 1, 1]]) {
-    const first = positions.length / 3, tris = triangulate([shapeAt(ts[r])]);
-    for (let j = 0; j < n; j++) { positions.push(...at(r * n + j)); normals.push(...scale(frames[r].z, s)); }
+    const first = positions.length / 3, tris = triangulate([rings[r]]);
+    for (let j = 0; j < n; j++) { positions.push(...at(r * w + j)); normals.push(...scale(frames[r].z, s)); }
+    uvs.push(...planarUv(rings[r].map(([u, v]) => [s * u, v]), fit).flat());
     for (let k = 0; k < tris.length; k += 3) indices.push(...(s < 0 ? [tris[k], tris[k + 2], tris[k + 1]] : tris.slice(k, k + 3)).map((i) => first + i));
   }
-  return { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices) };
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uvs), indices: new Uint32Array(indices) };
 }
 
 const CURVE_STEPS = 16; // polygon edges per bezier edge
@@ -1076,8 +1164,19 @@ function slots(core, m) {
   const pbr = Object.fromEntries(Object.entries(m).filter(([k]) => MATERIAL_SLOTS[k] === 'pbr'));
   if (Object.keys(pbr).length) core.pbrMetallicRoughness = { ...pbr, ...core.pbrMetallicRoughness };
   if (m.emissiveFactor) core.emissiveFactor = m.emissiveFactor;
+  for (const [k, place] of Object.entries(TEXTURE_SLOTS)) {
+    if (!m[k]) continue;
+    const slot = place === 'pbr' ? core.pbrMetallicRoughness[k] : core[k];
+    slot.extensions = { ...slot.extensions, [KHR_TT]: m[k] };
+  }
   return core;
 }
+// Draft f11: glTF material texture slots; a recipe twin of the same name sets the slot's KHR_texture_transform.
+const TEXTURE_SLOTS = { baseColorTexture: 'pbr', metallicRoughnessTexture: 'pbr', normalTexture: 'top', occlusionTexture: 'top', emissiveTexture: 'top' };
+// A material's texture slots that name a texture: { index, ... } objects, to read or renumber in place.
+const textureSlots = (mat) => Object.entries(TEXTURE_SLOTS)
+  .map(([k, place]) => (place === 'pbr' ? mat?.pbrMetallicRoughness?.[k] : mat?.[k]))
+  .filter((slot) => isObj(slot) && Number.isInteger(slot.index));
 // A color value: linear [r, g, b, a], numbers 0..1, as glTF's baseColorFactor and Blender's color sockets.
 const isColor = (c) => Array.isArray(c) && c.length === 4 && c.every((x) => typeof x === 'number' && x >= 0 && x <= 1);
 // A recipe slot that sets core slot k: euler sets rotation.

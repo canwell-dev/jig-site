@@ -258,12 +258,12 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=67c0c84';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=562e806';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=67c0c84', loft: 'examples/loft.gltf?v=67c0c84', star: 'examples/star.gltf?v=67c0c84', bench: 'examples/bench.gltf?v=67c0c84',
-  finger: 'examples/finger.gltf?v=67c0c84', hand: 'examples/hand.gltf?v=67c0c84' };
+const examples = { box: 'examples/box.gltf?v=562e806', loft: 'examples/loft.gltf?v=562e806', star: 'examples/star.gltf?v=562e806', bench: 'examples/bench.gltf?v=562e806',
+  finger: 'examples/finger.gltf?v=562e806', hand: 'examples/hand.gltf?v=562e806' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -390,8 +390,29 @@ for (const el of document.querySelectorAll('.gut')) {
 }
 
 let geos = [], mats = [], edit = null; // edit: { curve, group, mesh, rings } of the loft being edited
-function bufferGeometry({ positions, normals, indices }) {
+// Draft f11: a material slot's texture as three.js does it for glTF (GLTFLoader): image by uri relative to the
+// document (an example's URL; a file opened from disk resolves against the page, so only data: URIs work there),
+// glTF's wrap modes, no flip, KHR_texture_transform as offset, rotation and repeat. Images are cached by URL.
+let docBase = null;
+const images = new Map(), loader = new THREE.ImageLoader(), WRAP = { 33071: THREE.ClampToEdgeWrapping, 33648: THREE.MirroredRepeatWrapping };
+function textureOf(slot, placed, transform, srgb) {
+  if (!Number.isInteger(slot?.index)) return null;
+  const e = placed ? out.placedTextures[slot.index]
+    : { image: doc.images?.[doc.textures?.[slot.index]?.source], sampler: doc.samplers?.[doc.textures?.[slot.index]?.sampler] };
+  if (typeof e?.image?.uri !== 'string') return null;
+  const url = new URL(e.image.uri, docBase ?? location.href).href, t = new THREE.Texture();
+  if (!images.has(url)) images.set(url, new Promise((ok) => loader.load(url, ok, undefined, () => ok(null))));
+  images.get(url).then((img) => { if (img) { t.image = img; t.needsUpdate = true; } });
+  t.flipY = false; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  t.wrapS = WRAP[e.sampler?.wrapS] ?? THREE.RepeatWrapping; t.wrapT = WRAP[e.sampler?.wrapT] ?? THREE.RepeatWrapping;
+  if (transform?.offset) t.offset.fromArray(transform.offset);
+  if (transform?.rotation) t.rotation = transform.rotation;
+  if (transform?.scale) t.repeat.fromArray(transform.scale);
+  return t;
+}
+function bufferGeometry({ positions, normals, uvs, indices }) {
   const g = new THREE.BufferGeometry();
+  g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2)); // TEXCOORD_0 (draft f11)
   g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   g.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
   g.setIndex(new THREE.BufferAttribute(indices, 1));
@@ -399,7 +420,7 @@ function bufferGeometry({ positions, normals, indices }) {
 }
 const v3 = (a) => new THREE.Vector3(...a);
 function draw() {
-  for (const g of [...geos, ...mats]) g.dispose();
+  for (const g of [...geos, ...mats]) { g.dispose(); for (const k of ['map', 'normalMap', 'roughnessMap', 'aoMap', 'emissiveMap']) g[k]?.dispose(); }
   for (const c of helperLayer.children) c.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
   meshLayer.clear(); helperLayer.clear(); edit = null;
   if (!out) return;
@@ -418,6 +439,14 @@ function draw() {
       if (core.alphaMode === 'BLEND') { t.transparent = true; t.opacity = f[3]; }
       t.metalness = x.metallicFactor ?? pbr.metallicFactor ?? 1; t.roughness = x.roughnessFactor ?? pbr.roughnessFactor ?? 1;
       if (e && !on) t.emissive.setRGB(...e);
+      // Draft f11: texture slots, with the recipe's KHR_texture_transform over the core one.
+      const map = (slot, k, srgb) => textureOf(slot, pm !== undefined, x[k] ?? slot?.extensions?.KHR_texture_transform, srgb);
+      t.map = map(pbr.baseColorTexture, 'baseColorTexture', true);
+      t.normalMap = map(core.normalTexture, 'normalTexture', false);
+      if (t.normalMap) t.normalScale.set(core.normalTexture.scale ?? 1, core.normalTexture.scale ?? 1);
+      t.roughnessMap = t.metalnessMap = map(pbr.metallicRoughnessTexture, 'metallicRoughnessTexture', false);
+      t.aoMap = map(core.occlusionTexture, 'occlusionTexture', false);
+      t.emissiveMap = map(core.emissiveTexture, 'emissiveTexture', true);
       tinted.set(key, t); mats.push(t);
     }
     return tinted.get(key);
@@ -1133,11 +1162,11 @@ function download(name, text) {
 }
 // Open a document: its baked_values set the sliders. `fresh` starts a new undo history (first load); otherwise Undo
 // brings the previous document back.
-function load(text, name, fresh = false, placed = {}) {
+function load(text, name, fresh = false, placed = {}, base = null) {
   let d;
   try { d = strip(JSON.parse(text)); } catch (e) { note = `Open ${name}: ${e.message}`; return status(); }
   if (!isObj(d?.extensions?.[EXT])) { note = `Open ${name}: not a JIG document (no extensions.${EXT})`; return status(); }
-  doc = d; fileName = name; sel = null; mode = 'object'; sketchFor = ''; files = placed;
+  doc = d; fileName = name; sel = null; mode = 'object'; sketchFor = ''; files = placed; docBase = base;
   for (const k of Object.keys(values)) delete values[k];
   $('#fileName').textContent = name;
   if (fresh) { past = [stringify(doc)]; future = []; update(); }
@@ -1148,7 +1177,7 @@ async function openExample(name, fresh = false) {
   if (name === 'new') { load(stringify(clean), 'model.gltf', fresh); history.replaceState(null, '', location.pathname); return; }
   try {
     const url = new URL(examples[name], location.href), text = await (await fetch(url)).text();
-    load(text, `${name}.gltf`, fresh, await loadFiles(JSON.parse(text), async (f) => (await fetch(new URL(f, url))).text()));
+    load(text, `${name}.gltf`, fresh, await loadFiles(JSON.parse(text), async (f) => (await fetch(new URL(f, url))).text()), url.href);
   }
   catch (e) { note = `Open example ${name}: ${e.message}`; return status(); }
   history.replaceState(null, '', `?example=${name}`); // a reload keeps the example
