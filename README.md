@@ -1,4 +1,4 @@
 # JIG viewer
 
-Live viewer and editor for JIG 2, published from `canwell-dev/jig2` (commit f425fa8) by `tools/publish-site.mjs`.
+Live viewer and editor for JIG 2, published from `canwell-dev/jig2` (commit 91c13b2) by `tools/publish-site.mjs`.
 The 0.19 workshop and spec are in this repo's history (commit ef0c222).

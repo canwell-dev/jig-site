@@ -11,7 +11,7 @@
 // Skinned meshes are posed by their joints and inverse bind matrices (glTF 2.0 §3.7.3), the node's own transform
 // ignored: the bind pose.
 // shortcut: triangles only (mode 4), no sparse accessors, no morph targets; add them when a file needs them.
-import { compose, mul } from './jig.js?v=f425fa8';
+import { compose, mul } from './jig.js?v=91c13b2';
 
 const SIZE = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 };
 const GET = { 5120: ['getInt8', 1, 127], 5121: ['getUint8', 1, 255], 5122: ['getInt16', 2, 32767],

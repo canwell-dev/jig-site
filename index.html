@@ -258,12 +258,12 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=f425fa8';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=91c13b2';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=f425fa8', loft: 'examples/loft.gltf?v=f425fa8', star: 'examples/star.gltf?v=f425fa8', bench: 'examples/bench.gltf?v=f425fa8',
-  finger: 'examples/finger.gltf?v=f425fa8', hand: 'examples/hand.gltf?v=f425fa8' };
+const examples = { box: 'examples/box.gltf?v=91c13b2', loft: 'examples/loft.gltf?v=91c13b2', star: 'examples/star.gltf?v=91c13b2', bench: 'examples/bench.gltf?v=91c13b2',
+  finger: 'examples/finger.gltf?v=91c13b2', hand: 'examples/hand.gltf?v=91c13b2' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
