@@ -113,6 +113,12 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
   // Draft f10 (D-72..D-74): other JIG documents, placed by nodes with their own parameter values. Embedded as
   // `document`, or a `uri` as glTF's: a data: URI or a file name looked up in `files`.
   need(r.models === undefined || Array.isArray(r.models), `${rat}/models`, 'must be a list');
+  const placed = [], placedKey = new Map(); // draft f10 (D-78): materials of placed documents, as finished glTF materials
+  const addPlaced = (mat) => {
+    const key = JSON.stringify(mat);
+    if (!placedKey.has(key)) placedKey.set(key, placed.push(mat) - 1);
+    return placedKey.get(key);
+  };
   const models = (r.models ?? []).map((m, k) => {
     const at = `${rat}/models/${k}`;
     need(isObj(m), at, 'must be an object');
@@ -186,7 +192,7 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
       const n = node(src[i], meshes.length, sk, at), vis = shown && (!rep || k < rep.count);
       nodes[i] ??= { ...n, repeated: repeated.has(i) };
       const world = mul(parent, n.matrix);
-      const rec = { i, node: n, rep: !!rep, shown: vis, kids: [], world, name: src[i].name, mesh: n.mesh };
+      const rec = { i, node: n, rep: !!rep, shown: vis, kids: [], world, name: n.name, mesh: n.mesh };
       let b = bone;
       if (jointOf.has(i)) { b = { rec, skin: jointOf.get(i) }; if (vis) skins[b.skin].push(rec); }
       if (n.mesh !== undefined && b) rec.bound = b;
@@ -208,18 +214,31 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
       if (k.startsWith('//')) continue;
       const kat = `${xat}/values/${k}`;
       need(isObj(ps) && Object.hasOwn(ps, k), kat, `is not a parameter of ${m.label}`);
-      need(ps[k]?.type !== 'color', kat, 'a color parameter cannot be passed yet');
+      if (ps[k]?.type === 'color') { // a color parameter's name here, or linear channels (D-78)
+        if (typeof e === 'string' && params[e]?.type === 'color') { vals[k] = [...params[e].value]; continue; }
+        need(Array.isArray(e), kat, 'must be a color parameter\'s name or a list of 4 linear channels');
+        vals[k] = vec(e, 4, s, kat).map((c) => Math.min(1, Math.max(0, c)));
+        continue;
+      }
       const v = num(e, s, kat);
       vals[k] = ps[k]?.type === 'bool' ? v !== 0 : v;
     }
     let sub;
     try { sub = read(m.doc, vals, { files, stack: [...stack, doc] }); } catch (e) { need(false, `${xat}/model`, `in ${m.label}: ${e.message}`); }
     const off = meshes.length;
-    meshes.push(...sub.meshes.map(({ material, ...m }) => m)); // shortcut: a placed document's materials are dropped, until f10 decides how they carry over
+    // Its materials come along (D-78): each one a shape uses, at this copy's values, as a finished glTF material.
+    m.stripped ??= strip(m.doc);
+    meshes.push(...sub.meshes.map(({ material, placed: pm, ...mesh }) => {
+      if (pm !== undefined) return { ...mesh, placed: addPlaced(sub.placed[pm]) };
+      if (material === undefined) return mesh;
+      const { extensions: { [EXT]: _, ...ext } = {}, ...rest } = structuredClone(m.stripped.materials[material]);
+      return { ...mesh, placed: addPlaced(slots({ ...rest, ...(Object.keys(ext).length && { extensions: ext }) }, sub.materials[material] ?? {})) };
+    }));
     const skinAt = sub.skins.map(() => (bone ? bone.skin : skins.push([]) - 1));
     if (vis) sub.skins.forEach((js, k) => skins[skinAt[k]].push(...js));
     const relink = (r) => {
       r.foreign = true; r.world = mul(rec.world, r.world);
+      if (rec.name !== undefined && r.name !== undefined) r.name = `${rec.name}/${r.name}`; // D-79: the placing copy's name first
       if (r.mesh !== undefined) { r.mesh += off; r.bound = r.bound ? { rec: r.bound.rec, skin: skinAt[r.bound.skin] } : bone ?? undefined; }
       r.kids.forEach(relink);
     };
@@ -235,7 +254,7 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
   // y of the floor in model space; hosts stand the model there. Default: the lowest point on the vertical line
   // through the origin, or 0 when no shape crosses that line.
   const floor = r.floor === undefined ? lowestOnAxis(meshes, instances) : num(r.floor, scope, `${rat}/floor`);
-  return { params, sets, vars, floor, materials, meshes, nodes, instances, tree, skins };
+  return { params, sets, vars, floor, materials, meshes, nodes, instances, tree, skins, placed };
 }
 
 // Draft f10: the files a document's models name by relative `uri`, and theirs, as { name: document }, for read's
@@ -281,7 +300,7 @@ function node(n, meshCount, scope, at) {
   const xat = `${at}/extensions/${EXT}`;
   const x = n.extensions?.[EXT] ?? {};
   need(isObj(x), xat, 'must be an object');
-  only(x, ['mesh', 'translation', 'rotation', 'euler', 'scale', 'repeat', 'model', 'values'], xat);
+  only(x, ['name', 'mesh', 'translation', 'rotation', 'euler', 'scale', 'repeat', 'model', 'values'], xat);
   need(x.values === undefined || x.model !== undefined, `${xat}/values`, 'needs model');
   need(x.rotation === undefined || x.euler === undefined, `${xat}/euler`, 'cannot stand next to rotation');
   if (x.mesh !== undefined) {
@@ -309,7 +328,14 @@ function node(n, meshCount, scope, at) {
   const scale = pick('scale', 3, [1, 1, 1]);
   const children = n.children ?? [];
   need(Array.isArray(children), `${at}/children`, 'must be a list');
-  return { mesh: x.mesh, translation, rotation, scale, matrix: n.matrix ?? compose(translation, rotation, scale), children, jig: x };
+  // Draft f10 (D-79): a name template; {expression} is replaced by its value.
+  let name = n.name;
+  if (x.name !== undefined) {
+    need(typeof x.name === 'string', `${xat}/name`, 'must be a string');
+    name = x.name.replace(/\{([^{}]*)\}/g, (_, e) => fmt(num(e, scope, `${xat}/name`)));
+    need(name !== '' && !/[{}]/.test(name), `${xat}/name`, 'must give a non-empty name without unmatched { or }');
+  }
+  return { name, mesh: x.mesh, translation, rotation, scale, matrix: n.matrix ?? compose(translation, rotation, scale), children, jig: x };
 }
 
 // Euler angles in degrees about glTF's (Y-up) axes: x, then y, then z, each about the fixed axes (matrix Rz·Ry·Rx), as a
@@ -380,7 +406,7 @@ export function strip(doc) {
       if (kept.length < n.children.length) { if (kept.length) n.children = kept; else delete n.children; }
     }
     const x = n?.extensions?.[EXT];
-    if (isObj(x)) for (const k of ['mesh', 'translation', 'rotation', 'scale']) if (twin(x, k) !== undefined) delete n[k];
+    if (isObj(x)) for (const k of ['name', 'mesh', 'translation', 'rotation', 'scale']) if (twin(x, k) !== undefined) delete n[k];
   }
   return d;
 }
@@ -434,6 +460,9 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
     offset += padded.byteLength;
     return i;
   };
+  // Placed documents' materials (D-78): a baked material each, in order of first use.
+  const placedAt = {};
+  const matIndex = (m) => (m.placed === undefined ? m.material : (placedAt[m.placed] ??= add('materials', out.placed[m.placed])));
   // Only meshes a shown node draws unskinned are baked, in recipe order; meshAt maps recipe mesh to core mesh.
   const used = new Set(out.instances.filter((x) => !x.rec.bound).map((x) => x.mesh)), meshAt = {};
   for (const [mi, m] of out.meshes.entries()) {
@@ -448,7 +477,8 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
       type: 'VEC3', min, max });
     const nor = add('accessors', { bufferView: view(normals, 34962), componentType: 5126, count: normals.length / 3, type: 'VEC3' });
     const idx = add('accessors', { bufferView: view(indices, 34963), componentType: short ? 5123 : 5125, count: indices.length, type: 'SCALAR' });
-    add('meshes', { primitives: [{ attributes: { POSITION: pos, NORMAL: nor }, indices: idx, ...(m.material !== undefined && { material: m.material }),
+    const mat = matIndex(m);
+    add('meshes', { primitives: [{ attributes: { POSITION: pos, NORMAL: nor }, indices: idx, ...(mat !== undefined && { material: mat }),
       ...(mapping[m.material] && { extensions: { [KHR_VARIANTS]: { mappings: mapping[m.material] } } }) }] });
   }
   out.materials.forEach((m, i) => { if (m) slots(d.materials[i], m); }); // the material cache (D-57)
@@ -471,7 +501,7 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
   for (const [i, n] of out.nodes.entries()) {
     if (!n || n.repeated) continue;
     if (n.jig.mesh !== undefined && !bound.has(i)) d.nodes[i].mesh = meshAt[n.jig.mesh];
-    for (const k of ['translation', 'rotation', 'scale']) if (twin(n.jig, k) !== undefined) d.nodes[i][k] = n[k];
+    for (const k of ['name', 'translation', 'rotation', 'scale']) if (twin(n.jig, k) !== undefined) d.nodes[i][k] = n[k];
   }
   const place = (recs) => recs.forEach((rec) => {
     if (!rec.rep && !rec.foreign) { nodeOf.set(rec, rec.i); return place(rec.kids); }
@@ -511,9 +541,9 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
         JOINTS_0: acc(new Uint16Array(4 * n).map((_, i) => (i % 4 ? 0 : joint)), 5123, 'VEC4'),
         WEIGHTS_0: acc(new Float32Array(4 * n).map((_, i) => (i % 4 ? 0 : 1)), 5126, 'VEC4') };
       const idx = add('accessors', { bufferView: view(indices, 34963), componentType: short ? 5123 : 5125, count: indices.length, type: 'SCALAR' });
-      const mat = out.meshes[x.mesh].material;
+      const mat = matIndex(out.meshes[x.mesh]), own = out.meshes[x.mesh].material;
       return { attributes, indices: idx, ...(mat !== undefined && { material: mat }),
-        ...(mapping[mat] && { extensions: { [KHR_VARIANTS]: { mappings: mapping[mat] } } }) };
+        ...(mapping[own] && { extensions: { [KHR_VARIANTS]: { mappings: mapping[own] } } }) };
     });
     const mesh = add('meshes', { primitives });
     d.scenes[d.scene].nodes.push(add('nodes', { name: `skin ${s}`, mesh, skin }));
@@ -1052,6 +1082,8 @@ function slots(core, m) {
 const isColor = (c) => Array.isArray(c) && c.length === 4 && c.every((x) => typeof x === 'number' && x >= 0 && x <= 1);
 // A recipe slot that sets core slot k: euler sets rotation.
 const twin = (x, k) => x[k] ?? (k === 'rotation' ? x.euler : undefined);
+// A number in a name: whole numbers as integers, others to 6 significant digits.
+const fmt = (v) => (Number.isInteger(v) ? String(v) : String(+v.toPrecision(6)));
 function need(ok, at, msg) { if (!ok) throw new Error(`${at || '/'}: ${msg}`); }
 function only(o, keys, at) {
   for (const k of Object.keys(o)) need(keys.includes(k) || k.startsWith('//'), `${at}/${k}`, 'unknown key');

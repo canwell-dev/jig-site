@@ -258,12 +258,12 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=fb98969';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=2378794';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=fb98969', loft: 'examples/loft.gltf?v=fb98969', star: 'examples/star.gltf?v=fb98969', bench: 'examples/bench.gltf?v=fb98969',
-  finger: 'examples/finger.gltf?v=fb98969', hand: 'examples/hand.gltf?v=fb98969' };
+const examples = { box: 'examples/box.gltf?v=2378794', loft: 'examples/loft.gltf?v=2378794', star: 'examples/star.gltf?v=2378794', bench: 'examples/bench.gltf?v=2378794',
+  finger: 'examples/finger.gltf?v=2378794', hand: 'examples/hand.gltf?v=2378794' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -406,12 +406,13 @@ function draw() {
   geos = out.meshes.map((m) => bufferGeometry(geometry(m)));
   // A mesh's glTF material color (linear, as three.js works), from the recipe or the core material.
   const tinted = new Map(); mats = [];
-  const matOf = (mi, on) => { // glTF's material, its recipe slots over its core ones, glTF defaults otherwise
-    const core = mi === undefined ? null : doc.materials?.[mi];
+  const matOf = (mesh, on) => { // glTF's material, its recipe slots over its core ones, glTF defaults otherwise
+    const mi = mesh.material, pm = mesh.placed; // pm: a placed document's material, finished (draft f10)
+    const core = pm !== undefined ? out.placed[pm] : mi === undefined ? null : doc.materials?.[mi];
     if (!isObj(core)) return on ? matSel : matBase;
-    const key = `${mi} ${on}`;
+    const key = `${pm !== undefined ? `p${pm}` : mi} ${on}`;
     if (!tinted.has(key)) {
-      const x = out.materials[mi] ?? {}, pbr = core.pbrMetallicRoughness ?? {}, t = (on ? matSel : matBase).clone();
+      const x = (pm === undefined && out.materials[mi]) || {}, pbr = core.pbrMetallicRoughness ?? {}, t = (on ? matSel : matBase).clone();
       const f = x.baseColorFactor ?? pbr.baseColorFactor ?? [1, 1, 1, 1], e = x.emissiveFactor ?? core.emissiveFactor;
       t.color.setRGB(f[0], f[1], f[2]);
       if (core.alphaMode === 'BLEND') { t.transparent = true; t.opacity = f[3]; }
@@ -422,7 +423,7 @@ function draw() {
     return tinted.get(key);
   };
   for (const inst of out.instances) {
-    const m = new THREE.Mesh(geos[inst.mesh], matOf(out.meshes[inst.mesh].material, sel?.node === inst.node));
+    const m = new THREE.Mesh(geos[inst.mesh], matOf(out.meshes[inst.mesh], sel?.node === inst.node));
     m.matrixAutoUpdate = false; m.matrix.fromArray(inst.matrix); m.userData.node = inst.node;
     meshLayer.add(m);
   }
@@ -574,7 +575,7 @@ function outliner() {
     const mi = meshOf(i), kind = mi === undefined ? 'empty' : shapeKind(R().meshes?.[mi]);
     const li = el('li', { className: sel?.node === i ? 'sel' : '', tabIndex: 0, role: 'treeitem', onclick: () => select({ node: i }),
       onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select({ node: i }); } } },
-      el('span', { className: `ic ${kind}` }), el('span', { className: 'nm', textContent: n.name ?? `node ${i}` }),
+      el('span', { className: `ic ${kind}` }), el('span', { className: 'nm', textContent: n.extensions?.[EXT]?.name ?? n.name ?? `node ${i}` }),
       mi !== undefined && el('small', { textContent: `${kind} ${mi}${users[mi] > 1 ? ` ×${users[mi]}` : ''}`, title: users[mi] > 1 ? `mesh ${mi} is shared by ${users[mi]} nodes` : `mesh ${mi}` }));
     li.style.paddingLeft = `${12 + depth * 14}px`;
     return [li, ...(n.children ?? []).flatMap((c) => row(c, depth + 1))];
@@ -620,8 +621,9 @@ function props() {
     return;
   }
   const i = sel.node, n = doc.nodes[i], on = out?.nodes?.[i], mi = meshOf(i);
-  const name = el('input', { id: 'name', className: 'f', value: n.name ?? '', placeholder: `node ${i}`, autocomplete: 'off',
-    onchange: (e) => { const v = e.target.value.trim(); if (v) n.name = v; else delete n.name; commit(); } });
+  const tpl = isObj(n.extensions?.[EXT]) && n.extensions[EXT].name !== undefined; // a name template (D-79)
+  const name = el('input', { id: 'name', className: 'f', value: (tpl ? n.extensions[EXT].name : n.name) ?? '', placeholder: `node ${i}`, autocomplete: 'off',
+    onchange: (e) => { const v = e.target.value.trim(), o = tpl ? n.extensions[EXT] : n; if (v) o.name = v; else delete o.name; commit(); } });
   name.setAttribute('aria-label', 'Node name');
   kids.push(sec(el('h2', {}, el('span', { className: `ic ${mi === undefined ? 'empty' : shapeKind(R().meshes?.[mi])}` }), `node ${i}`),
     el('div', { className: 'vrow one' }, el('label', { htmlFor: 'name', textContent: 'Name' }), name)));
@@ -1051,7 +1053,7 @@ function toolbar() {
     : [tb('ePath', 'Path', '', editTool === 'path', () => { editTool = 'path'; sel = { node: sel.node }; update(); }), tb('eSec', 'Sections', '', editTool === 'sections', () => { editTool = 'sections'; sel = { node: sel.node }; update(); })]));
   $('#tools').querySelectorAll('kbd:empty').forEach((k) => k.remove());
   $('#vpMode').textContent = mode === 'object' ? 'Object mode' : `Edit mode · ${editTool === 'path' ? 'Path' : 'Sections'}`;
-  $('#vpSel').textContent = sel ? `${doc.nodes[sel.node]?.name ?? `node ${sel.node}`}${sel.point !== undefined ? ` · point ${sel.point}` : ''}${sel.section !== undefined ? ` · section ${sel.section}` : ''}` : 'nothing selected';
+  $('#vpSel').textContent = sel ? `${doc.nodes[sel.node]?.extensions?.[EXT]?.name ?? doc.nodes[sel.node]?.name ?? `node ${sel.node}`}${sel.point !== undefined ? ` · point ${sel.point}` : ''}${sel.section !== undefined ? ` · section ${sel.section}` : ''}` : 'nothing selected';
 }
 function setGizmo(g) { gizmo = g; update(); }
 function hint() {

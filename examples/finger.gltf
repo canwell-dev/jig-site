@@ -8,7 +8,8 @@
         "width": { "default": 0.018, "min": 0.008, "max": 0.04 },
         "height": { "default": 0.016, "min": 0.008, "max": 0.04 },
         "length": { "default": 0.08, "min": 0.03, "max": 0.15 },
-        "curl": { "default": 10, "min": -10, "max": 90 }
+        "curl": { "default": 10, "min": -10, "max": 90 },
+        "tone": { "type": "color", "default": [0.8, 0.55, 0.45, 1] }
       },
       "vars": {
         "hw": "width / 2",
@@ -63,7 +64,8 @@
                 ]
               }
             ]
-          }
+          },
+          "material": 0
         },
         {
           "loft": {
@@ -109,7 +111,8 @@
                 ]
               }
             ]
-          }
+          },
+          "material": 0
         },
         {
           "loft": {
@@ -155,10 +158,17 @@
                 ]
               }
             ]
-          }
+          },
+          "material": 0
         }
       ],
-      "baked_values": { "width": 0.018, "height": 0.016, "length": 0.08, "curl": 10 }
+      "baked_values": {
+        "width": 0.018,
+        "height": 0.016,
+        "length": 0.08,
+        "curl": 10,
+        "tone": [0.8, 0.55, 0.45, 1]
+      }
     }
   },
   "scene": 0,
@@ -192,6 +202,17 @@
       "mesh": 0,
       "skin": 0,
       "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ],
+  "materials": [
+    {
+      "name": "skin",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.8, 0.55, 0.45, 1],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.6
+      },
+      "extensions": { "JIG_recipe": { "baseColorFactor": "tone" } }
     }
   ],
   "bufferViews": [
@@ -439,15 +460,18 @@
       "primitives": [
         {
           "attributes": { "POSITION": 1, "NORMAL": 2, "JOINTS_0": 3, "WEIGHTS_0": 4 },
-          "indices": 5
+          "indices": 5,
+          "material": 0
         },
         {
           "attributes": { "POSITION": 6, "NORMAL": 7, "JOINTS_0": 8, "WEIGHTS_0": 9 },
-          "indices": 10
+          "indices": 10,
+          "material": 0
         },
         {
           "attributes": { "POSITION": 11, "NORMAL": 12, "JOINTS_0": 13, "WEIGHTS_0": 14 },
-          "indices": 15
+          "indices": 15,
+          "material": 0
         }
       ],
       "extensions": { "JIG_recipe": { "baked": true } }

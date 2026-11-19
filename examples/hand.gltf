@@ -6,12 +6,14 @@
       "version": "0.1",
       "params": {
         "curl": { "default": 15, "min": -10, "max": 90 },
-        "spread": { "default": 4, "min": 0, "max": 15 }
+        "spread": { "default": 4, "min": 0, "max": 15 },
+        "skin_tone": { "type": "color", "default": [0.8, 0.55, 0.45, 1] }
       },
       "models": [{ "uri": "finger.gltf" }],
       "skins": [{ "joints": [0] }],
       "meshes": [
         {
+          "material": 0,
           "loft": {
             "path": [[0, 0, 0], [0, 0.1, 0]],
             "blend": "smooth",
@@ -49,7 +51,7 @@
           }
         }
       ],
-      "baked_values": { "curl": 15, "spread": 4 }
+      "baked_values": { "curl": 15, "spread": 4, "skin_tone": [0.8, 0.55, 0.45, 1] }
     }
   },
   "scene": 0,
@@ -57,7 +59,6 @@
   "nodes": [
     { "name": "wrist", "children": [1], "extensions": { "JIG_recipe": { "mesh": 0 } } },
     {
-      "name": "finger",
       "extensions": {
         "JIG_recipe": {
           "//": "thumb, index, middle, ring, little",
@@ -132,11 +133,13 @@
             ]
           },
           "model": 0,
+          "name": "finger_{i}",
           "values": {
             "width": "width",
             "height": "height",
             "length": "length",
-            "curl": "curl * bend"
+            "curl": "curl * bend",
+            "tone": "skin_tone"
           },
           "translation": ["x", "y", "z"],
           "euler": ["turn_x", "turn_y", "turn_z + fan * spread"]
@@ -145,130 +148,130 @@
       "children": [5, 9, 13, 17, 21]
     },
     {
-      "name": "distal",
+      "name": "finger_0/distal",
       "translation": [0, 0.021, 0],
       "rotation": [0.07845909572784494, 0, 0, 0.996917333733128],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "middle",
+      "name": "finger_0/middle",
       "translation": [0, 0.03150000000000001, 0],
       "rotation": [0.07845909572784494, 0, 0, 0.996917333733128],
       "children": [2],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "proximal",
+      "name": "finger_0/proximal",
       "rotation": [0.07845909572784494, 0, 0, 0.996917333733128],
       "children": [3],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "finger",
+      "name": "finger_0",
       "translation": [0.036, 0.03, -0.004],
       "rotation": [-0.25393885245745695, -0.3066083956229514, -0.3894435342063096, 0.830566122961326],
       "children": [4],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "distal",
+      "name": "finger_1/distal",
       "translation": [0, 0.025500000000000002, 0],
       "rotation": [0.13052619222005157, 0, 0, 0.9914448613738104],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "middle",
+      "name": "finger_1/middle",
       "translation": [0, 0.038250000000000006, 0],
       "rotation": [0.13052619222005157, 0, 0, 0.9914448613738104],
       "children": [6],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "proximal",
+      "name": "finger_1/proximal",
       "rotation": [0.13052619222005157, 0, 0, 0.9914448613738104],
       "children": [7],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "finger",
+      "name": "finger_1",
       "translation": [0.029, 0.094, 0],
       "rotation": [0, 0, -0.05233595624294383, 0.9986295347545738],
       "children": [8],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "distal",
+      "name": "finger_2/distal",
       "translation": [0, 0.027899999999999998, 0],
       "rotation": [0.13052619222005157, 0, 0, 0.9914448613738104],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "middle",
+      "name": "finger_2/middle",
       "translation": [0, 0.04185, 0],
       "rotation": [0.13052619222005157, 0, 0, 0.9914448613738104],
       "children": [10],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "proximal",
+      "name": "finger_2/proximal",
       "rotation": [0.13052619222005157, 0, 0, 0.9914448613738104],
       "children": [11],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "finger",
+      "name": "finger_2",
       "translation": [0.0095, 0.096, 0],
       "rotation": [0, 0, -0.01745240643728351, 0.9998476951563913],
       "children": [12],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "distal",
+      "name": "finger_3/distal",
       "translation": [0, 0.026099999999999998, 0],
       "rotation": [0.13052619222005157, 0, 0, 0.9914448613738104],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "middle",
+      "name": "finger_3/middle",
       "translation": [0, 0.03915, 0],
       "rotation": [0.13052619222005157, 0, 0, 0.9914448613738104],
       "children": [14],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "proximal",
+      "name": "finger_3/proximal",
       "rotation": [0.13052619222005157, 0, 0, 0.9914448613738104],
       "children": [15],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "finger",
+      "name": "finger_3",
       "translation": [-0.0105, 0.094, 0],
       "rotation": [0, 0, 0.01745240643728351, 0.9998476951563913],
       "children": [16],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "distal",
+      "name": "finger_4/distal",
       "translation": [0, 0.0204, 0],
       "rotation": [0.13052619222005157, 0, 0, 0.9914448613738104],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "middle",
+      "name": "finger_4/middle",
       "translation": [0, 0.030600000000000002, 0],
       "rotation": [0.13052619222005157, 0, 0, 0.9914448613738104],
       "children": [18],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "proximal",
+      "name": "finger_4/proximal",
       "rotation": [0.13052619222005157, 0, 0, 0.9914448613738104],
       "children": [19],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "name": "finger",
+      "name": "finger_4",
       "translation": [-0.03, 0.088, 0],
       "rotation": [0, 0, 0.05233595624294383, 0.9986295347545738],
       "children": [20],
@@ -278,6 +281,26 @@
       "name": "skin 0",
       "mesh": 0,
       "skin": 0,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ],
+  "materials": [
+    {
+      "name": "skin",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.8, 0.55, 0.45, 1],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.6
+      },
+      "extensions": { "JIG_recipe": { "baseColorFactor": "skin_tone" } }
+    },
+    {
+      "name": "skin",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.8, 0.55, 0.45, 1],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.6
+      },
       "extensions": { "JIG_recipe": { "baked": true } }
     }
   ],
@@ -1462,67 +1485,83 @@
       "primitives": [
         {
           "attributes": { "POSITION": 1, "NORMAL": 2, "JOINTS_0": 3, "WEIGHTS_0": 4 },
-          "indices": 5
+          "indices": 5,
+          "material": 0
         },
         {
           "attributes": { "POSITION": 6, "NORMAL": 7, "JOINTS_0": 8, "WEIGHTS_0": 9 },
-          "indices": 10
+          "indices": 10,
+          "material": 1
         },
         {
           "attributes": { "POSITION": 11, "NORMAL": 12, "JOINTS_0": 13, "WEIGHTS_0": 14 },
-          "indices": 15
+          "indices": 15,
+          "material": 1
         },
         {
           "attributes": { "POSITION": 16, "NORMAL": 17, "JOINTS_0": 18, "WEIGHTS_0": 19 },
-          "indices": 20
+          "indices": 20,
+          "material": 1
         },
         {
           "attributes": { "POSITION": 21, "NORMAL": 22, "JOINTS_0": 23, "WEIGHTS_0": 24 },
-          "indices": 25
+          "indices": 25,
+          "material": 1
         },
         {
           "attributes": { "POSITION": 26, "NORMAL": 27, "JOINTS_0": 28, "WEIGHTS_0": 29 },
-          "indices": 30
+          "indices": 30,
+          "material": 1
         },
         {
           "attributes": { "POSITION": 31, "NORMAL": 32, "JOINTS_0": 33, "WEIGHTS_0": 34 },
-          "indices": 35
+          "indices": 35,
+          "material": 1
         },
         {
           "attributes": { "POSITION": 36, "NORMAL": 37, "JOINTS_0": 38, "WEIGHTS_0": 39 },
-          "indices": 40
+          "indices": 40,
+          "material": 1
         },
         {
           "attributes": { "POSITION": 41, "NORMAL": 42, "JOINTS_0": 43, "WEIGHTS_0": 44 },
-          "indices": 45
+          "indices": 45,
+          "material": 1
         },
         {
           "attributes": { "POSITION": 46, "NORMAL": 47, "JOINTS_0": 48, "WEIGHTS_0": 49 },
-          "indices": 50
+          "indices": 50,
+          "material": 1
         },
         {
           "attributes": { "POSITION": 51, "NORMAL": 52, "JOINTS_0": 53, "WEIGHTS_0": 54 },
-          "indices": 55
+          "indices": 55,
+          "material": 1
         },
         {
           "attributes": { "POSITION": 56, "NORMAL": 57, "JOINTS_0": 58, "WEIGHTS_0": 59 },
-          "indices": 60
+          "indices": 60,
+          "material": 1
         },
         {
           "attributes": { "POSITION": 61, "NORMAL": 62, "JOINTS_0": 63, "WEIGHTS_0": 64 },
-          "indices": 65
+          "indices": 65,
+          "material": 1
         },
         {
           "attributes": { "POSITION": 66, "NORMAL": 67, "JOINTS_0": 68, "WEIGHTS_0": 69 },
-          "indices": 70
+          "indices": 70,
+          "material": 1
         },
         {
           "attributes": { "POSITION": 71, "NORMAL": 72, "JOINTS_0": 73, "WEIGHTS_0": 74 },
-          "indices": 75
+          "indices": 75,
+          "material": 1
         },
         {
           "attributes": { "POSITION": 76, "NORMAL": 77, "JOINTS_0": 78, "WEIGHTS_0": 79 },
-          "indices": 80
+          "indices": 80,
+          "material": 1
         }
       ],
       "extensions": { "JIG_recipe": { "baked": true } }
