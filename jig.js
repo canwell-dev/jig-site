@@ -6,7 +6,7 @@ export const EXT = 'JIG_recipe';
 
 // Read a document. `values` overrides parameter values by name (over baked_values, over defaults).
 // Returns { params, vars, floor, meshes, nodes, instances } or throws an Error whose message starts with the
-// JSON path. `meshes` are the evaluated recipe meshes; `instances` are { mesh, matrix } for every node of the
+// JSON path. `meshes` are the evaluated recipe meshes; `instances` are { node, mesh, matrix } for every node of the
 // default scene that draws a recipe mesh, matrix = world transform, column-major as in glTF.
 export function read(doc, values = {}) {
   need(isObj(doc), '', 'document must be an object');
@@ -68,7 +68,7 @@ export function read(doc, values = {}) {
     need(!seen.has(i), at, `node ${i} is used twice in the scene`);
     seen.add(i);
     const world = mul(parent, nodes[i].matrix);
-    if (nodes[i].mesh !== undefined) instances.push({ mesh: nodes[i].mesh, matrix: world });
+    if (nodes[i].mesh !== undefined) instances.push({ node: i, mesh: nodes[i].mesh, matrix: world });
     nodes[i].children.forEach((c, j) => visit(c, world, `/nodes/${i}/children/${j}`));
   };
   roots.forEach((i, j) => visit(i, IDENTITY, `/scenes/${doc.scene}/nodes/${j}`));

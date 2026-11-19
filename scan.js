@@ -7,7 +7,7 @@
 //    length, counter-clockwise, from the +u side, so ring k matches ring k.
 // 3. Sections: start with the two ends; add the ring the blend misses most until every ring is within tolerance.
 // 4. Points: each kept ring thinned to a few points (Douglas-Peucker); gentle turns become smooth points.
-import { loftCurve, loftFrame, outline } from './jig.js?v=7f7d122';
+import { loftCurve, loftFrame, outline } from './jig.js?v=80efbe7';
 
 const SLICES = 40; // rings along the curve
 const RES = 64;    // points per ring

@@ -82,8 +82,8 @@ if (!HTMLScriptElement.supports?.('importmap')) showError('this browser does not
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { scanLoft } from './scan.js?v=7f7d122';
-import { read, bake, strip, stringify, geometry, sectionAt, loftCurve, loftFrame, outline, EXT, VERSION } from './jig.js?v=7f7d122';
+import { scanLoft } from './scan.js?v=80efbe7';
+import { read, bake, strip, stringify, geometry, sectionAt, loftCurve, loftFrame, outline, EXT, VERSION } from './jig.js?v=80efbe7';
 
 const src = document.getElementById('src'), defsEl = document.getElementById('defs'), errEl = document.getElementById('err');
 const view = document.getElementById('view'), slidersEl = document.getElementById('sliders');
@@ -100,6 +100,7 @@ const grid = new THREE.GridHelper(4, 40, 0x888888, 0x888888);
 scene.add(new THREE.HemisphereLight(0xffffff, 0x666655, 2), grid);
 const sun = new THREE.DirectionalLight(0xffffff, 1.5); sun.position.set(2, 4, 3); scene.add(sun);
 const model = new THREE.Group(), unitBox = new THREE.BoxGeometry(), material = new THREE.MeshStandardMaterial({ color: 0xcccccc });
+const picked = new THREE.MeshStandardMaterial({ color: 0xcccccc, emissive: 0x3b82f6, emissiveIntensity: 0.35 });
 scene.add(model);
 
 const values = {}; // slider settings, by parameter name
@@ -125,8 +126,8 @@ function rebuild() {
   geoms = out.meshes.map((m) => (m.type === 'box' ? null : bufferGeometry(geometry(m))));
   for (const i of out.instances) {
     const box = out.meshes[i.mesh].type === 'box';
-    const m = new THREE.Mesh(box ? unitBox : geoms[i.mesh], material);
-    if (box) m.scale.fromArray(out.meshes[i.mesh].size);
+    const m = new THREE.Mesh(box ? unitBox : geoms[i.mesh], box && sel?.node === i.node ? picked : material);
+    if (box) { m.scale.fromArray(out.meshes[i.mesh].size); m.userData.node = i.node; } // a box is picked by its node
     const node = new THREE.Group().add(m);
     node.matrixAutoUpdate = false;
     node.matrix.fromArray(i.matrix); // world transform, column-major like glTF and three.js
@@ -246,7 +247,8 @@ const loftOf = (d, mesh) => d.meshes[mesh].loft; // recipe JSON of a loft
 
 function loftHelpers(out) {
   picks = [];
-  if (sel && (out.meshes[sel.mesh]?.type !== 'loft' || (sel.point ?? -1) >= out.meshes[sel.mesh].path.length
+  if (sel?.node !== undefined && !out.instances.some((i) => i.node === sel.node)) sel = null;
+  if (sel?.mesh !== undefined && (out.meshes[sel.mesh]?.type !== 'loft' || (sel.point ?? -1) >= out.meshes[sel.mesh].path.length
     || (sel.section ?? -1) >= out.meshes[sel.mesh].sections.length)) sel = null;
   const hot = accent(), cold = new THREE.Color(0x3b82f6);
   const mat = (color) => new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true });
@@ -297,6 +299,7 @@ function toolbar(out) {
   const btn = (text, onclick, pressed) => el('button', { type: 'button', textContent: text, onclick, ...(pressed !== undefined && { ariaPressed: String(pressed) }) });
   const pick = (t) => () => { tool = t; sel = null; rebuild(); };
   const kids = [btn('+ loft', () => addLoft())];
+  if (sel?.node !== undefined) kids.push(btn('Delete box', remove, undefined), el('small', {}, `node ${sel.node}`));
   if (hasLoft) {
     kids.push(btn('Curve', pick('curve'), tool === 'curve'), btn('Sections', pick('sections'), tool === 'sections'));
     if (sel?.point !== undefined || sel?.section !== undefined) kids.push(btn('Delete', remove));
@@ -356,6 +359,7 @@ document.getElementById('scan').onchange = async (e) => {
 };
 
 function remove() {
+  if (sel?.node !== undefined) { removeNode(sel.node); return; }
   if (!sel) return;
   const { mesh, point, section } = sel; // edit() rebuilds, which may clear sel
   edit((r) => {
@@ -364,6 +368,23 @@ function remove() {
     if (section !== undefined && l.sections.length > 1) l.sections.splice(section, 1);
   });
   sel = { mesh }; rebuild();
+}
+
+// Delete a node; its children take its place. Its mesh goes too once no node uses it, but the recipe keeps one mesh
+// (meshes may not be empty).
+function removeNode(n) {
+  edit((r, doc) => {
+    const at = (x) => doc.nodes[x]?.extensions?.[EXT]?.mesh, mesh = at(n), kids = doc.nodes[n].children ?? [];
+    const lists = [...(doc.scenes ?? []).map((s) => s.nodes ?? []), ...doc.nodes.map((d) => d.children ?? [])];
+    for (const l of lists) { const k = l.indexOf(n); if (k >= 0) l.splice(k, 1, ...kids); }
+    doc.nodes.splice(n, 1);
+    for (const l of lists) l.forEach((x, k) => { if (x > n) l[k] = x - 1; });
+    for (const d of doc.nodes) if (!d.children?.length) delete d.children;
+    if (mesh === undefined || r.meshes.length < 2 || doc.nodes.some((_, x) => at(x) === mesh)) return;
+    r.meshes.splice(mesh, 1);
+    for (const d of doc.nodes) { const x = d.extensions?.[EXT]; if (x?.mesh > mesh) x.mesh--; }
+  });
+  sel = null; rebuild();
 }
 
 // Nearest pick of the given kinds to the pointer, in screen pixels: { pick, i, f, d } (i, f: which segment, how far).
@@ -414,7 +435,14 @@ canvas.addEventListener('pointerdown', (e) => {
       sel = { mesh, section };
       drag = { kind: 't', mesh, section };
     }
-  } else return;
+  } else {
+    // A click on a box selects it; elsewhere it clears a box selection. Either way the orbit goes on.
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(e.offsetX / canvas.clientWidth * 2 - 1, 1 - e.offsetY / canvas.clientHeight * 2), camera);
+    const node = ray.intersectObjects(model.children, true).find((h) => h.object.userData.node !== undefined)?.object.userData.node;
+    if (node !== undefined) { sel = { node }; rebuild(); } else if (sel?.node !== undefined) { sel = null; rebuild(); }
+    return;
+  }
   e.stopImmediatePropagation();
   controls.enabled = false;
   canvas.setPointerCapture(e.pointerId);
@@ -447,7 +475,7 @@ canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
 addEventListener('keydown', (e) => {
   if ((e.key === 'Delete' || e.key === 'Backspace') && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) remove();
-  if (e.key === 'Escape') { sel = sel && { mesh: sel.mesh }; rebuild(); }
+  if (e.key === 'Escape') { sel = sel?.mesh !== undefined ? { mesh: sel.mesh } : null; rebuild(); }
 });
 
 // The selected section's shape, in its own plane: u right, v up (the curve runs out of the screen).
@@ -576,7 +604,7 @@ document.getElementById('bake').onclick = () => {
   a.click();
   URL.revokeObjectURL(a.href);
 };
-const examples = { box: 'examples/box.gltf?v=7f7d122', loft: 'examples/loft.gltf?v=7f7d122', star: 'examples/star.gltf?v=7f7d122' };
+const examples = { box: 'examples/box.gltf?v=80efbe7', loft: 'examples/loft.gltf?v=80efbe7', star: 'examples/star.gltf?v=80efbe7' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
