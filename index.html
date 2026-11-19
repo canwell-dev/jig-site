@@ -2,113 +2,354 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>JIG viewer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>JIG editor</title>
 <style>
-  :root { --bg: #f4f2ee; --fg: #222; --panel: #fff; --line: #ddd; --err: #b00020; --accent: #d9480f; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #1b1b1d; --fg: #e8e8e8; --panel: #252528; --line: #3a3a3e; --err: #ff6b7f; --accent: #ff7a3d; } }
-  * { box-sizing: border-box; }
-  body { margin: 0; height: 100vh; height: 100dvh; display: grid; grid-template-columns: minmax(320px, 40%) minmax(0, 1fr); background: var(--bg); color: var(--fg); font: 14px system-ui, sans-serif; }
-  #side { display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--panel); min-height: 0; }
-  textarea { flex: 1; resize: none; border: 0; padding: 12px; background: transparent; color: inherit; font: 13px/1.5 ui-monospace, monospace; outline: none; }
-  #defs { padding: 10px 12px; border-bottom: 1px solid var(--line); overflow: auto; max-height: 45%; display: grid; gap: 6px; }
-  #defs h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; margin: 6px 0 0; opacity: .7; }
-  #defs .row { display: grid; gap: 4px; align-items: center; }
-  #defs .param { grid-template-columns: 1.4fr 1fr 1fr 1fr 2em; }
-  #defs .var { grid-template-columns: 1.4fr 3fr 4em 2em; }
-  #defs .head { font-size: 11px; opacity: .6; }
-  #defs input { min-width: 0; padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: inherit; font: 13px ui-monospace, monospace; }
-  #defs output { font: 12px ui-monospace, monospace; opacity: .7; text-align: right; }
-  #defs button { padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: inherit; cursor: pointer; font: inherit; }
-  #defs .add { justify-self: start; }
-  #defs[aria-disabled=true] { opacity: .5; pointer-events: none; }
-  #sliders { position: absolute; left: 12px; bottom: 12px; display: grid; gap: 6px; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--line); max-width: calc(100% - 24px); }
-  #sliders:empty { display: none; }
-  #sliders label { display: grid; grid-template-columns: minmax(3em, 7em) minmax(60px, 220px) 3.5em; gap: 8px; align-items: center; }
-  #sliders output { font: 12px ui-monospace, monospace; text-align: right; }
-  #bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); }
-  #bar input[type=file] { max-width: 14em; font: inherit; }
-  #bar button, #bar select { padding: 3px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: inherit; cursor: pointer; font: inherit; }
-  #err { padding: 8px 12px; color: var(--err); font-family: ui-monospace, monospace; min-height: 2.2em; border-top: 1px solid var(--line); }
-  #view { position: relative; min-height: 0; }
-  canvas { display: block; width: 100%; height: 100%; }
-  #tools, #shape { position: absolute; top: 12px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--line); }
-  #tools { left: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: calc(100% - 24px); }
-  #tools button, #shape button { padding: 3px 9px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: inherit; cursor: pointer; font: inherit; }
-  #tools button[aria-pressed=true] { background: var(--accent); color: #fff; border-color: var(--accent); }
-  #tools small, #shape small { flex-basis: 100%; opacity: .7; }
-  #shape { right: 12px; top: 64px; width: min(240px, 45%); display: grid; gap: 6px; }
-  #shape[hidden] { display: none; }
-  #shape header { display: flex; gap: 6px; align-items: center; }
-  #shape input { width: 5em; padding: 2px 4px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: inherit; font: 13px ui-monospace, monospace; }
-  #shape svg { width: 100%; aspect-ratio: 1; touch-action: none; background: var(--bg); border-radius: 4px; }
-  #shape .vtx { fill: var(--accent); cursor: grab; }
-  #shape .vtx.first { fill: var(--fg); }
-  #shape .mid { fill: var(--panel); stroke: var(--accent); cursor: copy; }
-  #shape .vtx.on { stroke: var(--fg); stroke-width: 0.4%; }
-  #shape .hdl { fill: var(--panel); stroke: var(--accent); stroke-width: 0.4%; cursor: grab; }
-  #shape .points { display: flex; gap: 6px; align-items: center; }
-  #shape .points span { flex: 1; white-space: nowrap; }
-  @media (max-width: 700px) { body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); } }
+/* Layout: four-area workbench (outliner | viewport | properties, parameters/source under the viewport, status line). Accent = selection; violet = expression (locked to the gizmo). */
+:root {
+  --bg: #f4f2ee; --panel: #ffffff; --chip: #ece8e1; --fg: #222; --mute: #6e6862; --line: #ddd8d0;
+  --accent: #d9480f; --expr: #7646c9; --err: #b00020; --vp: #e9e6e0; --helper: #2f6fdf;
+  --ax0: #d9443f; --ax1: #3e9d4f; --ax2: #2f6fdf;
+  --ui: system-ui, sans-serif; --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #1b1b1d; --panel: #232326; --chip: #2d2d31; --fg: #e8e8e8; --mute: #a19c96; --line: #3a3a3e;
+  --accent: #ff7a3d; --expr: #b18cff; --err: #ff6b7f; --vp: #151517; --helper: #5b93ff;
+  --ax0: #ff6b66; --ax1: #6fd17f; --ax2: #6ea0ff; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #1b1b1d; --panel: #232326; --chip: #2d2d31; --fg: #e8e8e8; --mute: #a19c96; --line: #3a3a3e;
+  --accent: #ff7a3d; --expr: #b18cff; --err: #ff6b7f; --vp: #151517; --helper: #5b93ff;
+  --ax0: #ff6b66; --ax1: #6fd17f; --ax2: #6ea0ff; color-scheme: dark }
+html, body { height: 100%; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.4 var(--ui); }
+[hidden] { display: none !important; }
+#app { height: 100%; display: grid; grid-template-columns: 230px minmax(0, 1fr) 310px; grid-template-rows: auto minmax(0, 1fr) 230px 28px;
+  grid-template-areas: "top top top" "out vp props" "out bot props" "st st st"; }
+#top { grid-area: top; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px max(12px, env(safe-area-inset-right, 0px)) 6px max(12px, env(safe-area-inset-left, 0px)); background: var(--panel); border-bottom: 1px solid var(--line); position: relative; }
+#top .brand { font-weight: 600; letter-spacing: .02em; margin-right: 6px; }
+#top .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
+#top .grow { flex: 1; }
+button, select { font: inherit; color: inherit; }
+.btn { padding: 3px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); cursor: pointer; white-space: nowrap; }
+.btn:hover { border-color: var(--mute); }
+.btn:disabled { opacity: .45; cursor: default; }
+.seg { display: inline-flex; }
+.seg .btn { border-radius: 0; margin-left: -1px; }
+.seg .btn:first-child { border-radius: 5px 0 0 5px; margin-left: 0; }
+.seg .btn:last-child { border-radius: 0 5px 5px 0; }
+.btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; position: relative; }
+kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; background: var(--panel); color: var(--mute); }
+.btn kbd { margin-left: 5px; border: 0; background: none; padding: 0; color: inherit; opacity: .6; }
+.menu { position: absolute; top: 100%; z-index: 5; margin-top: 4px; display: grid; min-width: 220px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 24px rgb(0 0 0 / .18); }
+.menu button { text-align: left; padding: 6px 10px; border: 0; background: none; border-radius: 4px; cursor: pointer; display: flex; gap: 8px; align-items: center; }
+.menu button:hover, .menu button:focus-visible { background: var(--chip); outline: none; }
+.menu small { color: var(--mute); margin-left: auto; padding-left: 16px; }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; width: 100%; }
+.menu .mh { font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); padding: 6px 10px 2px; }
+#scanPart { max-width: 16em; }
+.pane { background: var(--panel); min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.pane-h { font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); padding: 7px 12px; border-bottom: 1px solid var(--line); background: var(--chip); display: flex; gap: 8px; align-items: center; }
+.pane-b { overflow: auto; flex: 1; min-height: 0; }
+#out { grid-area: out; border-right: 1px solid var(--line); }
+#tree { list-style: none; margin: 0; padding: 4px 0; }
+#tree li { display: flex; gap: 7px; align-items: center; padding: 4px 12px; cursor: pointer; white-space: nowrap; }
+#tree li:hover { background: var(--chip); }
+#tree li.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+#tree li:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#tree .nm { overflow: hidden; text-overflow: ellipsis; }
+#tree small { margin-left: auto; color: var(--mute); font: 11px var(--mono); }
+.ic { width: 11px; height: 11px; flex: none; border: 1.5px solid var(--mute); }
+.ic.box { border-radius: 2px; }
+.ic.loft { border-radius: 6px 6px 2px 2px; height: 13px; width: 8px; }
+.ic.empty { border-style: dashed; border-radius: 50%; }
+.ic.ref { border-style: dotted; border-color: var(--helper); border-radius: 50%; }
+#tree li.ref { color: var(--helper); cursor: default; }
+#vp { grid-area: vp; position: relative; background: var(--vp); min-height: 0; overflow: hidden; }
+#vp canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.vp-tag { position: absolute; left: 10px; top: 10px; font: 11px var(--mono); color: var(--mute); pointer-events: none; display: grid; gap: 2px; }
+.vp-tag b { color: var(--fg); font-weight: 500; }
+.vp-views { position: absolute; right: 10px; top: 10px; display: flex; gap: 4px; flex-wrap: wrap; justify-content: end; }
+.vp-views .btn { background: color-mix(in srgb, var(--panel) 85%, transparent); padding: 2px 8px; font-size: 12px; }
+#bot { grid-area: bot; border-top: 1px solid var(--line); }
+.tabs { display: flex; gap: 0; background: var(--chip); border-bottom: 1px solid var(--line); }
+.tabs button { border: 0; background: none; padding: 6px 14px; cursor: pointer; font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); border-bottom: 2px solid transparent; }
+.tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+#props { grid-area: props; border-left: 1px solid var(--line); }
+.sec { padding: 10px 12px; display: grid; gap: 6px; border-bottom: 1px solid var(--line); }
+.sec h3 { margin: 0; font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); display: flex; gap: 6px; align-items: center; }
+.sec h3 .grow { flex: 1; }
+.sec h2 { margin: 0; font-size: 14px; font-weight: 600; display: flex; gap: 8px; align-items: center; }
+.sec p { margin: 0; color: var(--mute); }
+.vrow { display: grid; grid-template-columns: 64px repeat(3, minmax(0, 1fr)); gap: 4px; align-items: center; }
+.vrow.q { grid-template-columns: 64px repeat(4, minmax(0, 1fr)); }
+.vrow.two { grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1fr); }
+.vrow.one { grid-template-columns: 64px minmax(0, 1fr); }
+.vrow label, .vrow .lbl { color: var(--mute); font-size: 12px; }
+.prow { display: grid; grid-template-columns: 28px repeat(3, minmax(0, 1fr)) 22px; gap: 4px; align-items: center; }
+.srow { display: grid; grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) 46px 22px; gap: 4px; align-items: center; }
+.stab { display: grid; grid-template-columns: 28px repeat(4, minmax(0, 1fr)) 22px; gap: 4px; align-items: center; }
+.stab small { color: var(--mute); font: 11px var(--mono); }
+.srow small, .prow small { color: var(--mute); font: 11px var(--mono); }
+.idx { font: 11px var(--mono); padding: 2px 0; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); cursor: pointer; }
+.idx.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.x { border: 0; background: none; color: var(--mute); cursor: pointer; padding: 0; font-size: 15px; line-height: 1; }
+.x:hover { color: var(--err); }
+input.f, select.f { width: 100%; min-width: 0; font: 12px var(--mono); padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); font-variant-numeric: tabular-nums; }
+input.f:focus, select.f:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+input.f.ax0 { box-shadow: inset 2px 0 var(--ax0); } input.f.ax1 { box-shadow: inset 2px 0 var(--ax1); } input.f.ax2 { box-shadow: inset 2px 0 var(--ax2); }
+input.f.expr { color: var(--expr); border-color: color-mix(in srgb, var(--expr) 55%, var(--line)); background: color-mix(in srgb, var(--expr) 8%, var(--bg)); }
+.legend { display: inline-flex; gap: 4px; align-items: center; color: var(--expr); font: 11px var(--mono); text-transform: none; letter-spacing: 0; }
+.add { justify-self: start; }
+.acts { display: flex; gap: 6px; flex-wrap: wrap; }
+#sketch { width: 100%; max-width: 100%; aspect-ratio: 1; max-height: 240px; background: var(--bg); border-radius: 5px; touch-action: none; }
+#sketch .ol { fill: color-mix(in srgb, var(--accent) 10%, transparent); stroke: var(--accent); }
+#sketch .axis { stroke: var(--line); }
+#sketch .pt { fill: var(--accent); cursor: grab; }
+#sketch .pt.first { fill: var(--fg); }
+#sketch .pt.locked { fill: var(--expr); cursor: not-allowed; }
+#sketch .pt.on { stroke: var(--fg); }
+#sketch .pt.half { stroke: var(--expr); }
+#sketch .pt.half.on { stroke: var(--fg); }
+#sketch .pt.half.u { cursor: ew-resize; }
+#sketch .pt.half.v { cursor: ns-resize; }
+#sketch .track { stroke: var(--expr); stroke-opacity: .7; }
+#sketch .tiph { fill: var(--expr); }
+#sketch .mid { fill: var(--panel); stroke: var(--accent); cursor: copy; }
+#sketch .hline { stroke: var(--accent); }
+#sketch .hdl { fill: var(--panel); stroke: var(--accent); cursor: grab; }
+#sketch .hdl.locked { stroke: var(--expr); cursor: not-allowed; }
+.ptable { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(90px, 2fr) 54px 64px 64px 64px 22px; gap: 4px 6px; align-items: center; padding: 8px 12px; }
+.vtable { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(120px, 3fr) 64px 22px; gap: 4px 6px; align-items: center; padding: 0 12px 10px; }
+.ptable .hd, .vtable .hd { font: 10.5px var(--mono); color: var(--mute); text-transform: uppercase; letter-spacing: .05em; }
+.ptable output, .vtable output { font: 12px var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+.ptable input[type=range] { width: 100%; min-width: 0; accent-color: var(--accent); }
+.gh { grid-column: 1 / -1; font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); padding-top: 4px; }
+#src { width: 100%; height: 100%; resize: none; border: 0; padding: 10px 12px; background: var(--panel); color: var(--fg); font: 12px/1.5 var(--mono); }
+.keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 18px; padding: 10px 12px; }
+.keys div { display: flex; gap: 8px; align-items: baseline; }
+.keys span:first-child { min-width: 92px; display: inline-flex; gap: 3px; flex-wrap: wrap; }
+#st { grid-area: st; display: flex; gap: 12px; align-items: center; padding: 0 max(12px, env(safe-area-inset-right, 0px)) 0 max(12px, env(safe-area-inset-left, 0px)); background: var(--chip); border-top: 1px solid var(--line); font: 11.5px var(--mono); color: var(--mute); min-width: 0; }
+#hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+#hint b { color: var(--fg); font-weight: 500; }
+#err { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
+#err.bad { color: var(--err); cursor: pointer; }
+#err.ok::before { content: "● "; color: var(--ax1); }
+@media (max-width: 860px) {
+  html, body { height: auto; }
+  #app { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 56vh auto auto auto auto;
+    grid-template-areas: "top" "vp" "st" "props" "bot" "out"; }
+  #props, #out { border: 0; border-top: 1px solid var(--line); }
+  #bot .pane-b { max-height: 360px; }
+  #st { min-height: 28px; }
+  .ptable { grid-template-columns: minmax(60px, 1fr) minmax(80px, 2fr) 48px 22px; }
+  .ptable .wide { display: none; }
+}
 </style>
+<script>
+// Classic script, so it also reports a module that fails to load (no devtools on a phone).
+const showError = (msg) => { const e = document.getElementById('err'); if (e) { e.className = 'bad'; e.textContent = `viewer: ${msg}`; } };
+addEventListener('error', (e) => showError(e.message || `could not load ${e.target?.src || e.target?.href || 'a file'}`), true);
+addEventListener('unhandledrejection', (e) => showError(e.reason?.message ?? e.reason));
+if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoaded', () => showError('this browser does not support import maps'));
+</script>
+</head>
+<body>
+<div id="app">
+  <header id="top">
+    <span class="brand">JIG</span>
+    <button class="btn" id="fileBtn" type="button" aria-haspopup="menu" aria-expanded="false">File</button>
+    <div id="fileMenu" class="menu" role="menu" hidden>
+      <button type="button" role="menuitem" data-file="new">New<small>one box</small></button>
+      <button type="button" role="menuitem" data-file="open">Open .gltf…<small>Ctrl O</small></button>
+      <div class="mh" id="exHead">Examples</div>
+      <hr>
+      <button type="button" role="menuitem" data-file="save">Save .gltf<small>Ctrl S</small></button>
+      <button type="button" role="menuitem" data-file="bake">Bake &amp; download<small>with meshes</small></button>
+      <button type="button" role="menuitem" data-file="copy">Copy glTF text</button>
+      <hr>
+      <button type="button" role="menuitem" data-file="scan">Scan mesh…<small>fit a loft (sketch)</small></button>
+    </div>
+    <input id="open" type="file" accept=".gltf,model/gltf+json" hidden>
+    <input id="scanFile" type="file" accept=".glb,.gltf" hidden>
+    <button class="btn" id="undo" type="button" title="Undo (Ctrl Z)">↶ Undo</button>
+    <button class="btn" id="redo" type="button" title="Redo (Ctrl Shift Z)">↷ Redo</button>
+    <span class="sep"></span>
+    <button class="btn" id="addBtn" type="button" aria-haspopup="menu" aria-expanded="false">+ Add<kbd>⇧A</kbd></button>
+    <div id="addMenu" class="menu" role="menu" hidden>
+      <button type="button" role="menuitem" data-add="box"><span class="ic box"></span>Box<small>size x y z</small></button>
+      <button type="button" role="menuitem" data-add="loft"><span class="ic loft"></span>Loft<small>path + sections</small></button>
+    </div>
+    <span class="seg" role="group" aria-label="Mode">
+      <button class="btn" id="mObject" type="button" aria-pressed="true">Object</button>
+      <button class="btn" id="mEdit" type="button" aria-pressed="false">Edit<kbd>Tab</kbd></button>
+    </span>
+    <span class="seg" role="group" aria-label="Tool" id="tools"></span>
+    <span class="grow"></span>
+    <select class="btn" id="scanPart" aria-label="Part to scan" hidden></select>
+    <span id="fileName" style="color:var(--mute);font:12px var(--mono)"></span>
+  </header>
+
+  <section id="out" class="pane" aria-label="Outliner">
+    <div class="pane-h">Outliner</div>
+    <div class="pane-b"><ul id="tree"></ul></div>
+  </section>
+
+  <section id="vp" aria-label="Viewport">
+    <div class="vp-tag"><b id="vpMode">Object mode</b><span id="vpSel"></span></div>
+    <div class="vp-views">
+      <button class="btn" type="button" data-view="front" title="Front (1)">Front</button>
+      <button class="btn" type="button" data-view="side" title="Side (3)">Side</button>
+      <button class="btn" type="button" data-view="top" title="Top (7)">Top</button>
+      <button class="btn" type="button" data-view="frame" title="Frame selection (F)">Frame</button>
+    </div>
+  </section>
+
+  <section id="props" class="pane" aria-label="Properties">
+    <div class="pane-h">Properties <span class="grow" style="flex:1"></span><span class="legend">ƒ expression</span></div>
+    <div class="pane-b" id="propsBody"></div>
+  </section>
+
+  <section id="bot" class="pane">
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" id="tabParams" aria-selected="true" data-tab="params">Parameters</button>
+      <button type="button" role="tab" id="tabSrc" aria-selected="false" data-tab="src">Source</button>
+      <button type="button" role="tab" id="tabKeys" aria-selected="false" data-tab="keys">Keys</button>
+    </div>
+    <div class="pane-b" id="paneParams" role="tabpanel"></div>
+    <div class="pane-b" id="paneSrc" role="tabpanel" hidden><textarea id="src" spellcheck="false" aria-label="JIG document source"></textarea></div>
+    <div class="pane-b" id="paneKeys" role="tabpanel" hidden>
+      <div class="keys">
+        <div><span><kbd>Ctrl</kbd><kbd>Z</kbd></span><span>Undo (<kbd>Shift</kbd> to redo)</span></div>
+        <div><span><kbd>Shift</kbd><kbd>A</kbd></span><span>Add a box or a loft</span></div>
+        <div><span><kbd>Tab</kbd></span><span>Edit the selected loft / back to Object</span></div>
+        <div><span><kbd>G</kbd><kbd>R</kbd><kbd>S</kbd></span><span>Move, rotate, scale gizmo</span></div>
+        <div><span><kbd>Shift</kbd><kbd>D</kbd></span><span>Duplicate with its own mesh</span></div>
+        <div><span><kbd>Alt</kbd><kbd>D</kbd></span><span>Duplicate sharing the mesh</span></div>
+        <div><span><kbd>Del</kbd></span><span>Delete node, path point or section</span></div>
+        <div><span><kbd>1</kbd><kbd>3</kbd><kbd>7</kbd></span><span>Front, side, top view</span></div>
+        <div><span><kbd>F</kbd></span><span>Frame the selection</span></div>
+        <div><span><kbd>Esc</kbd></span><span>Clear the selection</span></div>
+      </div>
+    </div>
+  </section>
+
+  <footer id="st"><span id="hint"></span><span id="err"></span></footer>
+</div>
+
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
 } }
 </script>
-</head>
-<body>
-<div id="side">
-  <div id="bar"><label>Open .gltf <input id="open" type="file" accept=".gltf,model/gltf+json"></label>
-    <select id="example" aria-label="Open example"></select>
-    <button id="bake" type="button">Bake &amp; download</button>
-    <label title="Fit a loft to one tube-like mesh (sketch)">Scan mesh <input id="scan" type="file" accept=".glb,.gltf"></label>
-    <select id="scanPart" aria-label="Part to scan" hidden></select></div>
-  <section id="defs" aria-label="Parameters and variables"></section>
-  <textarea id="src" spellcheck="false" aria-label="JIG document"></textarea>
-  <div id="err" role="status"></div>
-</div>
-<div id="view"><div id="sliders" aria-label="Parameter values"></div>
-  <div id="tools" aria-label="Loft tools"></div>
-  <div id="shape" hidden aria-label="Section shape"></div></div>
-<script>
-// Classic script, so it also reports a module that fails to load (no devtools on a phone).
-const showError = (msg) => { document.getElementById('err').textContent = `viewer: ${msg}`; };
-addEventListener('error', (e) => showError(e.message || `could not load ${e.target?.src || e.target?.href || 'a file'}`), true);
-addEventListener('unhandledrejection', (e) => showError(e.reason?.message ?? e.reason));
-if (!HTMLScriptElement.supports?.('importmap')) showError('this browser does not support import maps');
-</script>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { scanLoft } from './scan.js?v=c3c1352';
-import { parseGltf, namedParts } from './glb.js?v=c3c1352';
-import { read, bake, strip, stringify, geometry, sectionAt, loftCurve, loftFrame, outline, turn, EXT, VERSION } from './jig.js?v=c3c1352';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=9f0e89e';
+import { scanLoft } from './scan.js?v=9f0e89e';
+import { parseGltf, namedParts } from './glb.js?v=9f0e89e';
 
-const src = document.getElementById('src'), defsEl = document.getElementById('defs'), errEl = document.getElementById('err');
-const view = document.getElementById('view'), slidersEl = document.getElementById('sliders');
+// ---------- document state ----------
+// The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
+const examples = { box: 'examples/box.gltf?v=9f0e89e', loft: 'examples/loft.gltf?v=9f0e89e', star: 'examples/star.gltf?v=9f0e89e' };
+// The clean model: the smallest valid document (meshes may not be empty), one unit box.
+const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
+  scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
 
+let doc = structuredClone(clean), out = null, err = '', note = '', fileName = 'model.gltf';
+const values = {};                       // slider values, by parameter name (not stored in the document)
+let past = [stringify(doc)], future = [];
+let sel = null;                          // { node } | { node, point } | { node, section }
+let mode = 'object', gizmo = 'translate', editTool = 'path', dragging = false, sketchDrag = null;
+
+const $ = (s) => document.querySelector(s);
+const isStr = (v) => typeof v === 'string';
+const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+const r4 = (v) => +(+v).toFixed(4);
+const fmt = (v) => (v === undefined || !Number.isFinite(+v) ? '' : String(+(+v).toFixed(3)));
+const R = () => doc.extensions[EXT];
+const meshOf = (i) => doc.nodes?.[i]?.extensions?.[EXT]?.mesh;
+const loftOf = (i) => R().meshes?.[meshOf(i)]?.loft;
+const X = (i) => ((doc.nodes[i].extensions ??= {})[EXT] ??= {});
+const DEFAULTS = { translation: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] };
+const nodeSrc = (i, slot) => doc.nodes[i]?.extensions?.[EXT]?.[slot] ?? doc.nodes[i]?.[slot] ?? DEFAULTS[slot];
+const setNodeSlot = (i, slot, v) => { X(i)[slot] = v; delete doc.nodes[i][slot]; }; // the core slot would be a stale bake cache
+const SLOT = { translate: 'translation', rotate: 'rotation', scale: 'scale' };
+function el(tag, props = {}, ...kids) {
+  const e = Object.assign(document.createElement(tag), props);
+  e.append(...kids.filter((k) => k !== null && k !== undefined && k !== false));
+  return e;
+}
+
+// baked_values must name every parameter: follow added, renamed and removed ones.
+function normalize() {
+  const r = R();
+  if (isObj(r.baked_values)) r.baked_values = Object.fromEntries(Object.keys(r.params ?? {}).map((k) => [k, r.baked_values[k] ?? r.params[k].default]));
+}
+function evaluate() {
+  try { out = read(doc, values); err = ''; } catch (e) { err = e.message; }
+}
+function commit() {
+  normalize();
+  const s = stringify(doc);
+  if (s !== past.at(-1)) { past.push(s); future = []; if (past.length > 200) past.shift(); }
+  update();
+}
+function undo() { if (past.length > 1) { future.push(past.pop()); doc = JSON.parse(past.at(-1)); update(); } }
+function redo() { if (future.length) { past.push(future.pop()); doc = JSON.parse(past.at(-1)); update(); } }
+
+// ---------- three.js ----------
+const vp = $('#vp');
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(devicePixelRatio);
-view.appendChild(renderer.domElement);
+vp.prepend(renderer.domElement);
+const canvas = renderer.domElement;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 100);
-camera.position.set(1.6, 1.2, 2);
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0.3, 0);
-const grid = new THREE.GridHelper(4, 40, 0x888888, 0x888888);
-scene.add(new THREE.HemisphereLight(0xffffff, 0x666655, 2), grid);
-const sun = new THREE.DirectionalLight(0xffffff, 1.5); sun.position.set(2, 4, 3); scene.add(sun);
-const model = new THREE.Group(), unitBox = new THREE.BoxGeometry(), material = new THREE.MeshStandardMaterial({ color: 0xcccccc });
-const picked = new THREE.MeshStandardMaterial({ color: 0xcccccc, emissive: 0x3b82f6, emissiveIntensity: 0.35 });
+camera.position.set(1.7, 1.25, 2.2);
+const orbit = new OrbitControls(camera, canvas);
+orbit.target.set(0, 0.1, -0.2);
+orbit.update();
+scene.add(new THREE.HemisphereLight(0xffffff, 0x666655, 2));
+const sun = new THREE.DirectionalLight(0xffffff, 1.4); sun.position.set(2, 4, 3); scene.add(sun);
+let grid = null;
+const model = new THREE.Group(), meshLayer = new THREE.Group(), helperLayer = new THREE.Group(), pivot = new THREE.Group();
+pivot.matrixAutoUpdate = false;
+const proxy = new THREE.Object3D();
+pivot.add(proxy);
+const refLayer = new THREE.Group(); // a scanned mesh, drawn faintly over the loft fitted to it
+model.add(meshLayer, helperLayer, pivot, refLayer);
 scene.add(model);
+const matBase = new THREE.MeshStandardMaterial({ color: 0xc9c4bc, roughness: 0.75 });
+const matSel = new THREE.MeshStandardMaterial({ color: 0xc9c4bc, roughness: 0.75, emissiveIntensity: 0.3 });
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+function theme() {
+  scene.background = new THREE.Color(css('--vp'));
+  matSel.emissive = new THREE.Color(css('--accent'));
+  if (grid) { scene.remove(grid); grid.dispose(); }
+  const g = new THREE.Color(css('--line')), g2 = new THREE.Color(css('--mute'));
+  grid = new THREE.GridHelper(4, 40, g2, g);
+  scene.add(grid);
+  if (out) draw();
+}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', theme);
+new MutationObserver(theme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
-const values = {}; // slider settings, by parameter name
-let shownParams = '', sliderInputs = {}, varOutputs = {};
-let geoms = [], last = null;
-let scan = null; // { object, note }: a scanned mesh, drawn faintly over the loft fitted to it
+const tc = new TransformControls(camera, canvas);
+tc.setSize(0.85);
+scene.add(tc.getHelper());
+tc.addEventListener('dragging-changed', (e) => { orbit.enabled = !e.value; dragging = e.value; if (!e.value) commit(); });
+tc.addEventListener('objectChange', onGizmo);
 
+new ResizeObserver(() => {
+  const { clientWidth: w, clientHeight: h } = vp;
+  renderer.setSize(w, h, false); camera.aspect = w / Math.max(h, 1); camera.updateProjectionMatrix();
+}).observe(vp);
+renderer.setAnimationLoop(() => renderer.render(scene, camera));
+
+let geos = [], edit = null; // edit: { curve, group, mesh, rings } of the loft being edited
 function bufferGeometry({ positions, normals, indices }) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -116,225 +357,700 @@ function bufferGeometry({ positions, normals, indices }) {
   g.setIndex(new THREE.BufferAttribute(indices, 1));
   return g;
 }
-
-function rebuild() {
-  let out;
-  try { out = read(JSON.parse(src.value), values); errEl.textContent = ''; }
-  catch (e) { errEl.textContent = e.message; return; }
-  model.clear(); // three.js Object3D, not a DOM node: no replaceChildren
-  if (scan) model.add(scan.object);
-  for (const g of geoms) g?.dispose();
-  geoms = out.meshes.map((m) => (m.type === 'box' ? null : bufferGeometry(geometry(m))));
-  for (const i of out.instances) {
-    const box = out.meshes[i.mesh].type === 'box';
-    const m = new THREE.Mesh(box ? unitBox : geoms[i.mesh], box && sel?.node === i.node ? picked : material);
-    if (box) { m.scale.fromArray(out.meshes[i.mesh].size); m.userData.node = i.node; } // a box is picked by its node
-    const node = new THREE.Group().add(m);
-    node.matrixAutoUpdate = false;
-    node.matrix.fromArray(i.matrix); // world transform, column-major like glTF and three.js
-    model.add(node);
+const v3 = (a) => new THREE.Vector3(...a);
+function draw() {
+  for (const g of geos) g.dispose();
+  for (const c of helperLayer.children) c.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+  meshLayer.clear(); helperLayer.clear(); edit = null;
+  if (!out) return;
+  geos = out.meshes.map((m) => bufferGeometry(geometry(m)));
+  for (const inst of out.instances) {
+    const m = new THREE.Mesh(geos[inst.mesh], sel?.node === inst.node ? matSel : matBase);
+    m.matrixAutoUpdate = false; m.matrix.fromArray(inst.matrix); m.userData.node = inst.node;
+    meshLayer.add(m);
   }
-  // Stand the model's floor on the grid; hold it still while a handle is dragged, so the handle stays under the pointer.
-  model.position.y = drag ? model.position.y : -out.floor;
-  last = out;
-  loftHelpers(out);
-  // Rebuild the sliders only when the parameter set changes, so dragging keeps focus.
-  const key = JSON.stringify(Object.entries(out.params).map(([k, p]) => [k, p.min, p.max]));
-  if (key !== shownParams) { shownParams = key; sliders(out.params); }
-  for (const [name, p] of Object.entries(out.params)) {
-    const s = sliderInputs[name];
-    if (document.activeElement !== s.input) s.input.value = p.value;
-    s.out.value = round(p.value);
-  }
-  for (const [name, v] of Object.entries(out.vars)) if (varOutputs[name]) varOutputs[name].value = round(v);
-}
-
-const round = (v) => String(+v.toFixed(3));
-
-function sliders(params) {
-  sliderInputs = {};
-  slidersEl.replaceChildren(...Object.entries(params).map(([name, p]) => {
-    const input = el('input', { type: 'range', min: p.min, max: p.max, step: (p.max - p.min) / 200 || 'any', value: p.value });
-    const out = el('output');
-    input.oninput = () => { values[name] = Number(input.value); rebuild(); };
-    sliderInputs[name] = { input, out };
-    return el('label', {}, name, input, out);
-  }));
-}
-
-// --- Parameters and variables form: edits the JSON text, which stays the source of truth. ---
-
-function el(tag, props = {}, ...kids) {
-  const e = Object.assign(document.createElement(tag), props);
-  e.append(...kids);
-  return e;
-}
-
-// Apply fn to the parsed document and write it back.
-// shortcut: reformats the whole text (// comment keys survive, hand layout does not); keep layout if that hurts.
-function edit(fn, redraw = false) {
-  let doc;
-  try { doc = JSON.parse(src.value); } catch { return; }
-  if (!isObj(doc.extensions?.[EXT])) return;
-  const r = doc.extensions[EXT];
-  fn(r, doc); // fn edits the recipe (params, vars, meshes...), and the glTF around it if it must
-  // baked_values holds every parameter (D-16): follow added, removed and renamed parameters.
-  if (isObj(r.baked_values) && isObj(r.params)) {
-    r.baked_values = Object.fromEntries(Object.entries(r.params).map(([k, p]) => [k, r.baked_values[k] ?? p?.default]));
-  }
-  src.value = stringify(doc);
-  if (redraw) form(); else rebuild();
-}
-
-// Rename a key, keeping its place in the object.
-const renamed = (o, from, to) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k === from ? to : k, v]));
-const fresh = (prefix, taken) => { let i = 1; while (taken.has(prefix + i)) i++; return prefix + i; };
-const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
-
-function form() {
-  let doc;
-  try { doc = JSON.parse(src.value); } catch { defsEl.setAttribute('aria-disabled', 'true'); rebuild(); return; }
-  defsEl.removeAttribute('aria-disabled');
-  const r = isObj(doc.extensions?.[EXT]) ? doc.extensions[EXT] : {};
-  const params = isObj(r.params) ? r.params : {}, vars = isObj(r.vars) ? r.vars : {};
-  const taken = new Set([...Object.keys(params), ...Object.keys(vars)]);
-  varOutputs = {};
-  const nameIn = (list, key) => el('input', { value: key, ariaLabel: `${key} name`,
-    onchange: (e) => edit((d) => { d[list] = renamed(d[list], key, e.target.value.trim()); }, true) });
-  const numIn = (key, field) => el('input', { type: 'number', step: 'any', value: params[key][field], ariaLabel: `${key} ${field}`,
-    oninput: (e) => { const v = e.target.valueAsNumber; if (Number.isFinite(v)) edit((d) => { d.params[key][field] = v; }); } });
-  const del = (list, key) => el('button', { textContent: '×', title: `Remove ${key}`, ariaLabel: `Remove ${key}`,
-    onclick: () => edit((d) => { delete d[list][key]; if (!Object.keys(d[list]).length) delete d[list]; }, true) });
-  // New lists go right after "version"/"params" so the recipe reads top-down.
-  const put = (d, list, entry) => {
-    const all = { ...d, [list]: { ...d[list], ...entry } };
-    const order = ['version', 'params', 'vars'].filter((k) => k in all);
-    for (const k of Object.keys(d)) delete d[k];
-    for (const k of [...order, ...Object.keys(all).filter((k) => !order.includes(k))]) d[k] = all[k];
-  };
-  defsEl.replaceChildren(
-    el('h2', { textContent: 'Parameters' }),
-    el('div', { className: 'row param head' }, el('span', {}, 'name'), el('span', {}, 'default'), el('span', {}, 'min'), el('span', {}, 'max')),
-    ...Object.keys(params).filter((k) => isObj(params[k])).map((k) =>
-      el('div', { className: 'row param' }, nameIn('params', k), numIn(k, 'default'), numIn(k, 'min'), numIn(k, 'max'), del('params', k))),
-    el('button', { className: 'add', textContent: '+ parameter',
-      onclick: () => edit((d) => put(d, 'params', { [fresh('p', taken)]: { default: 1, min: 0, max: 2 } }), true) }),
-    el('h2', { textContent: 'Variables' }),
-    el('div', { className: 'row var head' }, el('span', {}, 'name'), el('span', {}, 'expression'), el('span', {}, 'value')),
-    ...Object.entries(vars).map(([k, v]) => {
-      const out = varOutputs[k] = el('output');
-      const expr = el('input', { value: String(v), ariaLabel: `${k} expression`, oninput: (e) => edit((d) => {
-        const t = e.target.value.trim();
-        d.vars[k] = t !== '' && Number.isFinite(Number(t)) ? Number(t) : t;
-      }) });
-      return el('div', { className: 'row var' }, nameIn('vars', k), expr, out, del('vars', k));
-    }),
-    el('button', { className: 'add', textContent: '+ variable',
-      onclick: () => edit((d) => put(d, 'vars', { [fresh('v', taken)]: 1 }), true) }),
-  );
-  rebuild();
-}
-
-// --- Loft editor (sketch, draft f4) ---
-// Curve tool: drag the path's points; click the curve to add one there. Sections tool: click the curve to add a
-// section there, drag a ring along the curve to move it. A selected section's shape is edited in the 2D panel.
-// shortcut: a drag writes plain numbers, replacing an expression in that slot; keep expressions once models need it.
-const toolsEl = document.getElementById('tools'), shapeEl = document.getElementById('shape');
-const accent = () => new THREE.Color(getComputedStyle(document.body).getPropertyValue('--accent').trim());
-let tool = 'curve', sel = null, drag = null, picks = [], shapeScale = 0, shapeFor = '';
-const r3 = (v) => +v.toFixed(3);
-const circle = (r, n = 8) => Array.from({ length: n }, (_, i) => [r3(r * Math.cos((2 * Math.PI * i) / n)), r3(r * Math.sin((2 * Math.PI * i) / n))]);
-const loftOf = (d, mesh) => d.meshes[mesh].loft; // recipe JSON of a loft
-
-function loftHelpers(out) {
-  picks = [];
-  if (sel?.node !== undefined && !out.instances.some((i) => i.node === sel.node)) sel = null;
-  if (sel?.mesh !== undefined && (out.meshes[sel.mesh]?.type !== 'loft' || (sel.point ?? -1) >= out.meshes[sel.mesh].path.length
-    || (sel.section ?? -1) >= out.meshes[sel.mesh].sections.length)) sel = null;
-  const hot = accent(), cold = new THREE.Color(0x3b82f6);
-  const mat = (color) => new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true });
-  const line = (pts, color, loop) => {
-    const l = new (loop ? THREE.LineLoop : THREE.Line)(new THREE.BufferGeometry().setFromPoints(pts), mat(color));
-    l.renderOrder = 10;
-    return l;
-  };
-  const v3 = (a) => new THREE.Vector3(...a);
-  out.meshes.forEach((m, k) => {
-    const inst = out.instances.find((i) => i.mesh === k);
-    if (m.type !== 'loft' || !inst) return;
-    const g = new THREE.Group();
-    g.matrixAutoUpdate = false;
-    g.matrix.fromArray(inst.matrix);
-    model.add(g);
+  if (!dragging && !sketchDrag) model.position.y = -out.floor; // hold still while dragging, so the handle stays under the pointer
+  const inst = sel && out.instances.find((i) => i.node === sel.node);
+  if (mode === 'edit' && inst && out.meshes[inst.mesh].type === 'loft') {
+    const m = out.meshes[inst.mesh], group = new THREE.Group();
+    group.matrixAutoUpdate = false; group.matrix.fromArray(inst.matrix);
+    const blue = new THREE.Color(css('--helper')), hot = new THREE.Color(css('--accent'));
+    const lmat = (c) => new THREE.LineBasicMaterial({ color: c, depthTest: false, transparent: true });
+    const line = (pts, c, loop) => { const l = new (loop ? THREE.LineLoop : THREE.Line)(new THREE.BufferGeometry().setFromPoints(pts), lmat(c)); l.renderOrder = 10; return l; };
     const curve = loftCurve(m);
-    g.add(line(curve.map((c) => v3(c.p)), cold));
-    const helper = { mesh: k, group: g, curve };
-    picks.push({ ...helper, kind: 'curve', local: curve.map((c) => v3(c.p)) });
-    if (tool === 'curve') {
-      m.path.forEach((p, i) => {
-        const on = sel?.mesh === k && sel.point === i;
-        const dot = new THREE.Points(new THREE.BufferGeometry().setFromPoints([v3(p)]),
-          new THREE.PointsMaterial({ color: on ? hot : cold, size: on ? 14 : 10, sizeAttenuation: false, depthTest: false }));
-        dot.renderOrder = 11;
-        g.add(dot);
-        picks.push({ ...helper, kind: 'point', index: i, local: [v3(p)] });
-      });
-    }
-    m.sections.forEach((s, i) => {
+    group.add(line(curve.map((c) => v3(c.p)), blue));
+    if (editTool === 'path') m.path.forEach((p, j) => {
+      const on = sel.point === j;
+      const dot = new THREE.Points(new THREE.BufferGeometry().setFromPoints([v3(p)]),
+        new THREE.PointsMaterial({ color: on ? hot : blue, size: on ? 13 : 9, sizeAttenuation: false, depthTest: false }));
+      dot.renderOrder = 11; group.add(dot);
+    });
+    const rings = m.sections.map((s, j) => {
       const f = loftFrame(curve, s.t);
       const ring = turn(outline(s.points), s.twist).map(([u, v]) => v3(f.p.map((c, a) => c + u * f.x[a] + v * f.y[a])));
-      g.add(line(ring, sel?.mesh === k && sel.section === i ? hot : cold, true));
-      // The ring's line, and its centre on the curve, so a click there grabs it instead of adding a section.
-      if (tool === 'sections') picks.push({ ...helper, kind: 'ring', index: i, local: ring, loop: true },
-        { ...helper, kind: 'ring', index: i, local: [v3(f.p)] });
+      group.add(line(ring, sel.section === j ? hot : blue, true));
+      return { ring, centre: v3(f.p) };
     });
-  });
-  model.updateMatrixWorld(true);
-  for (const p of picks) p.world = p.local.map((v) => v.clone().applyMatrix4(p.group.matrixWorld));
-  toolbar(out);
-  shapePanel(out);
-}
-
-function toolbar(out) {
-  const hasLoft = out.meshes.some((m) => m.type === 'loft');
-  const btn = (text, onclick, pressed) => el('button', { type: 'button', textContent: text, onclick, ...(pressed !== undefined && { ariaPressed: String(pressed) }) });
-  const pick = (t) => () => { tool = t; sel = null; rebuild(); };
-  const kids = [btn('+ loft', () => addLoft())];
-  if (sel?.node !== undefined) kids.push(btn('Delete box', remove, undefined), el('small', {}, `node ${sel.node}`));
-  if (hasLoft) {
-    kids.push(btn('Curve', pick('curve'), tool === 'curve'), btn('Sections', pick('sections'), tool === 'sections'));
-    if (sel?.point !== undefined || sel?.section !== undefined) kids.push(btn('Delete', remove));
-    if (scan) kids.push(btn('Hide scan', () => { scan = null; rebuild(); }), el('small', {}, scan.note));
-    kids.push(el('small', {}, tool === 'curve' ? 'Drag a point. Click the curve to add a point.'
-      : 'Click the curve to add a section. Drag a ring to slide it.'));
+    helperLayer.add(group);
+    edit = { curve, group, mesh: m, rings };
   }
-  toolsEl.replaceChildren(...kids);
+  model.updateMatrixWorld(true);
 }
 
-function addLoft(loft = { path: [[0, 0, 0], [0, 0.4, 0], [0.2, 0.7, 0]], sections: [{ t: 0, points: circle(0.1) }, { t: 1, points: circle(0.04) }] },
-  node = { translation: [1, 0, 0] }) {
-  let mesh;
-  edit((r, doc) => {
-    r.meshes = [...(r.meshes ?? []), { loft }];
-    mesh = r.meshes.length - 1;
-    node = (doc.nodes ??= []).push({ ...node, extensions: { [EXT]: { mesh } } }) - 1;
-    doc.scenes ??= [{ nodes: [] }];
-    doc.scene ??= 0;
-    (doc.scenes[doc.scene].nodes ??= []).push(node);
+// World matrix of node i's parent (identity for a scene root).
+const IDENT = new THREE.Matrix4().toArray();
+function parentWorld(i) {
+  const p = doc.nodes.findIndex((n) => n.children?.includes(i));
+  return p < 0 || !out.nodes[p] ? IDENT : mul(parentWorld(p), out.nodes[p].matrix);
+}
+let locked = []; // axes the gizmo leaves alone, because they hold expressions
+function placeGizmo() {
+  tc.detach(); locked = [];
+  if (!out || !sel || !out.nodes[sel.node]) return;
+  const n = out.nodes[sel.node];
+  if (mode === 'object') {
+    if (doc.nodes[sel.node].matrix) { locked = ['matrix']; return; }
+    pivot.matrix.fromArray(parentWorld(sel.node));
+    proxy.position.fromArray(n.translation); proxy.quaternion.fromArray(n.rotation); proxy.scale.fromArray(n.scale);
+    const src = nodeSrc(sel.node, SLOT[gizmo]);
+    if (gizmo === 'rotate') { if (src.some(isStr)) { locked = ['rotation']; return; } }
+    else locked = src.map((v, k) => (isStr(v) ? 'xyz'[k] : null)).filter(Boolean);
+    tc.setMode(gizmo);
+    tc.showX = !isStr(src[0]) || gizmo === 'rotate'; tc.showY = !isStr(src[1]) || gizmo === 'rotate'; tc.showZ = !isStr(src[2]) || gizmo === 'rotate';
+    if (locked.length === 3) return;
+  } else if (sel.point !== undefined && edit) {
+    const inst = out.instances.find((i) => i.node === sel.node);
+    pivot.matrix.fromArray(inst.matrix);
+    proxy.position.fromArray(edit.mesh.path[sel.point]); proxy.quaternion.identity(); proxy.scale.set(1, 1, 1);
+    const src = loftOf(sel.node).path[sel.point];
+    locked = src.map((v, k) => (isStr(v) ? 'xyz'[k] : null)).filter(Boolean);
+    tc.setMode('translate'); tc.showX = !isStr(src[0]); tc.showY = !isStr(src[1]); tc.showZ = !isStr(src[2]);
+    if (locked.length === 3) return;
+  } else return;
+  pivot.updateMatrixWorld(true);
+  tc.attach(proxy);
+}
+function onGizmo() {
+  if (!sel) return;
+  const keep = (src, now) => now.map((c, k) => (isStr(src[k]) ? src[k] : r4(c)));
+  if (mode === 'object') {
+    const slot = SLOT[tc.mode], src = nodeSrc(sel.node, slot);
+    const now = slot === 'translation' ? proxy.position.toArray() : slot === 'scale' ? proxy.scale.toArray() : proxy.quaternion.toArray();
+    setNodeSlot(sel.node, slot, keep(src, now));
+  } else if (sel.point !== undefined) {
+    const l = loftOf(sel.node);
+    l.path[sel.point] = keep(l.path[sel.point], proxy.position.toArray());
+  }
+  evaluate(); draw(); props(); status(); // no outliner/params rebuild mid-drag
+}
+
+// ---------- viewport picking ----------
+let down = null;
+canvas.addEventListener('pointerdown', (e) => { down = e.button === 0 && !tc.axis ? [e.clientX, e.clientY] : null; });
+canvas.addEventListener('pointerup', (e) => {
+  if (!down || dragging || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
+  pick(e);
+});
+function segDist(q, a, b) {
+  const ab = [b[0] - a[0], b[1] - a[1]], l2 = ab[0] ** 2 + ab[1] ** 2;
+  const f = l2 ? Math.min(Math.max(((q[0] - a[0]) * ab[0] + (q[1] - a[1]) * ab[1]) / l2, 0), 1) : 0;
+  return { d: Math.hypot(a[0] + f * ab[0] - q[0], a[1] + f * ab[1] - q[1]), f };
+}
+function pick(e) {
+  const rect = canvas.getBoundingClientRect(), q = [e.clientX - rect.left, e.clientY - rect.top];
+  if (mode === 'edit' && edit) {
+    const scr = (v) => { const p = v.clone().applyMatrix4(edit.group.matrixWorld).project(camera); return [(p.x + 1) / 2 * rect.width, (1 - p.y) / 2 * rect.height]; };
+    const l = loftOf(sel.node);
+    if (editTool === 'path') {
+      let best = null;
+      edit.mesh.path.forEach((p, j) => { const s = scr(v3(p)), d = Math.hypot(s[0] - q[0], s[1] - q[1]); if (d < 14 && (!best || d < best.d)) best = { j, d }; });
+      if (best) { sel = { node: sel.node, point: best.j }; return update(); }
+    } else {
+      let best = null;
+      edit.rings.forEach(({ ring, centre }, j) => {
+        const s = ring.map(scr), c = scr(centre);
+        let d = Math.hypot(c[0] - q[0], c[1] - q[1]);
+        s.forEach((a, k) => { d = Math.min(d, segDist(q, a, s[(k + 1) % s.length]).d); });
+        if (d < 9 && (!best || d < best.d)) best = { j, d };
+      });
+      if (best) { sel = { node: sel.node, section: best.j }; return update(); }
+    }
+    // A click on the curve adds a path point or a section there.
+    const s = edit.curve.map((c) => scr(v3(c.p)));
+    let best = null;
+    for (let k = 0; k < s.length - 1; k++) { const r = segDist(q, s[k], s[k + 1]); if (r.d < 8 && (!best || r.d < best.d)) best = { k, ...r }; }
+    if (best) {
+      const a = edit.curve[best.k], b = edit.curve[best.k + 1];
+      if (editTool === 'path') {
+        const at = a.segment + 1;
+        l.path.splice(at, 0, a.p.map((c, i) => r4(c + (b.p[i] - c) * best.f)));
+        sel = { node: sel.node, point: at };
+        note = `Added path point ${at}.`;
+      } else {
+        const t = r4(a.t + (b.t - a.t) * best.f), s2 = sectionAt(edit.mesh, t);
+        l.sections.push({ t, points: s2.points.map((p) => p.map(r4)), ...(s2.twist ? { twist: r4(s2.twist) } : {}) });
+        sel = { node: sel.node, section: l.sections.length - 1 };
+        note = `Added a section at t ${t}.`;
+      }
+      return commit();
+    }
+  }
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(new THREE.Vector2((q[0] / rect.width) * 2 - 1, -(q[1] / rect.height) * 2 + 1), camera);
+  const hit = ray.intersectObjects(meshLayer.children, false)[0];
+  if (mode === 'edit' && hit && hit.object.userData.node === sel?.node) return; // clicking the loft itself keeps editing
+  select(hit ? { node: hit.object.userData.node } : null);
+}
+function select(s) {
+  sel = s;
+  if (mode === 'edit' && (!sel || !loftOf(sel.node))) mode = 'object';
+  update();
+}
+
+// ---------- outliner ----------
+function outliner() {
+  const roots = doc.scenes?.[doc.scene ?? 0]?.nodes ?? [];
+  const users = {};
+  (doc.nodes ?? []).forEach((_, i) => { const m = meshOf(i); if (m !== undefined) users[m] = (users[m] ?? 0) + 1; });
+  const row = (i, depth) => {
+    const n = doc.nodes[i]; if (!n) return [];
+    const mi = meshOf(i), kind = mi === undefined ? 'empty' : R().meshes?.[mi]?.loft ? 'loft' : 'box';
+    const li = el('li', { className: sel?.node === i ? 'sel' : '', tabIndex: 0, role: 'treeitem', onclick: () => select({ node: i }),
+      onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select({ node: i }); } } },
+      el('span', { className: `ic ${kind}` }), el('span', { className: 'nm', textContent: n.name ?? `node ${i}` }),
+      mi !== undefined && el('small', { textContent: `${kind} ${mi}${users[mi] > 1 ? ` ×${users[mi]}` : ''}`, title: users[mi] > 1 ? `mesh ${mi} is shared by ${users[mi]} nodes` : `mesh ${mi}` }));
+    li.style.paddingLeft = `${12 + depth * 14}px`;
+    return [li, ...(n.children ?? []).flatMap((c) => row(c, depth + 1))];
+  };
+  const ref = scan && el('li', { className: 'ref', title: scan.note }, el('span', { className: 'ic ref' }), el('span', { className: 'nm', textContent: `scan: ${scan.name}` }),
+    el('button', { type: 'button', className: 'x', textContent: '×', title: 'Hide the scanned mesh', ariaLabel: 'Hide the scanned mesh', style: 'margin-left:auto',
+      onclick: () => { scan = null; refLayer.clear(); update(); } }));
+  $('#tree').replaceChildren(el('li', { style: 'color:var(--mute);cursor:default' }, `Scene ${doc.scene ?? 0}`), ...roots.flatMap((i) => row(i, 1)), ...(ref ? [ref] : []));
+}
+
+// ---------- properties ----------
+// A number field that also takes an expression: a number stays a number, anything else is stored as a string.
+function field(id, value, evaluated, set, label, axis) {
+  const expr = isStr(value);
+  const input = el('input', { id, className: `f${axis !== undefined ? ` ax${axis}` : ''}${expr ? ' expr' : ''}`, value: expr ? `ƒ ${value}` : String(value ?? ''),
+    title: expr ? `${value} = ${fmt(evaluated)}  (gizmo leaves this axis alone)` : '', spellcheck: false, autocomplete: 'off' });
+  input.setAttribute('aria-label', label);
+  input.onfocus = () => { if (expr) input.value = value; input.select(); };
+  input.onblur = () => { if (expr && input.value === value) input.value = `ƒ ${value}`; };
+  input.onchange = () => {
+    const t = input.value.replace(/^ƒ\s*/, '').trim();
+    if (t === '') return;
+    set(Number.isFinite(Number(t)) ? Number(t) : t);
+    commit();
+  };
+  input.onkeydown = (e) => { if (e.key === 'Enter') input.blur(); };
+  return input;
+}
+function vecRow(label, id, src, ev, set, cls = '') {
+  return el('div', { className: `vrow ${cls}` }, el('label', { htmlFor: `${id}0`, textContent: label }),
+    ...src.map((v, k) => field(`${id}${k}`, v, ev?.[k], (x) => { const a = [...src]; a[k] = x; set(a); }, `${label} ${'xyzw'[k]}`, k < 3 ? k : undefined)));
+}
+const sec = (...kids) => el('div', { className: 'sec' }, ...kids);
+const h3 = (text, ...extra) => el('h3', {}, text, ...extra);
+const btn = (text, onclick, title = '') => el('button', { type: 'button', className: 'btn', textContent: text, onclick, title });
+
+function props() {
+  const body = $('#propsBody'), kids = [];
+  if (!sel || !doc.nodes?.[sel.node]) {
+    const r = R();
+    kids.push(sec(el('h2', {}, 'Document'), el('p', {}, `${doc.nodes?.length ?? 0} nodes, ${r.meshes?.length ?? 0} meshes, ${Object.keys(r.params ?? {}).length} parameters. Click an object or press Shift A to add one.`)),
+      sec(h3('Floor'), el('div', { className: 'vrow one' }, el('label', { htmlFor: 'floor', textContent: 'y' }),
+        field('floor', r.floor ?? 0, out?.floor, (v) => { r.floor = v; }, 'Floor y')),
+      el('p', {}, 'Where the model stands. Without it, the lowest point on the vertical line through the origin.')));
+    body.replaceChildren(...kids);
+    return;
+  }
+  const i = sel.node, n = doc.nodes[i], on = out?.nodes?.[i], mi = meshOf(i);
+  const name = el('input', { id: 'name', className: 'f', value: n.name ?? '', placeholder: `node ${i}`, autocomplete: 'off',
+    onchange: (e) => { const v = e.target.value.trim(); if (v) n.name = v; else delete n.name; commit(); } });
+  name.setAttribute('aria-label', 'Node name');
+  kids.push(sec(el('h2', {}, el('span', { className: `ic ${mi === undefined ? 'empty' : loftOf(i) ? 'loft' : 'box'}` }), `node ${i}`),
+    el('div', { className: 'vrow one' }, el('label', { htmlFor: 'name', textContent: 'Name' }), name)));
+
+  const t = sec(h3('Transform'));
+  if (n.matrix) t.append(el('p', {}, 'This node uses a glTF matrix. Edit it in Source.'));
+  else {
+    t.append(vecRow('Location', 't', nodeSrc(i, 'translation'), on?.translation, (a) => setNodeSlot(i, 'translation', a)));
+    const q = nodeSrc(i, 'rotation');
+    if (q.some(isStr)) t.append(vecRow('Rotation q', 'q', q, on?.rotation, (a) => setNodeSlot(i, 'rotation', a), 'q'));
+    else {
+      const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(...q).normalize());
+      const deg = [e.x, e.y, e.z].map((r) => +((r * 180) / Math.PI).toFixed(2));
+      t.append(vecRow('Rotation °', 'r', deg, deg, (a) => {
+        if (a.some(isStr)) { note = 'Rotation in degrees takes numbers. For an expression, write the quaternion in Source.'; return; }
+        setNodeSlot(i, 'rotation', new THREE.Quaternion().setFromEuler(new THREE.Euler(...a.map((d) => (d * Math.PI) / 180))).toArray().map(r4));
+      }));
+    }
+    t.append(vecRow('Scale', 's', nodeSrc(i, 'scale'), on?.scale, (a) => setNodeSlot(i, 'scale', a)));
+  }
+  kids.push(t);
+
+  if (mi !== undefined) {
+    const users = doc.nodes.filter((_, k) => meshOf(k) === mi).length;
+    const pickMesh = el('select', { id: 'meshPick', className: 'f', onchange: (e) => { X(i).mesh = +e.target.value; commit(); } },
+      ...R().meshes.map((m, k) => el('option', { value: k, textContent: `mesh ${k} · ${m.loft ? 'loft' : 'box'}`, selected: k === mi })));
+    pickMesh.setAttribute('aria-label', 'Mesh');
+    const m = R().meshes[mi], om = out?.meshes?.[mi];
+    const ms = sec(h3('Mesh'), el('div', { className: 'vrow one' }, el('label', { htmlFor: 'meshPick', textContent: 'Uses' }), pickMesh));
+    if (users > 1) ms.append(el('p', {}, `Shared by ${users} nodes: a change here changes all of them.`),
+      btn('Make single user', () => { R().meshes.push(structuredClone(m)); X(i).mesh = R().meshes.length - 1; commit(); }));
+    if (m.box) ms.append(vecRow('Size', 'size', m.box.size, om?.size, (a) => { m.box.size = a; }));
+    kids.push(ms);
+    if (m.loft) kids.push(...loftProps(m.loft, om));
+  }
+  kids.push(sec(el('div', { className: 'acts' },
+    btn('Duplicate', () => duplicate(false), 'Shift D'), btn('Linked duplicate', () => duplicate(true), 'Alt D'), btn('Delete', () => removeNode(i), 'Del'))));
+  body.replaceChildren(...kids);
+}
+
+function loftProps(l, om) {
+  const i = sel.node;
+  const blend = el('select', { id: 'blend', className: 'f', onchange: (e) => { l.blend = e.target.value; if (l.blend === 'linear') delete l.blend; commit(); } },
+    ...['linear', 'smooth'].map((b) => el('option', { value: b, textContent: b, selected: (l.blend ?? 'linear') === b })));
+  blend.setAttribute('aria-label', 'Blend');
+  const settings = sec(h3('Loft'),
+    el('div', { className: 'vrow two' }, el('span', { className: 'lbl', textContent: 'Sides, steps' }),
+      field('sides', l.sides ?? 24, om?.sides, (v) => { l.sides = v; }, 'Sides'), field('steps', l.steps ?? 48, om?.steps, (v) => { l.steps = v; }, 'Steps')),
+    el('div', { className: 'vrow one' }, el('label', { htmlFor: 'blend', textContent: 'Blend' }), blend));
+  const enter = (s) => { mode = 'edit'; sel = { node: i, ...s }; update(); };
+  const path = sec(h3(`Path · ${l.path.length} points`),
+    ...l.path.map((p, j) => el('div', { className: 'prow' },
+      el('button', { type: 'button', className: `idx${sel.point === j ? ' on' : ''}`, textContent: j, title: 'Select this point', onclick: () => { editTool = 'path'; enter({ point: j }); } }),
+      ...p.map((v, k) => field(`pt${j}-${k}`, v, om?.path?.[j]?.[k], (x) => { p[k] = x; }, `Point ${j} ${'xyz'[k]}`, k)),
+      el('button', { type: 'button', className: 'x', textContent: '×', title: 'Delete point', ariaLabel: `Delete point ${j}`, onclick: () => delPoint(j) }))));
+  const sections = sec(h3(`Sections · ${l.sections.length}`, el('span', { className: 'grow' })),
+    el('div', { className: 'srow' }, el('span'), el('small', { textContent: 't' }), el('small', { textContent: 'twist °' }), el('span'), el('span')),
+    ...l.sections.map((s, j) => el('div', { className: 'srow' },
+      el('button', { type: 'button', className: `idx${sel.section === j ? ' on' : ''}`, textContent: j, title: 'Select this section', onclick: () => { editTool = 'sections'; enter({ section: j }); } }),
+      field(`sec${j}-t`, s.t, om?.sections?.[j]?.t, (x) => { s.t = x; }, `Section ${j} t`),
+      field(`sec${j}-tw`, s.twist ?? 0, om?.sections?.[j]?.twist, (x) => { if (x === 0) delete s.twist; else s.twist = x; }, `Section ${j} twist`),
+      el('small', { textContent: `${s.points.length} pts` }),
+      el('button', { type: 'button', className: 'x', textContent: '×', title: 'Delete section', ariaLabel: `Delete section ${j}`, onclick: () => delSection(j) }))),
+    btn('+ Section at t 0.5', () => {
+      if (!om) return;
+      const s2 = sectionAt(om, 0.5);
+      l.sections.push({ t: 0.5, points: s2.points.map((p) => p.map(r4)), ...(s2.twist ? { twist: r4(s2.twist) } : {}) });
+      editTool = 'sections'; mode = 'edit'; sel = { node: i, section: l.sections.length - 1 }; commit();
+    }));
+  const res = [settings, path, sections];
+  if (sel.section !== undefined && l.sections[sel.section]) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.id = 'sketch'; svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', `Shape of section ${sel.section}`);
+    svg.addEventListener('pointerdown', sketchDown);
+    svg.addEventListener('pointermove', sketchMove);
+    svg.addEventListener('pointerup', sketchUp); svg.addEventListener('pointercancel', sketchUp);
+    res.push(sec(h3(`Section ${sel.section} shape`), svg, el('div', { className: 'acts', id: 'shapeBar' }),
+      el('p', {}, 'Drag a point or a handle. Drag a + to add a point (to every section). Double-click a point to switch corner / smooth. Violet means an expression: a violet ring with arrows moves only along the arrows, a filled violet point not at all. "Make numbers" frees it.')));
+    // Point table: every coordinate is a field that takes a number or an expression. hu, hv empty = corner;
+    // typing a handle makes the point smooth, clearing both makes it a corner again.
+    const s = l.sections[sel.section], ev = om?.sections?.[sel.section]?.points;
+    const setHandle = (p, k, x) => {
+      if (p.length < 4) p.push(0, 0);
+      p[k] = x;
+    };
+    const handleField = (p, j, k) => {
+      const f = field(`sp${j}-${k}`, p[k], ev?.[j]?.[k], (x) => setHandle(p, k, x), `Point ${j} ${k === 2 ? 'hu' : 'hv'}`);
+      if (p.length < 4) f.placeholder = 'corner';
+      // field() ignores an empty entry; here clearing both handles turns the point back into a corner.
+      f.addEventListener('change', () => {
+        if (f.value.trim() !== '' || p.length < 4) return;
+        p[k] = 0;
+        if (p[2] === 0 && p[3] === 0) p.splice(2, 2);
+        commit();
+      });
+      return f;
+    };
+    res.push(sec(h3(`Section ${sel.section} points · ${s.points.length}`),
+      el('div', { className: 'stab', id: 'ptTable' },
+        el('span'), ...['u', 'v', 'hu', 'hv'].map((t) => el('small', { textContent: t })), el('span'),
+        ...s.points.flatMap((p, j) => [
+          el('button', { type: 'button', className: `idx${j === shapePoint ? ' on' : ''}`, textContent: j, title: 'Select this point',
+            onclick: () => { shapePoint = j; update(); } }),
+          field(`sp${j}-0`, p[0], ev?.[j]?.[0], (x) => { p[0] = x; }, `Point ${j} u`, 0),
+          field(`sp${j}-1`, p[1], ev?.[j]?.[1], (x) => { p[1] = x; }, `Point ${j} v`, 1),
+          handleField(p, j, 2), handleField(p, j, 3),
+          el('button', { type: 'button', className: 'x', textContent: '×', title: 'Remove from every section', ariaLabel: `Remove point ${j}`,
+            onclick: () => removePoint(j) }),
+        ])),
+      el('p', {}, 'Type a number or an expression in any cell, e.g. thickness * 0.8. Fill hu, hv to make a point smooth; clear both for a corner. Adding or removing a point does it in every section.')));
+    queueMicrotask(() => drawSketch(svg));
+  }
+  return res;
+}
+
+// 2D shape of the selected section, in its (u, v) plane, v up. A point is [u, v] (corner) or [u, v, hu, hv]
+// (smooth, bezier handles at (u, v) ± (hu, hv)). Writes skip slots that hold expressions.
+let sketchR = 1, sketchFor = '', shapePoint = 0, lastTap = {};
+const evPts = (si = sel.section) => out?.meshes?.[meshOf(sel.node)]?.sections?.[si]?.points;
+// Where a + sits on edge i, and the point that splits the edge there (smooth when the edge curves).
+function midpoint(pts, i) {
+  const a = pts[i], b = pts[(i + 1) % pts.length];
+  if (a.length < 4 && b.length < 4) return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const c1 = [a[0] + (a[2] ?? 0), a[1] + (a[3] ?? 0)], c2 = [b[0] - (b[2] ?? 0), b[1] - (b[3] ?? 0)];
+  // Bezier at 1/2, and the handle that keeps both halves on the same curve: B'(1/2) / 6.
+  return [0, 1].map((q) => (a[q] + 3 * c1[q] + 3 * c2[q] + b[q]) / 8).concat([0, 1].map((q) => (b[q] + c2[q] - c1[q] - a[q]) / 8));
+}
+// Sections must keep equal point counts, so adding or removing a point does it in every section.
+function insertPoint(edge) {
+  loftOf(sel.node).sections.forEach((x, si) => x.points.splice(edge + 1, 0, midpoint(evPts(si), edge).map(r4)));
+}
+function removePoint(j) {
+  const l = loftOf(sel.node);
+  if (l.sections[0].points.length <= 3) { note = 'A section needs at least 3 points.'; return status(); }
+  l.sections.forEach((x) => x.points.splice(j, 1));
+  shapePoint = Math.max(0, j - 1); commit();
+}
+// Corner -> smooth with a handle along its neighbours (a Catmull-Rom tangent); smooth -> corner drops the handle.
+function toggleSmooth(j) {
+  const p = loftOf(sel.node).sections[sel.section].points, ev = evPts(), n = p.length;
+  if (p[j].length === 4) p[j] = p[j].slice(0, 2);
+  else { const a = ev[(j + n - 1) % n], b = ev[(j + 1) % n]; p[j] = [p[j][0], p[j][1], r4((b[0] - a[0]) / 6), r4((b[1] - a[1]) / 6)]; }
+  commit();
+}
+function drawSketch(svg) {
+  const s = loftOf(sel?.node)?.sections?.[sel.section], pts = evPts();
+  if (!s || !pts) return;
+  const key = `${sel.node}/${sel.section}`;
+  if (key !== sketchFor) { sketchFor = key; shapePoint = 0; sketchR = 0; }
+  shapePoint = Math.min(shapePoint, pts.length - 1);
+  // Fit once per section, so the view holds still while points move.
+  if (!sketchR) sketchR = Math.max(...outline(pts).flat().map(Math.abs), 0.01) * 1.4;
+  const k = sketchR, r = k * 0.04, thin = k / 150, NS = 'http://www.w3.org/2000/svg';
+  const mk = (t, a) => { const e = document.createElementNS(NS, t); for (const x in a) e.setAttribute(x, a[x]); return e; };
+  svg.setAttribute('viewBox', `${-k} ${-k} ${2 * k} ${2 * k}`);
+  const g = mk('g', { transform: 'scale(1,-1)' });
+  g.append(mk('line', { class: 'axis', x1: -k, y1: 0, x2: k, y2: 0, 'stroke-width': thin }), mk('line', { class: 'axis', x1: 0, y1: -k, x2: 0, y2: k, 'stroke-width': thin }),
+    mk('polygon', { class: 'ol', points: outline(pts).map((p) => p.join(',')).join(' '), 'stroke-width': k / 100 }));
+  pts.forEach((_, i) => { const [u, v] = midpoint(pts, i); g.append(mk('circle', { class: 'mid', cx: u, cy: v, r: r * 0.7, 'stroke-width': thin, 'data-mid': i })); });
+  pts.forEach(([u, v, hu, hv], i) => {
+    if (hu === undefined) return;
+    const lockedH = isStr(s.points[i][2]) && isStr(s.points[i][3]) ? ' locked' : '';
+    g.append(mk('line', { class: 'hline', x1: u - hu, y1: v - hv, x2: u + hu, y2: v + hv, 'stroke-width': thin }),
+      mk('rect', { class: `hdl${lockedH}`, x: u - hu - r * 0.6, y: v - hv - r * 0.6, width: r * 1.2, height: r * 1.2, 'stroke-width': thin * 1.5, 'data-h': i, 'data-dir': -1 }),
+      mk('rect', { class: `hdl${lockedH}`, x: u + hu - r * 0.6, y: v + hv - r * 0.6, width: r * 1.2, height: r * 1.2, 'stroke-width': thin * 1.5, 'data-h': i, 'data-dir': 1 }));
   });
-  tool = 'curve'; sel = mesh === undefined ? null : { mesh }; rebuild();
-  return mesh;
+  pts.forEach(([u, v], j) => {
+    const [lu, lv] = [isStr(s.points[j][0]), isStr(s.points[j][1])], lockedPt = lu && lv, half = lu !== lv;
+    // Half locked: a violet track along the one axis the point can still move on.
+    if (half) {
+      const a = r * 3.2, [dx, dy] = lu ? [0, a] : [a, 0];
+      g.append(mk('line', { class: 'track', x1: u - dx, y1: v - dy, x2: u + dx, y2: v + dy, 'stroke-width': thin * 2.5, 'marker-start': 'url(#tip)', 'marker-end': 'url(#tip)' }));
+    }
+    g.append(mk('circle', { class: `pt${j === 0 ? ' first' : ''}${lockedPt ? ' locked' : ''}${half ? ` half ${lu ? 'v' : 'u'}` : ''}${j === shapePoint ? ' on' : ''}`, cx: u, cy: v, r, 'stroke-width': thin * 2, 'data-j': j }));
+  });
+  const defs = mk('defs', {}), tip = mk('marker', { id: 'tip', viewBox: '0 0 10 10', refX: 5, refY: 5, markerWidth: 4, markerHeight: 4, orient: 'auto-start-reverse' });
+  tip.append(mk('path', { d: 'M0 0 L10 5 L0 10 Z', class: 'tiph' }));
+  defs.append(tip); g.prepend(defs);
+  svg.replaceChildren(g);
+  document.querySelectorAll('#ptTable .idx').forEach((b, j) => b.classList.toggle('on', j === shapePoint));
+  const bar = document.getElementById('shapeBar');
+  if (bar && !sketchDrag) {
+    const sp = s.points[shapePoint], smooth = sp.length === 4, exprs = sp.filter(isStr);
+    bar.replaceChildren(el('span', { className: 'lbl', textContent: `Point ${shapePoint}`, style: 'align-self:center;color:var(--mute)' }),
+      exprs.length > 0 && btn('Make numbers', () => {
+        // Like Blender's Delete driver: each expression becomes the value it has now, and stops following its parameters.
+        const ev = evPts()[shapePoint];
+        s.points[shapePoint] = sp.map((c, k) => (isStr(c) ? r4(ev[k]) : c));
+        note = `Point ${shapePoint}: ${sp.filter(isStr).join(', ')} replaced by numbers. It no longer follows those parameters (Undo brings them back).`;
+        commit();
+      }, `Replace ${sp.filter(isStr).join(', ')} with their current values`),
+      btn(smooth ? 'Make corner' : 'Make smooth', () => toggleSmooth(shapePoint), 'Double-click the point'),
+      Object.assign(btn('Remove point', () => removePoint(shapePoint), 'From every section'), { disabled: pts.length <= 3 }));
+  }
+}
+function sketchPoint(e, svg) {
+  const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.firstChild.getScreenCTM().inverse());
+  return [p.x, p.y];
+}
+function sketchDown(e) {
+  const svg = e.currentTarget, d = e.target.dataset ?? {};
+  // A double tap switches corner / smooth. Not dblclick: with pointer capture it lands on the svg, not the point.
+  if (d.j !== undefined && lastTap.j === d.j && e.timeStamp - lastTap.time < 400) { lastTap = {}; return toggleSmooth(+d.j); }
+  lastTap = { j: d.j, time: e.timeStamp };
+  if (d.j !== undefined) {
+    shapePoint = +d.j; drawSketch(svg);
+    if (e.target.classList.contains('locked')) return;
+    sketchDrag = { j: +d.j };
+  } else if (d.h !== undefined) {
+    if (e.target.classList.contains('locked')) return;
+    sketchDrag = { j: +d.h, dir: +d.dir };
+  } else if (d.mid !== undefined) {
+    insertPoint(+d.mid);
+    shapePoint = +d.mid + 1; sketchDrag = { j: shapePoint };
+    evaluate(); draw(); drawSketch(svg);
+  } else return;
+  svg.setPointerCapture(e.pointerId);
+}
+function sketchMove(e) {
+  if (!sketchDrag) return;
+  const svg = e.currentTarget, q = sketchPoint(e, svg), p = loftOf(sel.node).sections[sel.section].points[sketchDrag.j];
+  if (sketchDrag.dir) {
+    const [u, v] = evPts()[sketchDrag.j];
+    [(q[0] - u) * sketchDrag.dir, (q[1] - v) * sketchDrag.dir].forEach((c, k) => { if (!isStr(p[2 + k])) p[2 + k] = r4(c); });
+  } else q.forEach((c, k) => { if (!isStr(p[k])) p[k] = r4(c); });
+  evaluate(); draw(); drawSketch(svg); status();
+}
+function sketchUp() { if (sketchDrag) { sketchDrag = null; commit(); } }
+
+// ---------- parameters ----------
+let varOut = {}, sliderOut = {};
+const renamed = (o, from, to) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k === from ? to : k, v]));
+const fresh = (prefix, taken) => { let n = 1; while (taken.has(prefix + n)) n++; return prefix + n; };
+function params() {
+  const r = R(), P = isObj(r.params) ? r.params : {}, V = isObj(r.vars) ? r.vars : {};
+  const taken = new Set([...Object.keys(P), ...Object.keys(V)]);
+  varOut = {}; sliderOut = {};
+  const nameIn = (list, key) => {
+    const e = el('input', { id: `${list}-name-${key}`, className: 'f', value: key, autocomplete: 'off', spellcheck: false,
+      onchange: (ev) => { const to = ev.target.value.trim(); if (!to || to === key) return; r[list] = renamed(r[list], key, to); if (key in values) { values[to] = values[key]; delete values[key]; } note = `Renamed ${key} to ${to}. Expressions that use ${key} still say ${key}.`; commit(); } });
+    e.setAttribute('aria-label', `${key} name`); return e;
+  };
+  const del = (list, key) => el('button', { type: 'button', className: 'x', textContent: '×', title: `Remove ${key}`, ariaLabel: `Remove ${key}`,
+    onclick: () => { delete r[list][key]; delete values[key]; if (!Object.keys(r[list]).length) delete r[list]; commit(); } });
+  const num = (key, k) => {
+    const e = el('input', { id: `p-${k}-${key}`, className: 'f wide', type: 'number', step: 'any', value: P[key][k],
+      onchange: (ev) => { const v = ev.target.valueAsNumber; if (Number.isFinite(v)) { P[key][k] = v; commit(); } } });
+    e.setAttribute('aria-label', `${key} ${k}`); return e;
+  };
+  const grid1 = el('div', { className: 'ptable' },
+    el('span', { className: 'hd' }, 'parameter'), el('span', { className: 'hd' }, 'try a value'), el('span', { className: 'hd', style: 'text-align:right' }, 'now'),
+    el('span', { className: 'hd wide' }, 'default'), el('span', { className: 'hd wide' }, 'min'), el('span', { className: 'hd wide' }, 'max'), el('span'),
+    ...Object.keys(P).filter((k) => isObj(P[k])).flatMap((k) => {
+      const p = P[k], now = out?.params?.[k]?.value ?? p.default;
+      const range = el('input', { id: `p-val-${k}`, type: 'range', min: p.min, max: p.max, step: (p.max - p.min) / 200 || 'any', value: now,
+        oninput: (ev) => { values[k] = Number(ev.target.value); live(); } });
+      range.setAttribute('aria-label', `${k} value`);
+      const o = sliderOut[k] = el('output', { textContent: fmt(now) });
+      return [nameIn('params', k), range, o, num(k, 'default'), num(k, 'min'), num(k, 'max'), del('params', k)];
+    }),
+    el('div', { style: 'grid-column:1/-1' }, btn('+ Parameter', () => { r.params = { ...(r.params ?? {}), [fresh('p', taken)]: { default: 1, min: 0, max: 2 } }; commit(); })));
+  const grid2 = el('div', { className: 'vtable' },
+    el('span', { className: 'gh' }, 'Variables · named expressions, each sees the parameters and the variables above it'),
+    ...Object.entries(V).filter(([k]) => !k.startsWith('//')).flatMap(([k, v]) => {
+      const o = varOut[k] = el('output', { textContent: fmt(out?.vars?.[k]) });
+      const ex = field(`vars-expr-${k}`, v, out?.vars?.[k], (x) => { V[k] = x; }, `${k} expression`);
+      return [nameIn('vars', k), ex, o, del('vars', k)];
+    }),
+    el('div', { style: 'grid-column:1/-1' }, btn('+ Variable', () => { r.vars = { ...(r.vars ?? {}), [fresh('v', taken)]: 1 }; commit(); })));
+  $('#paneParams').replaceChildren(grid1, grid2);
+}
+// A slider moved: values only, not the document, so no undo step.
+function live() {
+  evaluate(); draw(); if (!dragging) placeGizmo(); props(); status();
+  for (const [k, o] of Object.entries(sliderOut)) o.textContent = fmt(out?.params?.[k]?.value);
+  for (const [k, o] of Object.entries(varOut)) o.textContent = fmt(out?.vars?.[k]);
 }
 
-// Scan: fit a loft to a .glb or self-contained .gltf (sketch, viewer/scan.js). The loft goes into the open document
-// with no node transform, so it sits where the mesh does; the part scanned stays on screen, faint, to compare.
-// A file with named parts offers each one (viewer/glb.js): every named mesh, and for a skinned mesh every named bone.
-// Each pick adds one loft. tools/scan.mjs does the same from the command line, with merged parts and joint guides.
+// ---------- edits ----------
+// A new node with a new mesh. `loft` (from a scan) goes in with no node transform, so it sits where the scan does.
+function addShape(kind, loft) {
+  const r = R();
+  r.meshes = [...(r.meshes ?? []), kind === 'box' ? { box: { size: [0.4, 0.4, 0.4] } }
+    : { loft: loft ?? { path: [[0, 0, 0], [0, 0.4, 0], [0.2, 0.7, 0]], sections: [{ t: 0, points: circle(0.1) }, { t: 1, points: circle(0.04) }] } }];
+  const mesh = r.meshes.length - 1, at = out ? -out.floor : 0;
+  doc.nodes = doc.nodes ?? [];
+  doc.nodes.push({ name: `${kind} ${mesh}`, extensions: { [EXT]: { mesh, ...(!loft && { translation: [0.9, r4(kind === 'box' ? at + 0.2 : at), 0.4] }) } } });
+  doc.scenes ??= [{ nodes: [] }]; doc.scene ??= 0;
+  (doc.scenes[doc.scene].nodes ??= []).push(doc.nodes.length - 1);
+  sel = { node: doc.nodes.length - 1 }; mode = 'object'; gizmo = 'translate';
+  note = `Added a ${kind}. Drag the arrows to place it.`;
+  commit();
+}
+const circle = (r, n = 8) => Array.from({ length: n }, (_, i) => [r4(r * Math.cos((2 * Math.PI * i) / n)), r4(r * Math.sin((2 * Math.PI * i) / n))]);
+function duplicate(linked) {
+  if (!sel) return;
+  const i = sel.node, n = structuredClone(doc.nodes[i]);
+  delete n.children;
+  const x = ((n.extensions ??= {})[EXT] ??= {});
+  if (!linked && x.mesh !== undefined) { R().meshes.push(structuredClone(R().meshes[x.mesh])); x.mesh = R().meshes.length - 1; }
+  const t = x.translation ?? n.translation ?? [0, 0, 0];
+  if (!isStr(t[0])) { x.translation = [r4(t[0] + 0.3), t[1], t[2]]; delete n.translation; }
+  n.name = `${n.name ?? `node ${i}`} copy`;
+  doc.nodes.push(n);
+  const j = doc.nodes.length - 1, parent = doc.nodes.findIndex((p) => p.children?.includes(i));
+  if (parent >= 0) doc.nodes[parent].children.push(j); else doc.scenes[doc.scene ?? 0].nodes.push(j);
+  sel = { node: j }; mode = 'object'; gizmo = 'translate';
+  note = linked ? 'Linked duplicate: both nodes share one mesh.' : 'Duplicated with its own mesh.';
+  commit();
+}
+// Delete a node; its children take its place. Its mesh goes too once no node uses it (the recipe keeps one mesh).
+function removeNode(n) {
+  const r = R(), at = (k) => doc.nodes[k]?.extensions?.[EXT]?.mesh, mesh = at(n), kids = doc.nodes[n].children ?? [];
+  const lists = [...(doc.scenes ?? []).map((s) => s.nodes ?? []), ...doc.nodes.map((d) => d.children ?? [])];
+  for (const l of lists) { const k = l.indexOf(n); if (k >= 0) l.splice(k, 1, ...kids); }
+  doc.nodes.splice(n, 1);
+  for (const l of lists) l.forEach((x, k) => { if (x > n) l[k] = x - 1; });
+  for (const d of doc.nodes) if (!d.children?.length) delete d.children;
+  if (mesh !== undefined && r.meshes.length > 1 && !doc.nodes.some((_, k) => at(k) === mesh)) {
+    r.meshes.splice(mesh, 1);
+    for (const d of doc.nodes) { const x = d.extensions?.[EXT]; if (x?.mesh > mesh) x.mesh--; }
+  }
+  sel = null; mode = 'object'; note = `Deleted node ${n}.`;
+  commit();
+}
+function delPoint(j) {
+  const l = loftOf(sel.node);
+  if (l.path.length <= 2) { note = 'A path needs at least 2 points.'; return status(); }
+  l.path.splice(j, 1); sel = { node: sel.node }; commit();
+}
+function delSection(j) {
+  const l = loftOf(sel.node);
+  if (l.sections.length <= 1) { note = 'A loft needs at least 1 section.'; return status(); }
+  l.sections.splice(j, 1); sel = { node: sel.node }; commit();
+}
+function del() {
+  if (!sel) return;
+  if (mode === 'edit' && sel.point !== undefined) return delPoint(sel.point);
+  if (mode === 'edit' && sel.section !== undefined) return delSection(sel.section);
+  removeNode(sel.node);
+}
+
+// ---------- chrome: toolbar, status, tabs ----------
+function toolbar() {
+  $('#undo').disabled = past.length < 2; $('#redo').disabled = !future.length;
+  $('#mObject').setAttribute('aria-pressed', String(mode === 'object'));
+  $('#mEdit').setAttribute('aria-pressed', String(mode === 'edit'));
+  $('#mEdit').disabled = !(sel && loftOf(sel.node));
+  const tb = (id, text, key, on, click) => { const b = el('button', { type: 'button', className: 'btn', id, onclick: click }, text, el('kbd', { textContent: key })); b.setAttribute('aria-pressed', String(on)); return b; };
+  $('#tools').replaceChildren(...(mode === 'object'
+    ? [tb('gT', 'Move', 'G', gizmo === 'translate', () => setGizmo('translate')), tb('gR', 'Rotate', 'R', gizmo === 'rotate', () => setGizmo('rotate')), tb('gS', 'Scale', 'S', gizmo === 'scale', () => setGizmo('scale'))]
+    : [tb('ePath', 'Path', '', editTool === 'path', () => { editTool = 'path'; sel = { node: sel.node }; update(); }), tb('eSec', 'Sections', '', editTool === 'sections', () => { editTool = 'sections'; sel = { node: sel.node }; update(); })]));
+  $('#tools').querySelectorAll('kbd:empty').forEach((k) => k.remove());
+  $('#vpMode').textContent = mode === 'object' ? 'Object mode' : `Edit mode · ${editTool === 'path' ? 'Path' : 'Sections'}`;
+  $('#vpSel').textContent = sel ? `${doc.nodes[sel.node]?.name ?? `node ${sel.node}`}${sel.point !== undefined ? ` · point ${sel.point}` : ''}${sel.section !== undefined ? ` · section ${sel.section}` : ''}` : 'nothing selected';
+}
+function setGizmo(g) { gizmo = g; update(); }
+function hint() {
+  if (note) return note;
+  const lockMsg = locked[0] === 'rotation' ? 'Rotation holds expressions, so the gizmo is off. Edit it in Properties.'
+    : locked[0] === 'matrix' ? 'This node uses a matrix. Edit it in Source.'
+      : locked.length ? `${locked.join(', ')} ${locked.length > 1 ? 'are expressions' : 'is an expression'}: the gizmo leaves ${locked.length > 1 ? 'them' : 'it'} alone. Edit in Properties.` : '';
+  if (mode === 'edit') return lockMsg || (editTool === 'path'
+    ? '<b>Click</b> a point to select it · drag the arrows to move it · click the curve to add a point · <b>Del</b> removes it · <b>Tab</b> back'
+    : '<b>Click</b> a ring to select a section · click the curve to add one · drag points in the shape panel · <b>Tab</b> back');
+  if (!sel) return '<b>Click</b> an object to select it · <b>Shift A</b> add · drag to orbit, right-drag to pan';
+  return lockMsg || `<b>G R S</b> move, rotate, scale${loftOf(sel.node) ? ' · <b>Tab</b> edit the loft' : ''} · <b>Shift D</b> duplicate · <b>Del</b> delete`;
+}
+function status() {
+  const h = $('#hint'); h.innerHTML = hint(); h.title = h.textContent;
+  const e = $('#err');
+  e.className = err ? 'bad' : 'ok';
+  e.textContent = err || `${out?.instances.length ?? 0} shapes · ${past.length - 1} edits`;
+  e.title = err ? `${err} (click to select the node)` : '';
+}
+$('#err').onclick = () => { const m = /^\/nodes\/(\d+)/.exec(err); if (m) select({ node: +m[1] }); };
+
+function update() {
+  if (sel && !doc.nodes?.[sel.node]) sel = null;
+  if (sel?.point !== undefined && !(sel.point < (loftOf(sel.node)?.path.length ?? 0))) sel = { node: sel.node };
+  if (sel?.section !== undefined && !(sel.section < (loftOf(sel.node)?.sections.length ?? 0))) sel = { node: sel.node };
+  if (mode === 'edit' && !(sel && loftOf(sel.node))) mode = 'object';
+  const focus = document.activeElement?.id;
+  evaluate(); draw(); if (!dragging) placeGizmo();
+  outliner(); props(); params(); toolbar(); status();
+  if (document.activeElement !== src) src.value = stringify(doc);
+  if (focus && focus !== 'src') document.getElementById(focus)?.focus?.();
+  note = '';
+}
+
+const src = $('#src');
+src.addEventListener('input', () => {
+  try { doc = JSON.parse(src.value); } catch (e) { err = `Source: not valid JSON yet (${e.message})`; return status(); }
+  if (!isObj(doc.extensions?.[EXT])) { err = `Source: needs extensions.${EXT}`; return status(); }
+  evaluate(); draw(); placeGizmo(); outliner(); props(); params(); toolbar(); status();
+});
+src.addEventListener('change', () => { try { JSON.parse(src.value); commit(); } catch { /* keep typing */ } });
+
+for (const b of document.querySelectorAll('[role=tab]')) b.onclick = () => {
+  for (const o of document.querySelectorAll('[role=tab]')) o.setAttribute('aria-selected', String(o === b));
+  $('#paneParams').hidden = b.dataset.tab !== 'params'; $('#paneSrc').hidden = b.dataset.tab !== 'src'; $('#paneKeys').hidden = b.dataset.tab !== 'keys';
+};
+
+// ---------- menus ----------
+const menus = { add: [$('#addMenu'), $('#addBtn')], file: [$('#fileMenu'), $('#fileBtn')] };
+function openMenu(name, open) {
+  for (const [k, [m, b]] of Object.entries(menus)) {
+    const on = k === name && (open ?? m.hidden);
+    m.hidden = !on; b.setAttribute('aria-expanded', String(on));
+    if (on) { m.style.left = `${b.offsetLeft}px`; m.querySelector('button').focus(); }
+  }
+}
+const closeMenus = () => openMenu(null, false);
+const anyMenu = () => Object.values(menus).some(([m]) => !m.hidden);
+$('#addBtn').onclick = () => openMenu('add');
+$('#fileBtn').onclick = () => openMenu('file');
+for (const b of $('#addMenu').querySelectorAll('[data-add]')) b.onclick = () => { closeMenus(); addShape(b.dataset.add); };
+addEventListener('pointerdown', (e) => { if (anyMenu() && !e.target.closest('.menu, #addBtn, #fileBtn')) closeMenus(); });
+// Arrow keys move through an open menu.
+for (const [m] of Object.values(menus)) m.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  e.preventDefault();
+  const items = [...m.querySelectorAll('button')], k = items.indexOf(document.activeElement);
+  items[(k + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
+});
+
+// ---------- files ----------
+function download(name, text) {
+  const a = el('a', { href: URL.createObjectURL(new Blob([text + '\n'], { type: 'model/gltf+json' })), download: name });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+// Open a document: its baked_values set the sliders. `fresh` starts a new undo history (first load); otherwise Undo
+// brings the previous document back.
+function load(text, name, fresh = false) {
+  let d;
+  try { d = strip(JSON.parse(text)); } catch (e) { note = `Open ${name}: ${e.message}`; return status(); }
+  if (!isObj(d?.extensions?.[EXT])) { note = `Open ${name}: not a JIG document (no extensions.${EXT})`; return status(); }
+  doc = d; fileName = name; sel = null; mode = 'object'; sketchFor = '';
+  for (const k of Object.keys(values)) delete values[k];
+  scan = null; refLayer.clear();
+  $('#fileName').textContent = name;
+  if (fresh) { past = [stringify(doc)]; future = []; update(); }
+  else { note = `Opened ${name}. Undo brings the previous document back.`; commit(); }
+  frame();
+}
+async function openExample(name, fresh = false) {
+  if (name === 'new') { load(stringify(clean), 'model.gltf', fresh); history.replaceState(null, '', location.pathname); return; }
+  try { load(await (await fetch(examples[name])).text(), `${name}.gltf`, fresh); }
+  catch (e) { note = `Open example ${name}: ${e.message}`; return status(); }
+  history.replaceState(null, '', `?example=${name}`); // a reload keeps the example
+}
+const save = () => { download(fileName, stringify(doc)); note = `Saved ${fileName} (recipe, no baked meshes).`; status(); };
+function bakeDownload() {
+  let gltf;
+  try { gltf = bake(doc, values).gltf; } catch (e) { note = `Bake: ${e.message}`; return status(); }
+  download(fileName, stringify(gltf));
+  // The bake records the slider values as baked_values; keep them in the document.
+  const r = strip(gltf).extensions[EXT];
+  if (r.baked_values) R().baked_values = r.baked_values;
+  note = `Baked and downloaded ${fileName} at the current parameter values.`;
+  commit();
+}
+function copyText() {
+  const text = stringify(doc);
+  const fallback = () => { $('#tabSrc').click(); src.focus(); src.select(); note = 'Copy was blocked: the source is selected, press Ctrl C.'; status(); };
+  try { navigator.clipboard.writeText(text).then(() => { note = 'Copied the glTF text.'; status(); }, fallback); } catch { fallback(); }
+}
+const fileActions = {
+  new: () => openExample('new'), open: () => $('#open').click(), save, bake: bakeDownload, copy: copyText, scan: () => $('#scanFile').click(),
+};
+const exHead = $('#exHead');
+exHead.after(...Object.keys(examples).map((name) => el('button', { type: 'button', role: 'menuitem', textContent: name, onclick: () => { closeMenus(); openExample(name); } })));
+for (const b of $('#fileMenu').querySelectorAll('[data-file]')) b.onclick = () => { closeMenus(); fileActions[b.dataset.file](); };
+$('#open').onchange = async (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { load(await f.text(), f.name); history.replaceState(null, '', location.pathname); } };
+
+// ---------- scan (sketch, viewer/scan.js) ----------
+// Fit a loft to a .glb or self-contained .gltf. A file with named parts offers each one (viewer/glb.js): every named
+// mesh, and for a skinned mesh every named bone. Each pick adds one loft, with no node transform, so it sits where
+// the mesh does; the part scanned stays on screen, faint, to compare. tools/scan.mjs does the same from the command line.
 // shortcut: one file only (no external .bin).
 const ghost = new THREE.MeshStandardMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.25, depthWrite: false });
-const partEl = document.getElementById('scanPart');
-let scanFile = '', scanParts = [];
-
+let scan = null, scanFile = '', scanParts = [];
 function scanPart(k) {
   const p = scanParts[k];
   try {
@@ -343,302 +1059,83 @@ function scanPart(k) {
     g.setAttribute('position', new THREE.Float32BufferAttribute(p.positions, 3));
     g.setIndex(p.indices);
     g.computeVertexNormals();
-    const object = new THREE.Mesh(g, ghost), mm = (x) => `${+(x * 1000).toFixed(1)} mm`;
-    scan = { object, note: `${scanFile}, ${p.name}: ${loft.sections.length} sections, ${loft.path.length} path points; off by ${mm(error.mean)} mean, ${mm(error.max)} max (size ${mm(size)}, units taken as metres)` };
-    if (addLoft(loft, {}) === undefined) throw new Error('open a JIG document first');
-    // Frame the scan: it may be far from the origin or another size than the 2 m the camera starts at.
-    const box = new THREE.Box3().setFromObject(object), c = box.getCenter(new THREE.Vector3());
+    refLayer.clear(); refLayer.add(new THREE.Mesh(g, ghost));
+    const mm = (x) => `${+(x * 1000).toFixed(1)} mm`;
+    scan = { name: `${scanFile}, ${p.name}`, note: `${loft.sections.length} sections, ${loft.path.length} path points; off by ${mm(error.mean)} mean, ${mm(error.max)} max (size ${mm(size)}, units taken as metres)` };
+    addShape('loft', loft);
+    note = `Scanned ${scan.name}: ${scan.note}`; status();
     camera.far = Math.max(100, size * 20); camera.updateProjectionMatrix();
-    controls.target.copy(c); camera.position.copy(c).add(new THREE.Vector3(0.8, 0.6, 1).multiplyScalar(size));
-  } catch (err) { scan = null; rebuild(); errEl.textContent = `scan: ${err.message}`; }
+    frame();
+  } catch (e) { note = `Scan: ${e.message}`; status(); }
 }
-
-document.getElementById('scan').onchange = async (e) => {
+const partEl = $('#scanPart');
+$('#scanFile').onchange = async (e) => {
   const f = e.target.files[0];
   e.target.value = '';
   if (!f) return;
-  try {
-    scanFile = f.name;
-    scanParts = namedParts(parseGltf(await f.arrayBuffer()));
-  } catch (err) { errEl.textContent = `scan: ${err.message}`; return; }
+  try { scanFile = f.name; scanParts = namedParts(parseGltf(await f.arrayBuffer())); }
+  catch (er) { note = `Scan: ${er.message}`; return status(); }
   // One mesh (named or not): scan it now. Named parts: pick one, then another for the next loft.
   partEl.hidden = scanParts.length <= 2;
   partEl.replaceChildren(el('option', { value: '', textContent: 'Scan part…', disabled: true }),
     ...scanParts.map((p, k) => el('option', { value: k, textContent: `${p.name} (${p.kind}, ${p.indices.length / 3} triangles)` })));
   partEl.value = '';
   if (partEl.hidden) scanPart(0);
+  else { note = `${f.name}: pick a part to scan in the list at the top right.`; status(); }
 };
 partEl.onchange = () => { scanPart(+partEl.value); partEl.value = ''; }; // so the same part can be picked again
 
-function remove() {
-  if (sel?.node !== undefined) { removeNode(sel.node); return; }
-  if (!sel) return;
-  const { mesh, point, section } = sel; // edit() rebuilds, which may clear sel
-  edit((r) => {
-    const l = loftOf(r, mesh);
-    if (point !== undefined && l.path.length > 2) l.path.splice(point, 1);
-    if (section !== undefined && l.sections.length > 1) l.sections.splice(section, 1);
-  });
-  sel = { mesh }; rebuild();
+$('#undo').onclick = undo; $('#redo').onclick = redo;
+$('#mObject').onclick = () => { mode = 'object'; if (sel) sel = { node: sel.node }; update(); };
+$('#mEdit').onclick = () => { if (sel && loftOf(sel.node)) { mode = 'edit'; update(); } };
+
+function view(dir) {
+  const d = camera.position.distanceTo(orbit.target);
+  camera.position.copy(orbit.target).add(new THREE.Vector3(...dir).normalize().multiplyScalar(d));
+  orbit.update();
 }
-
-// Delete a node; its children take its place. Its mesh goes too once no node uses it, but the recipe keeps one mesh
-// (meshes may not be empty).
-function removeNode(n) {
-  edit((r, doc) => {
-    const at = (x) => doc.nodes[x]?.extensions?.[EXT]?.mesh, mesh = at(n), kids = doc.nodes[n].children ?? [];
-    const lists = [...(doc.scenes ?? []).map((s) => s.nodes ?? []), ...doc.nodes.map((d) => d.children ?? [])];
-    for (const l of lists) { const k = l.indexOf(n); if (k >= 0) l.splice(k, 1, ...kids); }
-    doc.nodes.splice(n, 1);
-    for (const l of lists) l.forEach((x, k) => { if (x > n) l[k] = x - 1; });
-    for (const d of doc.nodes) if (!d.children?.length) delete d.children;
-    if (mesh === undefined || r.meshes.length < 2 || doc.nodes.some((_, x) => at(x) === mesh)) return;
-    r.meshes.splice(mesh, 1);
-    for (const d of doc.nodes) { const x = d.extensions?.[EXT]; if (x?.mesh > mesh) x.mesh--; }
-  });
-  sel = null; rebuild();
+function frame() {
+  const box = new THREE.Box3();
+  for (const m of meshLayer.children) if (!sel || m.userData.node === sel.node) box.expandByObject(m);
+  if (box.isEmpty()) return;
+  const s = box.getBoundingSphere(new THREE.Sphere()), dist = (s.radius / Math.sin((camera.fov * Math.PI) / 360)) * 1.15;
+  const dir = camera.position.clone().sub(orbit.target).normalize();
+  orbit.target.copy(s.center); camera.position.copy(s.center).add(dir.multiplyScalar(dist)); orbit.update();
 }
+const VIEWS = { front: [0, 0, 1], side: [1, 0, 0], top: [0, 1, 0.0001] };
+for (const b of document.querySelectorAll('[data-view]')) b.onclick = () => (b.dataset.view === 'frame' ? frame() : view(VIEWS[b.dataset.view]));
 
-// Nearest pick of the given kinds to the pointer, in screen pixels: { pick, i, f, d } (i, f: which segment, how far).
-function nearest(e, kinds) {
-  const { clientWidth: w, clientHeight: h } = renderer.domElement, q = [e.offsetX, e.offsetY];
-  const screen = (v) => { const p = v.clone().project(camera); return p.z < 1 ? [(p.x + 1) / 2 * w, (1 - p.y) / 2 * h] : null; };
-  let best = null;
-  const keep = (pick, i, f, d) => { if (!best || d < best.d) best = { pick, i, f, d }; };
-  for (const pick of picks.filter((p) => kinds.includes(p.kind))) {
-    const s = pick.world.map(screen);
-    if (s.length === 1) { if (s[0]) keep(pick, 0, 0, Math.hypot(s[0][0] - q[0], s[0][1] - q[1])); continue; }
-    for (let i = 0; i < s.length - (pick.loop ? 0 : 1); i++) {
-      const a = s[i], b = s[(i + 1) % s.length];
-      if (!a || !b) continue;
-      const ab = [b[0] - a[0], b[1] - a[1]], len2 = ab[0] ** 2 + ab[1] ** 2;
-      const f = len2 ? Math.min(Math.max(((q[0] - a[0]) * ab[0] + (q[1] - a[1]) * ab[1]) / len2, 0), 1) : 0;
-      keep(pick, i, f, Math.hypot(a[0] + f * ab[0] - q[0], a[1] + f * ab[1] - q[1]));
-    }
-  }
-  return best;
-}
-const tOnCurve = ({ pick, i, f }) => r3(pick.curve[i].t + f * (pick.curve[i + 1].t - pick.curve[i].t));
-
-const canvas = renderer.domElement;
-// Capture phase, so a click on a handle starts a drag instead of an orbit.
-canvas.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || !last) return;
-  const point = tool === 'curve' && nearest(e, ['point']);
-  const ring = tool === 'sections' && nearest(e, ['ring']);
-  const onCurve = nearest(e, ['curve']);
-  if (point && point.d < 14) {
-    sel = { mesh: point.pick.mesh, point: point.pick.index };
-    startPointDrag(point.pick, point.pick.world[0]);
-  } else if (ring && ring.d < 8) {
-    sel = { mesh: ring.pick.mesh, section: ring.pick.index };
-    drag = { kind: 't', mesh: ring.pick.mesh, section: ring.pick.index, from: [e.offsetX, e.offsetY] }; // slides once moved
-  } else if (onCurve && onCurve.d < 8) {
-    const { pick, i, f } = onCurve, mesh = pick.mesh;
-    if (tool === 'curve') {
-      const at = pick.curve[i].segment + 1, p = pick.local[i].clone().lerp(pick.local[i + 1], f);
-      edit((r) => loftOf(r, mesh).path.splice(at, 0, p.toArray().map(r3)));
-      sel = { mesh, point: at };
-      startPointDrag(pick, p.applyMatrix4(pick.group.matrixWorld));
-    } else {
-      const t = tOnCurve(onCurve), at = sectionAt(last.meshes[mesh], t); // the shape already there
-      const added = { t, points: at.points.map((p) => p.map(r3)), ...(at.twist && { twist: r3(at.twist) }) };
-      let section;
-      edit((r) => { section = loftOf(r, mesh).sections.push(added) - 1; });
-      sel = { mesh, section };
-      drag = { kind: 't', mesh, section };
-    }
-  } else {
-    // A click on a box selects it; elsewhere it clears a box selection. Either way the orbit goes on.
-    const ray = new THREE.Raycaster();
-    ray.setFromCamera(new THREE.Vector2(e.offsetX / canvas.clientWidth * 2 - 1, 1 - e.offsetY / canvas.clientHeight * 2), camera);
-    const node = ray.intersectObjects(model.children, true).find((h) => h.object.userData.node !== undefined)?.object.userData.node;
-    if (node !== undefined) { sel = { node }; rebuild(); } else if (sel?.node !== undefined) { sel = null; rebuild(); }
-    return;
-  }
-  e.stopImmediatePropagation();
-  controls.enabled = false;
-  canvas.setPointerCapture(e.pointerId);
-  rebuild();
-}, { capture: true });
-
-function startPointDrag(pick, world) {
-  // Move on the plane through the point that faces the camera, in the loft's space as it was at the start.
-  const normal = camera.getWorldDirection(new THREE.Vector3());
-  drag = { kind: 'point', mesh: pick.mesh, index: sel.point, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(normal, world),
-    toLocal: pick.group.matrixWorld.clone().invert() };
-}
-
-canvas.addEventListener('pointermove', (e) => {
-  if (!drag) return;
-  if (drag.kind === 'point') {
-    const ray = new THREE.Raycaster();
-    ray.setFromCamera(new THREE.Vector2(e.offsetX / canvas.clientWidth * 2 - 1, 1 - e.offsetY / canvas.clientHeight * 2), camera);
-    const hit = ray.ray.intersectPlane(drag.plane, new THREE.Vector3());
-    if (hit) edit((r) => { loftOf(r, drag.mesh).path[drag.index] = hit.applyMatrix4(drag.toLocal).toArray().map(r3); });
-  } else {
-    const on = nearest(e, ['curve']);
-    if (drag.from && Math.hypot(e.offsetX - drag.from[0], e.offsetY - drag.from[1]) < 4) return;
-    drag.from = null;
-    if (on && on.pick.mesh === drag.mesh) edit((r) => { loftOf(r, drag.mesh).sections[drag.section].t = tOnCurve(on); });
-  }
-});
-const endDrag = () => { if (!drag) return; drag = null; controls.enabled = true; rebuild(); };
-canvas.addEventListener('pointerup', endDrag);
-canvas.addEventListener('pointercancel', endDrag);
 addEventListener('keydown', (e) => {
-  if ((e.key === 'Delete' || e.key === 'Backspace') && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) remove();
-  if (e.key === 'Escape') { sel = sel?.mesh !== undefined ? { mesh: sel.mesh } : null; rebuild(); }
-});
-
-// The selected section's shape, in its own plane: u right, v up (the curve runs out of the screen).
-// A point is a corner [u, v] or smooth [u, v, hu, hv] with bezier handles at ± (hu, hv).
-const svgNS = 'http://www.w3.org/2000/svg';
-const svgEl = (tag, attrs) => { const e = document.createElementNS(svgNS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
-const svg = svgEl('svg', {}), pointBar = el('div', { className: 'points' });
-let tInput, twistInput, shapeDrag = null, shapePoint = 0;
-
-// Where a + sits on edge i, and the point that splits the edge there (smooth when the edge curves).
-function midpoint(pts, i) {
-  const a = pts[i], b = pts[(i + 1) % pts.length];
-  if (a.length < 4 && b.length < 4) return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-  const c1 = [a[0] + (a[2] ?? 0), a[1] + (a[3] ?? 0)], c2 = [b[0] - (b[2] ?? 0), b[1] - (b[3] ?? 0)];
-  // Bezier at 1/2, and the handle that keeps the halves on the same curve: B'(1/2) / 6.
-  return [0, 1].map((q) => (a[q] + 3 * c1[q] + 3 * c2[q] + b[q]) / 8)
-    .concat([0, 1].map((q) => (b[q] + c2[q] - c1[q] - a[q]) / 8));
-}
-
-function shapePanel(out) {
-  const s = sel?.section !== undefined ? out.meshes[sel.mesh].sections[sel.section] : null;
-  shapeEl.hidden = !s;
-  if (!s) { shapeFor = ''; return; }
-  const key = `${sel.mesh}/${sel.section}`;
-  if (key !== shapeFor) {
-    // Fit the view once per selection, so it holds still while points move.
-    shapeFor = key;
-    shapePoint = 0;
-    shapeScale = Math.max(0.05, ...out.meshes[sel.mesh].sections.flatMap((x) => x.points.flatMap((p) => p.slice(0, 2)).map(Math.abs))) * 1.4;
-    tInput = el('input', { type: 'number', step: 0.01, min: 0, max: 1, ariaLabel: 'section t',
-      oninput: (e) => { const t = e.target.valueAsNumber; if (t >= 0 && t <= 1) edit((r) => { loftOf(r, sel.mesh).sections[sel.section].t = t; }); } });
-    twistInput = el('input', { type: 'number', step: 1, ariaLabel: 'section twist in degrees',
-      oninput: (e) => { const w = e.target.valueAsNumber; if (Number.isFinite(w)) edit((r) => { const x = loftOf(r, sel.mesh).sections[sel.section]; if (w) x.twist = w; else delete x.twist; }); } });
-    shapeEl.replaceChildren(
-      el('header', {}, el('span', {}, `Section ${sel.section} · t`), tInput, el('span', {}, 'twist°'), twistInput,
-        el('button', { type: 'button', textContent: '×', title: 'Close', onclick: () => { sel = { mesh: sel.mesh }; rebuild(); } })),
-      svg, pointBar,
-      el('small', {}, 'Drag a point or a handle. Drag a + to add a point (to every section). Double-click a point to switch corner / smooth.'));
+  const tag = document.activeElement?.tagName, typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) && document.activeElement.type !== 'range';
+  const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
+  if (mod && k === 's') { e.preventDefault(); document.activeElement?.blur?.(); return save(); } // blur first: a field commits on change
+  if (mod && k === 'o') { e.preventDefault(); return $('#open').click(); }
+  if (e.key === 'Escape' && anyMenu()) return closeMenus();
+  if (typing) return; // native undo and keys while typing
+  if (mod && k === 'z') { e.preventDefault(); return e.shiftKey ? redo() : undo(); }
+  if (mod && k === 'y') { e.preventDefault(); return redo(); }
+  if (mod) return;
+  if (anyMenu()) return; // menu keys are handled by the menu
+  if (e.key === 'Escape') { return select(mode === 'edit' && (sel.point !== undefined || sel.section !== undefined) ? { node: sel.node } : null); }
+  if (e.shiftKey && k === 'a') { e.preventDefault(); return openMenu('add', true); }
+  if (e.key === 'Tab' && sel && loftOf(sel.node)) { e.preventDefault(); mode = mode === 'edit' ? 'object' : 'edit'; sel = { node: sel.node }; return update(); }
+  if (e.shiftKey && k === 'd') { e.preventDefault(); return duplicate(false); }
+  if (e.altKey && k === 'd') { e.preventDefault(); return duplicate(true); }
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); return del(); }
+  if (mode === 'object' && sel && !e.shiftKey && !e.altKey) {
+    if (k === 'g') return setGizmo('translate');
+    if (k === 'r') return setGizmo('rotate');
+    if (k === 's') return setGizmo('scale');
   }
-  if (document.activeElement !== tInput) tInput.value = s.t;
-  if (document.activeElement !== twistInput) twistInput.value = s.twist;
-  const pts = s.points;
-  shapePoint = Math.min(shapePoint, pts.length - 1);
-  const smooth = pts[shapePoint].length === 4;
-  pointBar.replaceChildren(el('span', {}, `Point ${shapePoint}`),
-    el('button', { type: 'button', textContent: smooth ? 'Make corner' : 'Make smooth', onclick: () => toggleSmooth(shapePoint) }),
-    el('button', { type: 'button', textContent: 'Remove', disabled: pts.length <= 3,
-      onclick: () => editAllPoints((p) => { if (p.length > 3) p.splice(shapePoint, 1); }) }));
-  const k = shapeScale, r = k * 0.045, thin = k / 150;
-  svg.setAttribute('viewBox', `${-k} ${-k} ${2 * k} ${2 * k}`);
-  const handles = pts.flatMap(([u, v, hu, hv], i) => (hu === undefined ? [] : [
-    svgEl('line', { x1: u - hu, y1: -(v - hv), x2: u + hu, y2: -(v + hv), stroke: 'var(--accent)', 'stroke-width': thin }),
-    svgEl('rect', { class: 'hdl', x: u - hu - r * 0.6, y: -(v - hv) - r * 0.6, width: r * 1.2, height: r * 1.2, 'data-hin': i }),
-    svgEl('rect', { class: 'hdl', x: u + hu - r * 0.6, y: -(v + hv) - r * 0.6, width: r * 1.2, height: r * 1.2, 'data-hout': i }),
-  ]));
-  svg.replaceChildren(
-    svgEl('line', { x1: -k, y1: 0, x2: k, y2: 0, stroke: 'currentColor', 'stroke-opacity': 0.2, 'stroke-width': thin }),
-    svgEl('line', { x1: 0, y1: -k, x2: 0, y2: k, stroke: 'currentColor', 'stroke-opacity': 0.2, 'stroke-width': thin }),
-    svgEl('polygon', { points: outline(pts).map(([u, v]) => `${u},${-v}`).join(' '), fill: 'var(--accent)', 'fill-opacity': 0.15,
-      stroke: 'var(--accent)', 'stroke-width': k / 100 }),
-    ...pts.map((_, i) => { const [u, v] = midpoint(pts, i); return svgEl('circle', { class: 'mid', cx: u, cy: -v, r: r * 0.7, 'stroke-width': thin, 'data-mid': i }); }),
-    ...handles,
-    ...pts.map(([u, v], i) => svgEl('circle', { class: `vtx${i ? '' : ' first'}${i === shapePoint ? ' on' : ''}`, cx: u, cy: -v, r, 'data-vtx': i })),
-  );
-}
-
-// Corner -> smooth with a handle along the neighbours (a Catmull-Rom tangent); smooth -> corner drops it.
-const toggleSmooth = (i) => editPoints((p) => {
-  if (p[i].length === 4) { p[i] = p[i].slice(0, 2); return; }
-  const [prev, next] = [s0.points[(i + p.length - 1) % p.length], s0.points[(i + 1) % p.length]];
-  p[i] = [p[i][0], p[i][1], r3((next[0] - prev[0]) / 6), r3((next[1] - prev[1]) / 6)];
+  if (k === 'f') return frame();
+  if (e.code === 'Numpad1' || e.code === 'Digit1') return view(VIEWS.front);
+  if (e.code === 'Numpad3' || e.code === 'Digit3') return view(VIEWS.side);
+  if (e.code === 'Numpad7' || e.code === 'Digit7') return view(VIEWS.top);
 });
-// The selected section as evaluated (numbers, even where the JSON has expressions).
-let s0 = null;
 
-const uv = (e) => { const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse()); return [r3(p.x), r3(-p.y)]; };
-const editPoints = (fn) => edit((r) => fn(loftOf(r, sel.mesh).sections[sel.section].points));
-// Every section of the selected loft, with its evaluated twin (numbers where the JSON has expressions).
-const editAllPoints = (fn) => edit((r) => loftOf(r, sel.mesh).sections.forEach((x, i) => fn(x.points, last.meshes[sel.mesh].sections[i].points)));
-let lastTap = {};
-svg.addEventListener('pointerdown', (e) => {
-  const { vtx, mid, hin, hout } = e.target.dataset ?? {};
-  s0 = last.meshes[sel.mesh].sections[sel.section];
-  // A double tap switches corner / smooth. Not dblclick: with pointer capture it lands on the svg, not the point.
-  if (vtx !== undefined && lastTap.vtx === vtx && e.timeStamp - lastTap.time < 400) {
-    lastTap = {};
-    toggleSmooth(+vtx);
-    return;
-  }
-  lastTap = { vtx, time: e.timeStamp };
-  if (vtx !== undefined) { shapePoint = +vtx; shapeDrag = { i: +vtx }; rebuild(); }
-  else if (hin !== undefined || hout !== undefined) shapeDrag = { i: +(hin ?? hout), handle: hin !== undefined ? -1 : 1 };
-  else if (mid !== undefined) {
-    const i = +mid + 1;
-    shapePoint = i; shapeDrag = { i };
-    editAllPoints((p, ev) => p.splice(i, 0, midpoint(ev, +mid).map(r3)));
-  } else return;
-  svg.setPointerCapture(e.pointerId);
-});
-svg.addEventListener('pointermove', (e) => {
-  if (!shapeDrag) return;
-  const { i, handle } = shapeDrag, q = uv(e);
-  editPoints((p) => {
-    if (!handle) { p[i] = [...q, ...p[i].slice(2)]; return; }
-    const [u, v] = last.meshes[sel.mesh].sections[sel.section].points[i];
-    p[i] = [p[i][0], p[i][1], r3((q[0] - u) * handle), r3((q[1] - v) * handle)];
-  });
-});
-svg.addEventListener('pointerup', () => { shapeDrag = null; });
-svg.addEventListener('pointercancel', () => { shapeDrag = null; });
-
-function resize() {
-  const { clientWidth: w, clientHeight: h } = view;
-  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
-}
-new ResizeObserver(resize).observe(view);
-renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
-
-src.addEventListener('input', form);
-
-// Open a .gltf (its baked_values set the sliders) and download it baked at the slider values (D-14, D-23).
-// The text shows the recipe without the bake's cache; the download carries a fresh one.
-const unbaked = (text) => { try { return stringify(strip(JSON.parse(text))); } catch { return text; } }; // show bad JSON as is, read() reports it
-const load = (text) => { scan = null; for (const k of Object.keys(values)) delete values[k]; shownParams = ''; src.value = unbaked(text); form(); };
-document.getElementById('open').onchange = async (e) => { const f = e.target.files[0]; if (f) load(await f.text()); };
-document.getElementById('bake').onclick = () => {
-  let gltf;
-  try { gltf = bake(JSON.parse(src.value), values).gltf; } catch (e) { errEl.textContent = e.message; return; }
-  load(stringify(gltf));
-  const a = el('a', { href: URL.createObjectURL(new Blob([stringify(gltf) + '\n'], { type: 'model/gltf+json' })), download: 'model.gltf' });
-  a.click();
-  URL.revokeObjectURL(a.href);
-};
-const examples = { box: 'examples/box.gltf?v=c3c1352', loft: 'examples/loft.gltf?v=c3c1352', star: 'examples/star.gltf?v=c3c1352' };
-// The clean model: the smallest valid document (meshes may not be empty), one unit box.
-const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
-  scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
-const pick = document.getElementById('example');
-pick.append(el('option', { value: '', textContent: 'Open example…', disabled: true }), el('option', { value: 'new', textContent: 'new' }),
-  ...Object.keys(examples).map((name) => el('option', { value: name, textContent: name })));
-const openExample = async (name) => {
-  pick.value = name;
-  if (name === 'new') { load(stringify(clean)); history.replaceState(null, '', location.pathname); return; }
-  load(await (await fetch(examples[name])).text());
-  history.replaceState(null, '', `?example=${name}`); // a reload keeps the example
-};
-pick.onchange = () => openExample(pick.value);
-document.getElementById('open').addEventListener('change', () => { pick.value = ''; });
+theme();
 const asked = new URLSearchParams(location.search).get('example');
-await openExample(examples[asked] ? asked : 'new');
+await openExample(examples[asked] ? asked : 'new', true);
 </script>
 </body>
 </html>
