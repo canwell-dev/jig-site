@@ -31,6 +31,14 @@ export function read(doc, values = {}) {
     const at = `${rat}/params/${name}`;
     need(/^[a-z_][a-z0-9_]*$/.test(name), at, 'name must be lower_snake_case');
     need(isObj(p), at, 'must be an object');
+    need(p.type === undefined || p.type === 'bool', `${at}/type`, 'must be "bool" (leave it out for a number)');
+    if (p.type === 'bool') { // D-47: true/false, 1/0 in expressions
+      only(p, ['type', 'default'], at);
+      need(typeof p.default === 'boolean', `${at}/default`, 'must be true or false');
+      if (baked) need(typeof baked[name] === 'boolean', `${rat}/baked_values/${name}`, 'must be true or false (baked_values holds every parameter)');
+      params[name] = { ...p, value: !!(values[name] ?? baked?.[name] ?? p.default) };
+      continue;
+    }
     only(p, ['default', 'min', 'max'], at);
     for (const k of ['default', 'min', 'max']) need(typeof p[k] === 'number', `${at}/${k}`, 'must be a number');
     need(p.min <= p.default && p.default <= p.max, at, 'needs min <= default <= max');
@@ -38,7 +46,7 @@ export function read(doc, values = {}) {
     const v = values[name] ?? baked?.[name] ?? p.default;
     params[name] = { ...p, value: Math.min(p.max, Math.max(p.min, v)) };
   }
-  const scope = Object.fromEntries(Object.entries(params).map(([k, p]) => [k, p.value]));
+  const scope = Object.fromEntries(Object.entries(params).map(([k, p]) => [k, +p.value]));
 
   // Sketch (draft f2): named expressions, in order; each sees the params and the vars before it.
   need(r.vars === undefined || isObj(r.vars), `${rat}/vars`, 'must be an object');
@@ -55,28 +63,66 @@ export function read(doc, values = {}) {
   const meshes = list(r.meshes, `${rat}/meshes`).map((m, i) => mesh(m, scope, `${rat}/meshes/${i}`));
 
   need(doc.nodes === undefined || Array.isArray(doc.nodes), '/nodes', 'must be a list');
-  const nodes = (doc.nodes ?? []).map((n, i) => node(n, meshes.length, scope, `/nodes/${i}`));
+  const src = doc.nodes ?? [];
 
-  // The default scene's tree, with world matrices. glTF: a node sits in one tree, at most once.
+  // The default scene's tree. glTF: a node sits in one tree, at most once. Baked nodes (copies of a repeat) are
+  // the bake's cache and are skipped. A node with `repeat`, and every node under it, takes its mesh and
+  // transform from JIG_recipe only, so the source subtree draws nothing in a plain glTF tool (D-45).
   need(Array.isArray(doc.scenes) && doc.scenes.length > 0, '/scenes', 'must be a non-empty list');
   need(Number.isInteger(doc.scene) && doc.scene >= 0 && doc.scene < doc.scenes.length, '/scene', 'must be a scene index');
   const roots = doc.scenes[doc.scene]?.nodes ?? [];
   need(Array.isArray(roots), `/scenes/${doc.scene}/nodes`, 'must be a list');
-  const instances = [], seen = new Set();
-  const visit = (i, parent, at) => {
-    need(Number.isInteger(i) && i >= 0 && i < nodes.length, at, 'must be a node index');
+  const seen = new Set(), repeated = new Set();
+  const check =(i, at, inRepeat) => {
+    need(Number.isInteger(i) && i >= 0 && i < src.length, at, 'must be a node index');
     need(!seen.has(i), at, `node ${i} is used twice in the scene`);
     seen.add(i);
-    const world = mul(parent, nodes[i].matrix);
-    if (nodes[i].mesh !== undefined) instances.push({ node: i, mesh: nodes[i].mesh, matrix: world });
-    nodes[i].children.forEach((c, j) => visit(c, world, `/nodes/${i}/children/${j}`));
+    const n = src[i];
+    need(isObj(n), `/nodes/${i}`, 'must be an object');
+    inRepeat ||= n.extensions?.[EXT]?.repeat !== undefined;
+    if (inRepeat) repeated.add(i);
+    if (inRepeat) for (const k of ['mesh', 'translation', 'rotation', 'scale', 'matrix']) {
+      need(n[k] === undefined, `/nodes/${i}/${k}`, `a node in a repeat takes its mesh and transform from ${EXT} only`);
+    }
+    need(n.children === undefined || Array.isArray(n.children), `/nodes/${i}/children`, 'must be a list');
+    (n.children ?? []).forEach((c, j) => { if (!isBaked(src[c])) check(c, `/nodes/${i}/children/${j}`, inRepeat); });
   };
-  roots.forEach((i, j) => visit(i, IDENTITY, `/scenes/${doc.scene}/nodes/${j}`));
+  roots.forEach((i, j) => check(i, `/scenes/${doc.scene}/nodes/${j}`, false));
+
+  // Evaluate the tree with world matrices. A repeated node is evaluated once per copy, its index bound for its
+  // subtree (D-44, D-46). `tree` holds one record per copy: { i, node, rep, shown, kids }; a repeat of 0 still
+  // evaluates copy 0, unshown, so its errors surface. `nodes[i]` is node i's first copy.
+  const nodes = [], instances = [];
+  const walk = (i, parent, s, shown, copy) => {
+    const x = src[i].extensions?.[EXT], at = `/nodes/${i}`;
+    const rep = isObj(x) && x.repeat !== undefined ? repeat(x.repeat, s, `${at}/extensions/${EXT}/repeat`) : null;
+    return Array.from({ length: rep ? Math.max(1, rep.count) : 1 }, (_, k) => {
+      const sk = rep ? { ...s, [rep.index]: k } : s, c = rep ? [...copy, k] : copy;
+      const n = node(src[i], meshes.length, sk, at), vis = shown && (!rep || k < rep.count);
+      nodes[i] ??= { ...n, repeated: repeated.has(i) };
+      const world = mul(parent, n.matrix);
+      if (vis && n.mesh !== undefined) instances.push({ node: i, mesh: n.mesh, matrix: world, copy: c });
+      const kids = n.children.filter((ch) => !isBaked(src[ch])).flatMap((ch) => walk(ch, world, sk, vis, c));
+      return { i, node: n, rep: !!rep, shown: vis, kids };
+    });
+  };
+  const tree = roots.flatMap((i) => walk(i, IDENTITY, scope, true, []));
+  src.forEach((n, i) => { if (!nodes[i] && !isBaked(n)) nodes[i] = node(n, meshes.length, scope, `/nodes/${i}`); });
 
   // y of the floor in model space; hosts stand the model there. Default: the lowest point on the vertical line
   // through the origin, or 0 when no shape crosses that line.
   const floor = r.floor === undefined ? lowestOnAxis(meshes, instances) : num(r.floor, scope, `${rat}/floor`);
-  return { params, vars, floor, meshes, nodes, instances };
+  return { params, vars, floor, meshes, nodes, instances, tree };
+}
+
+// A node's `repeat` (D-44): count rounded and clamped to 0..1024; the index is a fresh lower_snake_case name.
+function repeat(r, scope, at) {
+  need(isObj(r), at, 'must be an object');
+  only(r, ['count', 'index'], at);
+  need(typeof r.index === 'string' && /^[a-z_][a-z0-9_]*$/.test(r.index), `${at}/index`, 'must be a lower_snake_case name');
+  need(!Object.hasOwn(scope, r.index) && !Object.hasOwn(FUNCS, r.index), `${at}/index`,
+    `"${r.index}" is already a parameter, variable, enclosing index or function`);
+  return { count: Math.min(1024, Math.max(0, Math.round(num(r.count, scope, `${at}/count`)))), index: r.index };
 }
 
 // A glTF node. Its JIG_recipe may set mesh, translation, rotation and scale; the core slots with a twin there
@@ -86,7 +132,7 @@ function node(n, meshCount, scope, at) {
   const xat = `${at}/extensions/${EXT}`;
   const x = n.extensions?.[EXT] ?? {};
   need(isObj(x), xat, 'must be an object');
-  only(x, ['mesh', 'translation', 'rotation', 'scale'], xat);
+  only(x, ['mesh', 'translation', 'rotation', 'scale', 'repeat'], xat);
   if (x.mesh !== undefined) {
     need(Number.isInteger(x.mesh) && x.mesh >= 0 && x.mesh < meshCount, `${xat}/mesh`, `must be a recipe mesh index 0..${meshCount - 1}`);
   }
@@ -130,7 +176,7 @@ function mesh(m, scope, at) {
 
 // --- Bake (D-11, D-14..D-17, D-23) ---
 
-const OWNED = ['meshes', 'accessors', 'bufferViews', 'buffers'];
+const OWNED = ['meshes', 'accessors', 'bufferViews', 'buffers', 'nodes'];
 const isBaked = (o) => o?.extensions?.[EXT]?.baked === true;
 
 // Remove the bake's cache: every item marked baked, and the core node slots that have a twin in JIG_recipe.
@@ -147,6 +193,10 @@ export function strip(doc) {
     if (!d[k].length) delete d[k];
   }
   for (const n of Array.isArray(d.nodes) ? d.nodes : []) {
+    if (Array.isArray(n?.children)) { // drop links to removed baked copies (D-45)
+      const kept = n.children.filter((c) => c < d.nodes.length);
+      if (kept.length < n.children.length) { if (kept.length) n.children = kept; else delete n.children; }
+    }
     const x = n?.extensions?.[EXT];
     if (isObj(x)) for (const k of ['mesh', 'translation', 'rotation', 'scale']) if (x[k] !== undefined) delete n[k];
   }
@@ -191,10 +241,26 @@ export function bake(doc, values = {}, { uri } = {}) {
   for (const c of chunks) { bin.set(c, at); at += c.byteLength; }
   add('buffers', { byteLength: bin.byteLength, uri: uri ?? `data:application/octet-stream;base64,${base64(bin)}` });
 
+  // Nodes outside any repeat get their cache in place; each shown copy of a repeated node becomes a baked node,
+  // with baked copies of its subtree, appended to the repeated node's children (D-45).
+  const copyOf = (rec) => {
+    const kids = rec.kids.filter((r) => r.shown).map(copyOf), n = rec.node, b = {};
+    if (d.nodes[rec.i].name !== undefined) b.name = d.nodes[rec.i].name;
+    if (n.jig.mesh !== undefined) b.mesh = base.meshes + n.jig.mesh;
+    for (const [k, id] of [['translation', '0,0,0'], ['rotation', '0,0,0,1'], ['scale', '1,1,1']]) if (String(n[k]) !== id) b[k] = n[k];
+    if (kids.length) b.children = kids;
+    return add('nodes', b);
+  };
   for (const [i, n] of out.nodes.entries()) {
+    if (!n || n.repeated) continue;
     if (n.jig.mesh !== undefined) d.nodes[i].mesh = base.meshes + n.jig.mesh;
     for (const k of ['translation', 'rotation', 'scale']) if (n.jig[k] !== undefined) d.nodes[i][k] = n[k];
   }
+  const place = (recs) => recs.forEach((rec) => {
+    if (!rec.rep) return place(rec.kids);
+    if (rec.shown) (d.nodes[rec.i].children ??= []).push(copyOf(rec));
+  });
+  place(out.tree);
   return { gltf: d, bin };
 }
 

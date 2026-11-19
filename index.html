@@ -240,11 +240,11 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=1ac3481';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=7b73634';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=1ac3481', loft: 'examples/loft.gltf?v=1ac3481', star: 'examples/star.gltf?v=1ac3481' };
+const examples = { box: 'examples/box.gltf?v=7b73634', loft: 'examples/loft.gltf?v=7b73634', star: 'examples/star.gltf?v=7b73634', bench: 'examples/bench.gltf?v=7b73634' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -577,6 +577,21 @@ function props() {
   }
   kids.push(t);
 
+  // Repeat (D-44): draw this node and its subtree `count` times; expressions below see the index.
+  const rep = n.extensions?.[EXT]?.repeat;
+  if (!rep) kids.push(sec(h3('Repeat'), btn('Repeat this node', () => { X(i).repeat = { count: 2, index: fresh('i', new Set(Object.keys(out?.params ?? {}))) }; commit(); },
+    'Draw it several times; its expressions see the copy number')));
+  else if (isObj(rep)) {
+    const shown = out?.instances?.filter((x) => x.node === i).length;
+    const idx = el('input', { id: 'repIndex', className: 'f', value: rep.index ?? '', autocomplete: 'off', spellcheck: false,
+      onchange: (e) => { rep.index = e.target.value.trim(); commit(); } });
+    idx.setAttribute('aria-label', 'Repeat index name');
+    kids.push(sec(h3('Repeat', el('button', { type: 'button', className: 'x', textContent: '×', title: 'Stop repeating', ariaLabel: 'Stop repeating', onclick: () => { delete X(i).repeat; commit(); } })),
+      el('div', { className: 'vrow one' }, el('label', { htmlFor: 'repCount', textContent: 'Count' }), field('repCount', rep.count, undefined, (v) => { rep.count = v; }, 'Repeat count')),
+      el('div', { className: 'vrow one' }, el('label', { htmlFor: 'repIndex', textContent: 'Index' }), idx),
+      el('p', {}, `Copies 0 to count − 1; expressions in this node and below see ${rep.index} as the copy number.${shown !== undefined && n.extensions[EXT].mesh !== undefined ? ` ${shown} drawn now.` : ''} A count of 0 hides it: use a bool parameter for an optional part.`)));
+  }
+
   if (mi !== undefined) {
     const users = doc.nodes.filter((_, k) => meshOf(k) === mi).length;
     const pickMesh = el('select', { id: 'meshPick', className: 'f', onchange: (e) => { X(i).mesh = +e.target.value; commit(); } },
@@ -809,6 +824,12 @@ function params() {
     el('span', { className: 'hd wide' }, 'default'), el('span', { className: 'hd wide' }, 'min'), el('span', { className: 'hd wide' }, 'max'), el('span'),
     ...Object.keys(P).filter((k) => isObj(P[k])).flatMap((k) => {
       const p = P[k], now = out?.params?.[k]?.value ?? p.default;
+      if (p.type === 'bool') { // a checkbox to try, a checkbox for the default; no range
+        const box = (id, label, checked, on) => { const e = el('input', { id, type: 'checkbox', checked, onchange: (ev) => on(ev.target.checked) }); e.setAttribute('aria-label', label); return e; };
+        sliderOut[k] = el('output', { textContent: String(now) });
+        return [nameIn('params', k), box(`p-val-${k}`, `${k} value`, now, (v) => { values[k] = v; live(); }), sliderOut[k],
+          box(`p-default-${k}`, `${k} default`, p.default, (v) => { p.default = v; commit(); }), el('span', { className: 'wide' }), el('span', { className: 'wide' }), del('params', k)];
+      }
       const range = el('input', { id: `p-val-${k}`, type: 'range', min: p.min, max: p.max, step: (p.max - p.min) / 200 || 'any', value: now,
         oninput: (ev) => { values[k] = Number(ev.target.value); live(); } });
       range.setAttribute('aria-label', `${k} value`);
@@ -829,7 +850,7 @@ function params() {
 // A slider moved: values only, not the document, so no undo step.
 function live() {
   evaluate(); draw(); if (!dragging) placeGizmo(); props(); status();
-  for (const [k, o] of Object.entries(sliderOut)) o.textContent = fmt(out?.params?.[k]?.value);
+  for (const [k, o] of Object.entries(sliderOut)) { const v = out?.params?.[k]?.value; o.textContent = typeof v === 'boolean' ? String(v) : fmt(v); }
   for (const [k, o] of Object.entries(varOut)) o.textContent = fmt(out?.vars?.[k]);
 }
 

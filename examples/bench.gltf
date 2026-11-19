@@ -1,0 +1,577 @@
+{
+  "asset": { "version": "2.0" },
+  "extensionsUsed": ["JIG_recipe"],
+  "extensions": {
+    "JIG_recipe": {
+      "version": "0.1",
+      "params": {
+        "width": { "default": 1.6, "min": 0.8, "max": 4 },
+        "depth": { "default": 0.42, "min": 0.3, "max": 0.7 },
+        "height": { "default": 0.45, "min": 0.35, "max": 0.6 },
+        "backrest": { "type": "bool", "default": true },
+        "arm_rests": { "type": "bool", "default": false }
+      },
+      "vars": {
+        "// legs": "a pair of legs at each end, and more pairs so they stand at most 1.2 m apart",
+        "leg": 0.05,
+        "seat": 0.04,
+        "inset": "leg / 2 + 0.03",
+        "span": "width - 2 * inset",
+        "legs": "ceil(span / 1.2) + 1",
+        "back_h": 0.42,
+        "arm_h": 0.22
+      },
+      "floor": 0,
+      "meshes": [
+        { "box": { "size": ["width", "seat", "depth"] } },
+        { "box": { "size": ["leg", "height - seat", "leg"] } },
+        { "box": { "size": ["leg * 0.7", 0.04, "depth - 2 * inset"] } },
+        { "box": { "size": ["leg", "back_h", "leg"] } },
+        { "box": { "size": ["span", 0.09, 0.025] } },
+        { "box": { "size": ["leg", "arm_h", "leg"] } },
+        { "box": { "size": [0.07, 0.03, "depth - 2 * inset + leg + 0.04"] } }
+      ],
+      "baked_values": {
+        "width": 1.6,
+        "depth": 0.42,
+        "height": 0.45,
+        "backrest": true,
+        "arm_rests": false
+      }
+    }
+  },
+  "scene": 0,
+  "scenes": [{ "nodes": [0, 1, 4, 7] }],
+  "nodes": [
+    {
+      "name": "seat",
+      "extensions": { "JIG_recipe": { "mesh": 0, "translation": [0, "height - seat / 2", 0] } },
+      "mesh": 0,
+      "translation": [0, 0.43, 0]
+    },
+    {
+      "name": "leg pair",
+      "children": [2, 3, 13, 17, 21],
+      "extensions": {
+        "JIG_recipe": {
+          "repeat": { "count": "legs", "index": "i" },
+          "translation": ["-span / 2 + span * i / (legs - 1)", 0, 0]
+        }
+      }
+    },
+    {
+      "name": "leg",
+      "extensions": {
+        "JIG_recipe": {
+          "repeat": { "count": 2, "index": "side" },
+          "mesh": 1,
+          "translation": [0, "(height - seat) / 2", "(2 * side - 1) * (depth / 2 - inset)"]
+        }
+      }
+    },
+    {
+      "name": "stretcher",
+      "extensions": { "JIG_recipe": { "mesh": 2, "translation": [0, 0.12, 0] } }
+    },
+    {
+      "name": "backrest",
+      "children": [5, 6, 26],
+      "extensions": {
+        "JIG_recipe": {
+          "repeat": { "count": "backrest", "index": "b" },
+          "translation": [0, "height", "inset - depth / 2"]
+        }
+      }
+    },
+    {
+      "name": "back post",
+      "extensions": {
+        "JIG_recipe": {
+          "repeat": { "count": 2, "index": "p" },
+          "mesh": 3,
+          "translation": ["(2 * p - 1) * span / 2", "back_h / 2", 0]
+        }
+      }
+    },
+    {
+      "name": "back slat",
+      "extensions": {
+        "JIG_recipe": {
+          "repeat": { "count": 2, "index": "s" },
+          "translation": [0, "0.13 + s * 0.17", "leg / 2 + 0.0125"],
+          "mesh": 4
+        }
+      }
+    },
+    {
+      "name": "arm rest",
+      "children": [8, 9],
+      "extensions": {
+        "JIG_recipe": {
+          "repeat": { "count": "arm_rests * 2", "index": "a" },
+          "translation": ["(2 * a - 1) * span / 2", "height", 0]
+        }
+      }
+    },
+    {
+      "name": "arm post",
+      "extensions": {
+        "JIG_recipe": { "mesh": 5, "translation": [0, "arm_h / 2", "depth / 2 - inset"] }
+      }
+    },
+    {
+      "name": "arm",
+      "extensions": { "JIG_recipe": { "mesh": 6, "translation": [0, "arm_h + 0.015", 0.02] } }
+    },
+    {
+      "name": "leg",
+      "mesh": 1,
+      "translation": [0, 0.20500000000000002, -0.155],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "leg",
+      "mesh": 1,
+      "translation": [0, 0.20500000000000002, 0.155],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "stretcher",
+      "mesh": 2,
+      "translation": [0, 0.12, 0],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "leg pair",
+      "translation": [-0.745, 0, 0],
+      "children": [10, 11, 12],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "leg",
+      "mesh": 1,
+      "translation": [0, 0.20500000000000002, -0.155],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "leg",
+      "mesh": 1,
+      "translation": [0, 0.20500000000000002, 0.155],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "stretcher",
+      "mesh": 2,
+      "translation": [0, 0.12, 0],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "leg pair",
+      "children": [14, 15, 16],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "leg",
+      "mesh": 1,
+      "translation": [0, 0.20500000000000002, -0.155],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "leg",
+      "mesh": 1,
+      "translation": [0, 0.20500000000000002, 0.155],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "stretcher",
+      "mesh": 2,
+      "translation": [0, 0.12, 0],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "leg pair",
+      "translation": [0.745, 0, 0],
+      "children": [18, 19, 20],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "back post",
+      "mesh": 3,
+      "translation": [-0.745, 0.21, 0],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "back post",
+      "mesh": 3,
+      "translation": [0.745, 0.21, 0],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "back slat",
+      "mesh": 4,
+      "translation": [0, 0.13, 0.037500000000000006],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "back slat",
+      "mesh": 4,
+      "translation": [0, 0.30000000000000004, 0.037500000000000006],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "backrest",
+      "translation": [0, 0.45, -0.155],
+      "children": [22, 23, 24, 25],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 288,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 576,
+      "byteLength": 72,
+      "target": 34963,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 648,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 936,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1224,
+      "byteLength": 72,
+      "target": 34963,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1296,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1584,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1872,
+      "byteLength": 72,
+      "target": 34963,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1944,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2232,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2520,
+      "byteLength": 72,
+      "target": 34963,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2592,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2880,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 3168,
+      "byteLength": 72,
+      "target": 34963,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 3240,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 3528,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 3816,
+      "byteLength": 72,
+      "target": 34963,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 3888,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 4176,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 4464,
+      "byteLength": 72,
+      "target": 34963,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "min": [-0.800000011920929, -0.019999999552965164, -0.20999999344348907],
+      "max": [0.800000011920929, 0.019999999552965164, 0.20999999344348907],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "min": [-0.02500000037252903, -0.20499999821186066, -0.02500000037252903],
+      "max": [0.02500000037252903, 0.20499999821186066, 0.02500000037252903],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 5,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 6,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "min": [-0.017500000074505806, -0.019999999552965164, -0.1550000011920929],
+      "max": [0.017500000074505806, 0.019999999552965164, 0.1550000011920929],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 7,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 8,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 9,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "min": [-0.02500000037252903, -0.20999999344348907, -0.02500000037252903],
+      "max": [0.02500000037252903, 0.20999999344348907, 0.02500000037252903],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 10,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 11,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 12,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "min": [-0.7450000047683716, -0.04500000178813934, -0.012500000186264515],
+      "max": [0.7450000047683716, 0.04500000178813934, 0.012500000186264515],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 13,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 14,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 15,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "min": [-0.02500000037252903, -0.10999999940395355, -0.02500000037252903],
+      "max": [0.02500000037252903, 0.10999999940395355, 0.02500000037252903],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 16,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 17,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 18,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "min": [-0.03500000014901161, -0.014999999664723873, -0.20000000298023224],
+      "max": [0.03500000014901161, 0.014999999664723873, 0.20000000298023224],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 19,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 20,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [{ "attributes": { "POSITION": 0, "NORMAL": 1 }, "indices": 2 }],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "primitives": [{ "attributes": { "POSITION": 3, "NORMAL": 4 }, "indices": 5 }],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "primitives": [{ "attributes": { "POSITION": 6, "NORMAL": 7 }, "indices": 8 }],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "primitives": [{ "attributes": { "POSITION": 9, "NORMAL": 10 }, "indices": 11 }],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "primitives": [{ "attributes": { "POSITION": 12, "NORMAL": 13 }, "indices": 14 }],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "primitives": [{ "attributes": { "POSITION": 15, "NORMAL": 16 }, "indices": 17 }],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "primitives": [{ "attributes": { "POSITION": 18, "NORMAL": 19 }, "indices": 20 }],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 4536,
+      "uri": "data:application/octet-stream;base64,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AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcAzczMPD0KV77NzMy8zczMPD0KVz7NzMy8zczMPD0KVz7NzMw8zczMPD0KV77NzMw8zczMvD0KV77NzMw8zczMvD0KVz7NzMw8zczMvD0KVz7NzMy8zczMvD0KV77NzMy8zczMvD0KVz7NzMy8zczMvD0KVz7NzMw8zczMPD0KVz7NzMw8zczMPD0KVz7NzMy8zczMPD0KV77NzMy8zczMPD0KV77NzMw8zczMvD0KV77NzMw8zczMvD0KV77NzMy8zczMvD0KV77NzMw8zczMPD0KV77NzMw8zczMPD0KVz7NzMw8zczMvD0KVz7NzMw8zczMvD0KVz7NzMy8zczMPD0KVz7NzMy8zczMPD0KV77NzMy8zczMvD0KV77NzMy8AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcAUrg+P+xROL3NzEy8Urg+P+xROD3NzEy8Urg+P+xROD3NzEw8Urg+P+xROL3NzEw8Urg+v+xROL3NzEw8Urg+v+xROD3NzEw8Urg+v+xROD3NzEy8Urg+v+xROL3NzEy8Urg+v+xROD3NzEy8Urg+v+xROD3NzEw8Urg+P+xROD3NzEw8Urg+P+xROD3NzEy8Urg+P+xROL3NzEy8Urg+P+xROL3NzEw8Urg+v+xROL3NzEw8Urg+v+xROL3NzEy8Urg+v+xROL3NzEw8Urg+P+xROL3NzEw8Urg+P+xROD3NzEw8Urg+v+xROD3NzEw8Urg+v+xROD3NzEy8Urg+P+xROD3NzEy8Urg+P+xROL3NzEy8Urg+v+xROL3NzEy8AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcAzczMPK5H4b3NzMy8zczMPK5H4T3NzMy8zczMPK5H4T3NzMw8zczMPK5H4b3NzMw8zczMvK5H4b3NzMw8zczMvK5H4T3NzMw8zczMvK5H4T3NzMy8zczMvK5H4b3NzMy8zczMvK5H4T3NzMy8zczMvK5H4T3NzMw8zczMPK5H4T3NzMw8zczMPK5H4T3NzMy8zczMPK5H4b3NzMy8zczMPK5H4b3NzMw8zczMvK5H4b3NzMw8zczMvK5H4b3NzMy8zczMvK5H4b3NzMw8zczMPK5H4b3NzMw8zczMPK5H4T3NzMw8zczMvK5H4T3NzMw8zczMvK5H4T3NzMy8zczMPK5H4T3NzMy8zczMPK5H4b3NzMy8zczMvK5H4b3NzMy8AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcAKVwPPY/CdbzNzEy+KVwPPY/CdTzNzEy+KVwPPY/CdTzNzEw+KVwPPY/CdbzNzEw+KVwPvY/CdbzNzEw+KVwPvY/CdTzNzEw+KVwPvY/CdTzNzEy+KVwPvY/CdbzNzEy+KVwPvY/CdTzNzEy+KVwPvY/CdTzNzEw+KVwPPY/CdTzNzEw+KVwPPY/CdTzNzEy+KVwPPY/CdbzNzEy+KVwPPY/CdbzNzEw+KVwPvY/CdbzNzEw+KVwPvY/CdbzNzEy+KVwPvY/CdbzNzEw+KVwPPY/CdbzNzEw+KVwPPY/CdTzNzEw+KVwPvY/CdTzNzEw+KVwPvY/CdTzNzEy+KVwPPY/CdTzNzEy+KVwPPY/CdbzNzEy+KVwPvY/CdbzNzEy+AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcA",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ]
+}
