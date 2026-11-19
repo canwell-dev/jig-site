@@ -116,7 +116,9 @@ function node(n, meshCount, scope, at) {
 
 function mesh(m, scope, at) {
   need(isObj(m), at, 'must be an object');
-  only(m, ['box'], at);
+  only(m, ['box', 'loft'], at);
+  need(Object.keys(m).filter((k) => !k.startsWith('//')).length === 1, at, 'must have one shape: box or loft');
+  if (m.loft !== undefined) return loft(m.loft, scope, `${at}/loft`);
   const b = m.box;
   at += '/box';
   need(isObj(b), at, 'must be an object');
@@ -165,18 +167,23 @@ export function bake(doc, values = {}, { uri } = {}) {
   let offset = 0;
   const view = (array, target) => {
     const bytes = new Uint8Array(array.buffer);
-    chunks.push(bytes);
+    const padded = new Uint8Array(Math.ceil(bytes.byteLength / 4) * 4); // keep every view 4-byte aligned
+    padded.set(bytes);
+    chunks.push(padded);
     const i = add('bufferViews', { buffer: base.buffers, byteOffset: offset, byteLength: bytes.byteLength, target });
-    offset += bytes.byteLength; // every chunk is a multiple of 4 bytes, so views stay aligned
+    offset += padded.byteLength;
     return i;
   };
   for (const m of out.meshes) {
-    const { positions, normals, indices } = boxGeometry(m.size);
-    const half = m.size.map((c) => Math.fround(c / 2));
+    const { positions, normals, indices: all } = geometry(m);
+    const short = positions.length / 3 <= 65536;
+    const indices = short ? Uint16Array.from(all) : all;
+    const min = [0, 1, 2].map((a) => Math.min(...positions.filter((_, i) => i % 3 === a)));
+    const max = [0, 1, 2].map((a) => Math.max(...positions.filter((_, i) => i % 3 === a)));
     const pos = add('accessors', { bufferView: view(positions, 34962), componentType: 5126, count: positions.length / 3,
-      type: 'VEC3', min: half.map((c) => -c), max: half });
+      type: 'VEC3', min, max });
     const nor = add('accessors', { bufferView: view(normals, 34962), componentType: 5126, count: normals.length / 3, type: 'VEC3' });
-    const idx = add('accessors', { bufferView: view(indices, 34963), componentType: 5123, count: indices.length, type: 'SCALAR' });
+    const idx = add('accessors', { bufferView: view(indices, 34963), componentType: short ? 5123 : 5125, count: indices.length, type: 'SCALAR' });
     add('meshes', { primitives: [{ attributes: { POSITION: pos, NORMAL: nor }, indices: idx }] });
   }
   const bin = new Uint8Array(offset);
@@ -189,6 +196,13 @@ export function bake(doc, values = {}, { uri } = {}) {
     for (const k of ['translation', 'rotation', 'scale']) if (n.jig[k] !== undefined) d.nodes[i][k] = n[k];
   }
   return { gltf: d, bin };
+}
+
+// Triangles of a recipe mesh: { positions, normals, indices } (Float32Array, Float32Array, Uint32Array).
+export function geometry(m) {
+  if (m.type === 'loft') return loftGeometry(m);
+  const g = boxGeometry(m.size);
+  return { ...g, indices: Uint32Array.from(g.indices) };
 }
 
 // Box centred on the origin: 6 faces x 4 corners, outward normals, counter-clockwise seen from outside.
@@ -251,10 +265,12 @@ function mul(a, b) {
   return m;
 }
 
-// Lowest y where the line x = z = 0 enters an instance's box (slab test in the box's own space).
+// Lowest y where the line x = z = 0 enters an instance's shape: a slab test in a box's own space, the
+// triangles for other shapes.
 function lowestOnAxis(meshes, instances) {
   let low = Infinity;
   for (const { mesh: mi, matrix: m } of instances) {
+    if (meshes[mi].type !== 'box') { low = Math.min(low, lowestOnTriangles(geometry(meshes[mi]), m)); continue; }
     // Local point = A⁻¹(world − t), linear in y along the line: a + y·d. A is the matrix's 3x3 part.
     const inv = inverse3([0, 1, 2].map((r) => [0, 1, 2].map((c) => m[c * 4 + r])));
     if (!inv) continue; // a flat box has no volume to stand on
@@ -273,6 +289,21 @@ function lowestOnAxis(meshes, instances) {
   return low === Infinity ? 0 : low;
 }
 
+function lowestOnTriangles({ positions: p, indices }, m) {
+  const w = (i) => [0, 1, 2].map((r) => m[r] * p[3 * i] + m[4 + r] * p[3 * i + 1] + m[8 + r] * p[3 * i + 2] + m[12 + r]);
+  let low = Infinity;
+  for (let k = 0; k < indices.length; k += 3) {
+    const [a, b, c] = [indices[k], indices[k + 1], indices[k + 2]].map(w);
+    // Barycentric coordinates of x = z = 0 in the triangle's shadow on the xz plane.
+    const det = (b[0] - a[0]) * (c[2] - a[2]) - (c[0] - a[0]) * (b[2] - a[2]);
+    if (Math.abs(det) < 1e-15) continue;
+    const u = (-a[0] * (c[2] - a[2]) + (c[0] - a[0]) * a[2]) / det;
+    const v = (-(b[0] - a[0]) * a[2] + a[0] * (b[2] - a[2])) / det;
+    if (u >= 0 && v >= 0 && u + v <= 1) low = Math.min(low, a[1] + u * (b[1] - a[1]) + v * (c[1] - a[1]));
+  }
+  return low;
+}
+
 function inverse3([[a, b, c], [d, e, f], [g, h, i]]) {
   const det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
   if (Math.abs(det) < 1e-12) return null;
@@ -282,6 +313,149 @@ function inverse3([[a, b, c], [d, e, f], [g, h, i]]) {
     [(d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det],
   ];
 }
+
+// --- Loft (sketch, draft f4) ---
+// { path: [[x, y, z], ...], sections: [{ t, points: [[u, v], ...] }, ...], sides, steps }. The surface runs the
+// whole curve through `path`; t is the fraction of the curve's length. Between sections the shape blends
+// linearly; before the first and after the last it holds. Both ends are capped.
+
+function loft(l, scope, at) {
+  need(isObj(l), at, 'must be an object');
+  only(l, ['path', 'sections', 'sides', 'steps'], at);
+  const path = list(l.path, `${at}/path`).map((p, i) => vec(p, 3, scope, `${at}/path/${i}`));
+  need(path.length >= 2, `${at}/path`, 'needs at least 2 points');
+  path.forEach((p, i) => need(i === 0 || dist(p, path[i - 1]) > 1e-9, `${at}/path/${i}`, 'repeats the point before it'));
+  const sections = list(l.sections, `${at}/sections`).map((s, i) => {
+    const sat = `${at}/sections/${i}`;
+    need(isObj(s), sat, 'must be an object');
+    only(s, ['t', 'points'], sat);
+    const t = num(s.t, scope, `${sat}/t`);
+    need(t >= 0 && t <= 1, `${sat}/t`, `must be in 0..1, is ${t}`);
+    const pts = list(s.points, `${sat}/points`).map((p, j) => vec(p, 2, scope, `${sat}/points/${j}`));
+    need(pts.length >= 3, `${sat}/points`, 'needs at least 3 points');
+    need(Math.abs(area(pts)) > 1e-12, `${sat}/points`, 'must enclose an area');
+    return { t, points: pts };
+  });
+  const int = (k, dflt, lo, hi) => {
+    const v = l[k] === undefined ? dflt : num(l[k], scope, `${at}/${k}`);
+    need(Number.isInteger(v) && v >= lo && v <= hi, `${at}/${k}`, `must be a whole number ${lo}..${hi}`);
+    return v;
+  };
+  return { type: 'loft', path, sections, sides: int('sides', 24, 3, 256), steps: int('steps', 48, 1, 1024) };
+}
+
+const SAMPLES = 32; // curve samples per path segment
+
+// Dense samples along the curve: { t, p, x, y, z, segment }; z is the tangent, x and y the section's axes.
+// y starts as world up made square to the curve (-z when the curve starts vertical) and is carried along
+// without twist. Centripetal Catmull-Rom through the path, its ends extended by reflection.
+export function loftCurve(m) {
+  const P = m.path, n = P.length;
+  const ext = [sub(scale(P[0], 2), P[1]), ...P, sub(scale(P[n - 1], 2), P[n - 2])];
+  const pts = [], seg = [];
+  for (let i = 0; i < n - 1; i++) {
+    for (let k = 0; k < SAMPLES; k++) { pts.push(catmullRom(ext[i], ext[i + 1], ext[i + 2], ext[i + 3], k / SAMPLES)); seg.push(i); }
+  }
+  pts.push(P[n - 1]); seg.push(n - 2);
+  const len = [0];
+  for (let i = 1; i < pts.length; i++) len.push(len[i - 1] + dist(pts[i], pts[i - 1]));
+  const total = len[len.length - 1];
+  let y;
+  return pts.map((p, i) => {
+    const z = norm(sub(pts[Math.min(i + 1, pts.length - 1)], pts[Math.max(i - 1, 0)]));
+    if (!y) y = Math.abs(z[1]) > 0.999 ? [0, 0, -1] : [0, 1, 0];
+    y = norm(sub(y, scale(z, dot(y, z))));
+    return { t: len[i] / total, p, x: cross(y, z), y, z, segment: seg[i] };
+  });
+}
+
+// The curve's point and axes at t, between the dense samples.
+export function loftFrame(curve, t) {
+  let i = 1;
+  while (i < curve.length - 1 && curve[i].t < t) i++;
+  const a = curve[i - 1], b = curve[i], f = b.t > a.t ? Math.min(Math.max((t - a.t) / (b.t - a.t), 0), 1) : 0;
+  const lerp = (u, v) => u.map((c, k) => c + (v[k] - c) * f);
+  const z = norm(lerp(a.z, b.z)), y0 = lerp(a.y, b.y), y = norm(sub(y0, scale(z, dot(y0, z))));
+  return { p: lerp(a.p, b.p), x: cross(y, z), y, z };
+}
+
+function loftGeometry(m) {
+  const curve = loftCurve(m), n = m.sides;
+  // Rings counter-clockwise, still starting at point 0, so the surface faces out.
+  const ccw = (pts) => (area(pts) > 0 ? pts : [pts[0], ...pts.slice(1).reverse()]);
+  const secs = [...m.sections].sort((a, b) => a.t - b.t).map((s) => ({ t: s.t, ring: resample(ccw(s.points), n) }));
+  const ts = [...new Set([...Array.from({ length: m.steps + 1 }, (_, i) => i / m.steps), ...secs.map((s) => s.t)])].sort((a, b) => a - b);
+  const shapeAt = (t) => {
+    const j = secs.findIndex((s) => s.t > t);
+    if (j === 0) return secs[0].ring;
+    if (j < 0) return secs[secs.length - 1].ring;
+    const a = secs[j - 1], b = secs[j], f = (t - a.t) / (b.t - a.t);
+    return a.ring.map((p, k) => [p[0] + (b.ring[k][0] - p[0]) * f, p[1] + (b.ring[k][1] - p[1]) * f]);
+  };
+  const positions = [], indices = [];
+  const frames = ts.map((t) => loftFrame(curve, t));
+  ts.forEach((t, r) => {
+    const { p, x, y } = frames[r];
+    for (const [u, v] of shapeAt(t)) positions.push(...[0, 1, 2].map((a) => p[a] + u * x[a] + v * y[a]));
+  });
+  for (let r = 0; r < ts.length - 1; r++) for (let j = 0; j < n; j++) {
+    const a = r * n + j, a1 = r * n + ((j + 1) % n), b = a + n, b1 = a1 + n;
+    indices.push(a, a1, b1, a, b1, b);
+  }
+  // Smooth normals on the side: area-weighted face normals summed per vertex.
+  const at = (i) => positions.slice(3 * i, 3 * i + 3);
+  const normals = new Array(positions.length).fill(0);
+  for (let k = 0; k < indices.length; k += 3) {
+    const [a, b, c] = [indices[k], indices[k + 1], indices[k + 2]];
+    const f = cross(sub(at(b), at(a)), sub(at(c), at(a)));
+    for (const i of [a, b, c]) for (let q = 0; q < 3; q++) normals[3 * i + q] += f[q];
+  }
+  for (let i = 0; i < normals.length; i += 3) normals.splice(i, 3, ...norm(normals.slice(i, i + 3)));
+  // Flat caps: a fan from the ring's centre, facing back at the start and forward at the end.
+  for (const [r, s] of [[0, -1], [ts.length - 1, 1]]) {
+    const first = positions.length / 3, ring = Array.from({ length: n }, (_, j) => at(r * n + j));
+    const c = [0, 1, 2].map((a) => ring.reduce((sum, p) => sum + p[a], 0) / n);
+    for (const p of [c, ...ring]) { positions.push(...p); normals.push(...scale(frames[r].z, s)); }
+    for (let j = 0; j < n; j++) {
+      const a = first + 1 + j, b = first + 1 + ((j + 1) % n);
+      indices.push(...(s < 0 ? [first, b, a] : [first, a, b]));
+    }
+  }
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices) };
+}
+
+// n points evenly spaced along a closed polygon's perimeter, starting at its point 0.
+function resample(pts, n) {
+  const edges = pts.map((p, i) => dist(p, pts[(i + 1) % pts.length]));
+  const total = edges.reduce((a, b) => a + b, 0);
+  const out = [];
+  let e = 0, start = 0;
+  for (let k = 0; k < n; k++) {
+    const d = (k / n) * total;
+    while (e < edges.length - 1 && start + edges[e] < d) start += edges[e++];
+    const f = edges[e] ? (d - start) / edges[e] : 0, a = pts[e], b = pts[(e + 1) % pts.length];
+    out.push([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]);
+  }
+  return out;
+}
+
+// Barry-Goldman form, alpha = 0.5; u in 0..1 runs from p1 to p2.
+function catmullRom(p0, p1, p2, p3, u) {
+  const t1 = Math.sqrt(dist(p0, p1)), t2 = t1 + Math.sqrt(dist(p1, p2)), t3 = t2 + Math.sqrt(dist(p2, p3));
+  const t = t1 + u * (t2 - t1);
+  const L = (a, b, ta, tb) => a.map((c, i) => ((tb - t) * c + (t - ta) * b[i]) / (tb - ta));
+  const a1 = L(p0, p1, 0, t1), a2 = L(p1, p2, t1, t2), a3 = L(p2, p3, t2, t3);
+  return L(L(a1, a2, 0, t2), L(a2, a3, t1, t3), t1, t2);
+}
+
+// Signed area of a closed 2D polygon, > 0 when counter-clockwise.
+const area = (pts) => pts.reduce((a, p, j) => { const q = pts[(j + 1) % pts.length]; return a + p[0] * q[1] - q[0] * p[1]; }, 0) / 2;
+const sub = (a, b) => a.map((c, i) => c - b[i]);
+const scale = (a, s) => a.map((c) => c * s);
+const dot = (a, b) => a.reduce((s, c, i) => s + c * b[i], 0);
+const dist = (a, b) => Math.hypot(...sub(a, b));
+const norm = (a) => { const l = Math.hypot(...a); return l > 1e-12 ? scale(a, 1 / l) : a; };
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 
 // [x, y, z] or [x, y, z, w] of numbers or expressions.
 function vec(v, n, scope, at) {

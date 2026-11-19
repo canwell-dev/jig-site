@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JIG viewer</title>
 <style>
-  :root { --bg: #f4f2ee; --fg: #222; --panel: #fff; --line: #ddd; --err: #b00020; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #1b1b1d; --fg: #e8e8e8; --panel: #252528; --line: #3a3a3e; --err: #ff6b7f; } }
+  :root { --bg: #f4f2ee; --fg: #222; --panel: #fff; --line: #ddd; --err: #b00020; --accent: #d9480f; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1b1b1d; --fg: #e8e8e8; --panel: #252528; --line: #3a3a3e; --err: #ff6b7f; --accent: #ff7a3d; } }
   * { box-sizing: border-box; }
   body { margin: 0; height: 100vh; height: 100dvh; display: grid; grid-template-columns: minmax(320px, 40%) minmax(0, 1fr); background: var(--bg); color: var(--fg); font: 14px system-ui, sans-serif; }
   #side { display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--panel); min-height: 0; }
@@ -32,6 +32,19 @@
   #err { padding: 8px 12px; color: var(--err); font-family: ui-monospace, monospace; min-height: 2.2em; border-top: 1px solid var(--line); }
   #view { position: relative; min-height: 0; }
   canvas { display: block; width: 100%; height: 100%; }
+  #tools, #shape { position: absolute; top: 12px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--line); }
+  #tools { left: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: calc(100% - 24px); }
+  #tools button, #shape button { padding: 3px 9px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: inherit; cursor: pointer; font: inherit; }
+  #tools button[aria-pressed=true] { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #tools small, #shape small { flex-basis: 100%; opacity: .7; }
+  #shape { right: 12px; top: 64px; width: min(240px, 45%); display: grid; gap: 6px; }
+  #shape[hidden] { display: none; }
+  #shape header { display: flex; gap: 6px; align-items: center; }
+  #shape input { width: 5em; padding: 2px 4px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: inherit; font: 13px ui-monospace, monospace; }
+  #shape svg { width: 100%; aspect-ratio: 1; touch-action: none; background: var(--bg); border-radius: 4px; }
+  #shape .vtx { fill: var(--accent); cursor: grab; }
+  #shape .vtx.first { fill: var(--fg); }
+  #shape .mid { fill: var(--panel); stroke: var(--accent); cursor: copy; }
   @media (max-width: 700px) { body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); } }
 </style>
 <script type="importmap">
@@ -49,7 +62,9 @@
   <textarea id="src" spellcheck="false" aria-label="JIG document"></textarea>
   <div id="err" role="status"></div>
 </div>
-<div id="view"><div id="sliders" aria-label="Parameter values"></div></div>
+<div id="view"><div id="sliders" aria-label="Parameter values"></div>
+  <div id="tools" aria-label="Loft tools"></div>
+  <div id="shape" hidden aria-label="Section shape"></div></div>
 <script>
 // Classic script, so it also reports a module that fails to load (no devtools on a phone).
 const showError = (msg) => { document.getElementById('err').textContent = `viewer: ${msg}`; };
@@ -60,7 +75,7 @@ if (!HTMLScriptElement.supports?.('importmap')) showError('this browser does not
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { read, bake, stringify, EXT } from './jig.js?v=847a2ca';
+import { read, bake, stringify, geometry, loftCurve, loftFrame, EXT } from './jig.js?v=4368a5a';
 
 const src = document.getElementById('src'), defsEl = document.getElementById('defs'), errEl = document.getElementById('err');
 const view = document.getElementById('view'), slidersEl = document.getElementById('sliders');
@@ -81,21 +96,36 @@ scene.add(model);
 
 const values = {}; // slider settings, by parameter name
 let shownParams = '', sliderInputs = {}, varOutputs = {};
+let geoms = [], last = null;
+
+function bufferGeometry({ positions, normals, indices }) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  g.setIndex(new THREE.BufferAttribute(indices, 1));
+  return g;
+}
 
 function rebuild() {
   let out;
   try { out = read(JSON.parse(src.value), values); errEl.textContent = ''; }
   catch (e) { errEl.textContent = e.message; return; }
   model.clear(); // three.js Object3D, not a DOM node: no replaceChildren
+  for (const g of geoms) g?.dispose();
+  geoms = out.meshes.map((m) => (m.type === 'box' ? null : bufferGeometry(geometry(m))));
   for (const i of out.instances) {
-    const m = new THREE.Mesh(unitBox, material);
-    m.scale.fromArray(out.meshes[i.mesh].size);
+    const box = out.meshes[i.mesh].type === 'box';
+    const m = new THREE.Mesh(box ? unitBox : geoms[i.mesh], material);
+    if (box) m.scale.fromArray(out.meshes[i.mesh].size);
     const node = new THREE.Group().add(m);
     node.matrixAutoUpdate = false;
     node.matrix.fromArray(i.matrix); // world transform, column-major like glTF and three.js
     model.add(node);
   }
-  model.position.y = -out.floor; // stand the model's floor on the grid
+  // Stand the model's floor on the grid; hold it still while a handle is dragged, so the handle stays under the pointer.
+  model.position.y = drag ? model.position.y : -out.floor;
+  last = out;
+  loftHelpers(out);
   // Rebuild the sliders only when the parameter set changes, so dragging keeps focus.
   const key = JSON.stringify(Object.entries(out.params).map(([k, p]) => [k, p.min, p.max]));
   if (key !== shownParams) { shownParams = key; sliders(out.params); }
@@ -135,7 +165,7 @@ function edit(fn, redraw = false) {
   try { doc = JSON.parse(src.value); } catch { return; }
   if (!isObj(doc.extensions?.[EXT])) return;
   const r = doc.extensions[EXT];
-  fn(r); // fn edits the recipe: params, vars, ...
+  fn(r, doc); // fn edits the recipe (params, vars, meshes...), and the glTF around it if it must
   // baked_values holds every parameter (D-16): follow added, removed and renamed parameters.
   if (isObj(r.baked_values) && isObj(r.params)) {
     r.baked_values = Object.fromEntries(Object.entries(r.params).map(([k, p]) => [k, r.baked_values[k] ?? p?.default]));
@@ -193,6 +223,248 @@ function form() {
   rebuild();
 }
 
+// --- Loft editor (sketch, draft f4) ---
+// Curve tool: drag the path's points; click the curve to add one there. Sections tool: click the curve to add a
+// section there, drag a ring along the curve to move it. A selected section's shape is edited in the 2D panel.
+// shortcut: a drag writes plain numbers, replacing an expression in that slot; keep expressions once models need it.
+const toolsEl = document.getElementById('tools'), shapeEl = document.getElementById('shape');
+const accent = () => new THREE.Color(getComputedStyle(document.body).getPropertyValue('--accent').trim());
+let tool = 'curve', sel = null, drag = null, picks = [], shapeScale = 0, shapeFor = '';
+const r3 = (v) => +v.toFixed(3);
+const circle = (r, n = 8) => Array.from({ length: n }, (_, i) => [r3(r * Math.cos((2 * Math.PI * i) / n)), r3(r * Math.sin((2 * Math.PI * i) / n))]);
+const loftOf = (d, mesh) => d.meshes[mesh].loft; // recipe JSON of a loft
+
+function loftHelpers(out) {
+  picks = [];
+  if (sel && (out.meshes[sel.mesh]?.type !== 'loft' || (sel.point ?? -1) >= out.meshes[sel.mesh].path.length
+    || (sel.section ?? -1) >= out.meshes[sel.mesh].sections.length)) sel = null;
+  const hot = accent(), cold = new THREE.Color(0x3b82f6);
+  const mat = (color) => new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true });
+  const line = (pts, color, loop) => {
+    const l = new (loop ? THREE.LineLoop : THREE.Line)(new THREE.BufferGeometry().setFromPoints(pts), mat(color));
+    l.renderOrder = 10;
+    return l;
+  };
+  const v3 = (a) => new THREE.Vector3(...a);
+  out.meshes.forEach((m, k) => {
+    const inst = out.instances.find((i) => i.mesh === k);
+    if (m.type !== 'loft' || !inst) return;
+    const g = new THREE.Group();
+    g.matrixAutoUpdate = false;
+    g.matrix.fromArray(inst.matrix);
+    model.add(g);
+    const curve = loftCurve(m);
+    g.add(line(curve.map((c) => v3(c.p)), cold));
+    const helper = { mesh: k, group: g, curve };
+    picks.push({ ...helper, kind: 'curve', local: curve.map((c) => v3(c.p)) });
+    if (tool === 'curve') {
+      m.path.forEach((p, i) => {
+        const on = sel?.mesh === k && sel.point === i;
+        const dot = new THREE.Points(new THREE.BufferGeometry().setFromPoints([v3(p)]),
+          new THREE.PointsMaterial({ color: on ? hot : cold, size: on ? 14 : 10, sizeAttenuation: false, depthTest: false }));
+        dot.renderOrder = 11;
+        g.add(dot);
+        picks.push({ ...helper, kind: 'point', index: i, local: [v3(p)] });
+      });
+    }
+    m.sections.forEach((s, i) => {
+      const f = loftFrame(curve, s.t);
+      const ring = s.points.map(([u, v]) => v3(f.p.map((c, a) => c + u * f.x[a] + v * f.y[a])));
+      g.add(line(ring, sel?.mesh === k && sel.section === i ? hot : cold, true));
+      // The ring's line, and its centre on the curve, so a click there grabs it instead of adding a section.
+      if (tool === 'sections') picks.push({ ...helper, kind: 'ring', index: i, local: ring, loop: true },
+        { ...helper, kind: 'ring', index: i, local: [v3(f.p)] });
+    });
+  });
+  model.updateMatrixWorld(true);
+  for (const p of picks) p.world = p.local.map((v) => v.clone().applyMatrix4(p.group.matrixWorld));
+  toolbar(out);
+  shapePanel(out);
+}
+
+function toolbar(out) {
+  const hasLoft = out.meshes.some((m) => m.type === 'loft');
+  const btn = (text, onclick, pressed) => el('button', { type: 'button', textContent: text, onclick, ...(pressed !== undefined && { ariaPressed: String(pressed) }) });
+  const pick = (t) => () => { tool = t; sel = null; rebuild(); };
+  const kids = [btn('+ loft', addLoft)];
+  if (hasLoft) {
+    kids.push(btn('Curve', pick('curve'), tool === 'curve'), btn('Sections', pick('sections'), tool === 'sections'));
+    if (sel?.point !== undefined || sel?.section !== undefined) kids.push(btn('Delete', remove));
+    kids.push(el('small', {}, tool === 'curve' ? 'Drag a point. Click the curve to add a point.'
+      : 'Click the curve to add a section. Drag a ring to slide it.'));
+  }
+  toolsEl.replaceChildren(...kids);
+}
+
+function addLoft() {
+  let mesh;
+  edit((r, doc) => {
+    r.meshes = [...(r.meshes ?? []), { loft: { path: [[0, 0, 0], [0, 0.4, 0], [0.2, 0.7, 0]],
+      sections: [{ t: 0, points: circle(0.1) }, { t: 1, points: circle(0.04) }] } }];
+    mesh = r.meshes.length - 1;
+    const node = (doc.nodes ??= []).push({ translation: [1, 0, 0], extensions: { [EXT]: { mesh } } }) - 1;
+    doc.scenes ??= [{ nodes: [] }];
+    doc.scene ??= 0;
+    (doc.scenes[doc.scene].nodes ??= []).push(node);
+  });
+  tool = 'curve'; sel = { mesh }; rebuild();
+}
+
+function remove() {
+  if (!sel) return;
+  const { mesh, point, section } = sel; // edit() rebuilds, which may clear sel
+  edit((r) => {
+    const l = loftOf(r, mesh);
+    if (point !== undefined && l.path.length > 2) l.path.splice(point, 1);
+    if (section !== undefined && l.sections.length > 1) l.sections.splice(section, 1);
+  });
+  sel = { mesh }; rebuild();
+}
+
+// Nearest pick of the given kinds to the pointer, in screen pixels: { pick, i, f, d } (i, f: which segment, how far).
+function nearest(e, kinds) {
+  const { clientWidth: w, clientHeight: h } = renderer.domElement, q = [e.offsetX, e.offsetY];
+  const screen = (v) => { const p = v.clone().project(camera); return p.z < 1 ? [(p.x + 1) / 2 * w, (1 - p.y) / 2 * h] : null; };
+  let best = null;
+  const keep = (pick, i, f, d) => { if (!best || d < best.d) best = { pick, i, f, d }; };
+  for (const pick of picks.filter((p) => kinds.includes(p.kind))) {
+    const s = pick.world.map(screen);
+    if (s.length === 1) { if (s[0]) keep(pick, 0, 0, Math.hypot(s[0][0] - q[0], s[0][1] - q[1])); continue; }
+    for (let i = 0; i < s.length - (pick.loop ? 0 : 1); i++) {
+      const a = s[i], b = s[(i + 1) % s.length];
+      if (!a || !b) continue;
+      const ab = [b[0] - a[0], b[1] - a[1]], len2 = ab[0] ** 2 + ab[1] ** 2;
+      const f = len2 ? Math.min(Math.max(((q[0] - a[0]) * ab[0] + (q[1] - a[1]) * ab[1]) / len2, 0), 1) : 0;
+      keep(pick, i, f, Math.hypot(a[0] + f * ab[0] - q[0], a[1] + f * ab[1] - q[1]));
+    }
+  }
+  return best;
+}
+const tOnCurve = ({ pick, i, f }) => r3(pick.curve[i].t + f * (pick.curve[i + 1].t - pick.curve[i].t));
+
+const canvas = renderer.domElement;
+// Capture phase, so a click on a handle starts a drag instead of an orbit.
+canvas.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || !last) return;
+  const point = tool === 'curve' && nearest(e, ['point']);
+  const ring = tool === 'sections' && nearest(e, ['ring']);
+  const onCurve = nearest(e, ['curve']);
+  if (point && point.d < 14) {
+    sel = { mesh: point.pick.mesh, point: point.pick.index };
+    startPointDrag(point.pick, point.pick.world[0]);
+  } else if (ring && ring.d < 8) {
+    sel = { mesh: ring.pick.mesh, section: ring.pick.index };
+    drag = { kind: 't', mesh: ring.pick.mesh, section: ring.pick.index };
+  } else if (onCurve && onCurve.d < 8) {
+    const { pick, i, f } = onCurve, mesh = pick.mesh;
+    if (tool === 'curve') {
+      const at = pick.curve[i].segment + 1, p = pick.local[i].clone().lerp(pick.local[i + 1], f);
+      edit((r) => loftOf(r, mesh).path.splice(at, 0, p.toArray().map(r3)));
+      sel = { mesh, point: at };
+      startPointDrag(pick, p.applyMatrix4(pick.group.matrixWorld));
+    } else {
+      const t = tOnCurve(onCurve), secs = last.meshes[mesh].sections;
+      const near = secs.reduce((a, s, j) => (Math.abs(s.t - t) < Math.abs(secs[a].t - t) ? j : a), 0);
+      let section;
+      edit((r) => { const l = loftOf(r, mesh); section = l.sections.push({ t, points: structuredClone(l.sections[near].points) }) - 1; });
+      sel = { mesh, section };
+      drag = { kind: 't', mesh, section };
+    }
+  } else return;
+  e.stopImmediatePropagation();
+  controls.enabled = false;
+  canvas.setPointerCapture(e.pointerId);
+  rebuild();
+}, { capture: true });
+
+function startPointDrag(pick, world) {
+  // Move on the plane through the point that faces the camera, in the loft's space as it was at the start.
+  const normal = camera.getWorldDirection(new THREE.Vector3());
+  drag = { kind: 'point', mesh: pick.mesh, index: sel.point, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(normal, world),
+    toLocal: pick.group.matrixWorld.clone().invert() };
+}
+
+canvas.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  if (drag.kind === 'point') {
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(e.offsetX / canvas.clientWidth * 2 - 1, 1 - e.offsetY / canvas.clientHeight * 2), camera);
+    const hit = ray.ray.intersectPlane(drag.plane, new THREE.Vector3());
+    if (hit) edit((r) => { loftOf(r, drag.mesh).path[drag.index] = hit.applyMatrix4(drag.toLocal).toArray().map(r3); });
+  } else {
+    const on = nearest(e, ['curve']);
+    if (on && on.pick.mesh === drag.mesh) edit((r) => { loftOf(r, drag.mesh).sections[drag.section].t = tOnCurve(on); });
+  }
+});
+const endDrag = () => { if (!drag) return; drag = null; controls.enabled = true; rebuild(); };
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+addEventListener('keydown', (e) => {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) remove();
+  if (e.key === 'Escape') { sel = sel && { mesh: sel.mesh }; rebuild(); }
+});
+
+// The selected section's shape, in its own plane: u right, v up (the curve runs out of the screen).
+const svgNS = 'http://www.w3.org/2000/svg';
+const svgEl = (tag, attrs) => { const e = document.createElementNS(svgNS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
+const svg = svgEl('svg', {});
+let tInput, shapeDrag = null;
+
+function shapePanel(out) {
+  const s = sel?.section !== undefined ? out.meshes[sel.mesh].sections[sel.section] : null;
+  shapeEl.hidden = !s;
+  if (!s) { shapeFor = ''; return; }
+  const key = `${sel.mesh}/${sel.section}`;
+  if (key !== shapeFor) {
+    // Fit the view once per selection, so it holds still while points move.
+    shapeFor = key;
+    shapeScale = Math.max(0.05, ...out.meshes[sel.mesh].sections.flatMap((x) => x.points.flat().map(Math.abs))) * 1.4;
+    tInput = el('input', { type: 'number', step: 0.01, min: 0, max: 1, ariaLabel: 'section t',
+      oninput: (e) => { const t = e.target.valueAsNumber; if (t >= 0 && t <= 1) edit((r) => { loftOf(r, sel.mesh).sections[sel.section].t = t; }); } });
+    shapeEl.replaceChildren(
+      el('header', {}, el('span', {}, `Section ${sel.section} · t`), tInput,
+        el('button', { type: 'button', textContent: '×', title: 'Close', onclick: () => { sel = { mesh: sel.mesh }; rebuild(); } })),
+      svg,
+      el('small', {}, 'Drag a point. Drag a + to add one. Double-click a point to remove it.'));
+  }
+  if (document.activeElement !== tInput) tInput.value = s.t;
+  const k = shapeScale, pts = s.points;
+  svg.setAttribute('viewBox', `${-k} ${-k} ${2 * k} ${2 * k}`);
+  const r = k * 0.045;
+  svg.replaceChildren(
+    svgEl('line', { x1: -k, y1: 0, x2: k, y2: 0, stroke: 'currentColor', 'stroke-opacity': 0.2, 'stroke-width': k / 150 }),
+    svgEl('line', { x1: 0, y1: -k, x2: 0, y2: k, stroke: 'currentColor', 'stroke-opacity': 0.2, 'stroke-width': k / 150 }),
+    svgEl('polygon', { points: pts.map(([u, v]) => `${u},${-v}`).join(' '), fill: 'var(--accent)', 'fill-opacity': 0.15,
+      stroke: 'var(--accent)', 'stroke-width': k / 100 }),
+    ...pts.map(([u, v], i) => {
+      const [u2, v2] = pts[(i + 1) % pts.length];
+      return svgEl('circle', { class: 'mid', cx: (u + u2) / 2, cy: -(v + v2) / 2, r: r * 0.7, 'stroke-width': k / 150, 'data-mid': i });
+    }),
+    ...pts.map(([u, v], i) => svgEl('circle', { class: `vtx${i ? '' : ' first'}`, cx: u, cy: -v, r, 'data-vtx': i })),
+  );
+}
+
+const uv = (e) => { const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse()); return [r3(p.x), r3(-p.y)]; };
+const editPoints = (fn) => edit((r) => fn(loftOf(r, sel.mesh).sections[sel.section].points));
+let lastTap = {};
+svg.addEventListener('pointerdown', (e) => {
+  const { vtx, mid } = e.target.dataset ?? {};
+  // A double tap removes a point. Not dblclick: with pointer capture it lands on the svg, not the point.
+  if (vtx !== undefined && lastTap.vtx === vtx && e.timeStamp - lastTap.time < 400) {
+    lastTap = {};
+    editPoints((p) => { if (p.length > 3) p.splice(+vtx, 1); });
+    return;
+  }
+  lastTap = { vtx, time: e.timeStamp };
+  if (vtx !== undefined) shapeDrag = +vtx;
+  else if (mid !== undefined) { shapeDrag = +mid + 1; editPoints((p) => p.splice(shapeDrag, 0, uv(e))); }
+  else return;
+  svg.setPointerCapture(e.pointerId);
+});
+svg.addEventListener('pointermove', (e) => { if (shapeDrag !== null) editPoints((p) => { p[shapeDrag] = uv(e); }); });
+svg.addEventListener('pointerup', () => { shapeDrag = null; });
+svg.addEventListener('pointercancel', () => { shapeDrag = null; });
+
 function resize() {
   const { clientWidth: w, clientHeight: h } = view;
   renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
@@ -213,7 +485,8 @@ document.getElementById('bake').onclick = () => {
   a.click();
   URL.revokeObjectURL(a.href);
 };
-load(await (await fetch('examples/box.gltf?v=847a2ca')).text());
+const example = new URLSearchParams(location.search).get('example') === 'loft' ? 'examples/loft.gltf?v=4368a5a' : 'examples/box.gltf?v=4368a5a';
+load(await (await fetch(example)).text());
 </script>
 </body>
 </html>
