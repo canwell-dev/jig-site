@@ -208,7 +208,8 @@ function node(n, meshCount, scope, at) {
   return { mesh: x.mesh, translation, rotation, scale, matrix: n.matrix ?? compose(translation, rotation, scale), children, jig: x };
 }
 
-// Euler angles in degrees, Blender's XYZ order: about world x, then y, then z (matrix Rz·Ry·Rx), as a glTF quaternion.
+// Euler angles in degrees about glTF's (Y-up) axes: x, then y, then z, each about the fixed axes (matrix Rz·Ry·Rx), as a
+// glTF quaternion. Not Blender's frame, which is Z-up (D-69).
 export function eulerQuat(deg) {
   const [cx, cy, cz] = deg.map((d) => Math.cos((d * Math.PI) / 360)), [sx, sy, sz] = deg.map((d) => Math.sin((d * Math.PI) / 360));
   return [sx * cy * cz - cx * sy * sz, cx * sy * cz + sx * cy * sz, cx * cy * sz - sx * sy * cz, cx * cy * cz + sx * sy * sz];
@@ -290,6 +291,7 @@ export function bake(doc, values = {}, { uri, set } = {}) {
     values = { ...r.sets[set], ...values };
   }
   const out = read(d, values);
+  d.asset.generator = `JIG ${VERSION} reference baker`;
   r.baked_values = Object.fromEntries(Object.entries(out.params).map(([k, p]) => [k, p.value]));
   if (set !== undefined) { delete r.baked_set; if (set !== null) r.baked_set = set; }
 
@@ -325,9 +327,13 @@ export function bake(doc, values = {}, { uri, set } = {}) {
     offset += padded.byteLength;
     return i;
   };
-  for (const m of out.meshes) {
+  // Only meshes a shown node draws are baked, in recipe order; meshAt maps recipe mesh to core mesh.
+  const used = new Set(out.instances.map((x) => x.mesh)), meshAt = {};
+  for (const [mi, m] of out.meshes.entries()) {
+    if (!used.has(mi)) continue;
+    meshAt[mi] = base.meshes + Object.keys(meshAt).length;
     const { positions, normals, indices: all } = geometry(m);
-    const short = positions.length / 3 <= 65536;
+    const short = positions.length / 3 <= 65535; // glTF reserves 65535 in 16-bit indices
     const indices = short ? Uint16Array.from(all) : all;
     const min = [0, 1, 2].map((a) => Math.min(...positions.filter((_, i) => i % 3 === a)));
     const max = [0, 1, 2].map((a) => Math.max(...positions.filter((_, i) => i % 3 === a)));
@@ -349,14 +355,14 @@ export function bake(doc, values = {}, { uri, set } = {}) {
   const copyOf = (rec) => {
     const kids = rec.kids.filter((r) => r.shown).map(copyOf), n = rec.node, b = {};
     if (d.nodes[rec.i].name !== undefined) b.name = d.nodes[rec.i].name;
-    if (n.jig.mesh !== undefined) b.mesh = base.meshes + n.jig.mesh;
+    if (n.jig.mesh !== undefined) b.mesh = meshAt[n.jig.mesh];
     for (const [k, id] of [['translation', '0,0,0'], ['rotation', '0,0,0,1'], ['scale', '1,1,1']]) if (String(n[k]) !== id) b[k] = n[k];
     if (kids.length) b.children = kids;
     return add('nodes', b);
   };
   for (const [i, n] of out.nodes.entries()) {
     if (!n || n.repeated) continue;
-    if (n.jig.mesh !== undefined) d.nodes[i].mesh = base.meshes + n.jig.mesh;
+    if (n.jig.mesh !== undefined) d.nodes[i].mesh = meshAt[n.jig.mesh];
     for (const k of ['translation', 'rotation', 'scale']) if (twin(n.jig, k) !== undefined) d.nodes[i][k] = n[k];
   }
   const place = (recs) => recs.forEach((rec) => {
@@ -687,15 +693,12 @@ function loftGeometry(m) {
     for (const i of [a, b, c]) for (let q = 0; q < 3; q++) normals[3 * i + q] += f[q];
   }
   for (let i = 0; i < normals.length; i += 3) normals.splice(i, 3, ...norm(normals.slice(i, i + 3)));
-  // Flat caps: a fan from the ring's centre, facing back at the start and forward at the end.
+  // Flat caps, triangulated in the section plane so concave sections stay right (as extrude caps), facing back
+  // at the start and forward at the end.
   for (const [r, s] of [[0, -1], [ts.length - 1, 1]]) {
-    const first = positions.length / 3, ring = Array.from({ length: n }, (_, j) => at(r * n + j));
-    const c = [0, 1, 2].map((a) => ring.reduce((sum, p) => sum + p[a], 0) / n);
-    for (const p of [c, ...ring]) { positions.push(...p); normals.push(...scale(frames[r].z, s)); }
-    for (let j = 0; j < n; j++) {
-      const a = first + 1 + j, b = first + 1 + ((j + 1) % n);
-      indices.push(...(s < 0 ? [first, b, a] : [first, a, b]));
-    }
+    const first = positions.length / 3, tris = triangulate([shapeAt(ts[r])]);
+    for (let j = 0; j < n; j++) { positions.push(...at(r * n + j)); normals.push(...scale(frames[r].z, s)); }
+    for (let k = 0; k < tris.length; k += 3) indices.push(...(s < 0 ? [tris[k], tris[k + 2], tris[k + 1]] : tris.slice(k, k + 3)).map((i) => first + i));
   }
   return { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices) };
 }

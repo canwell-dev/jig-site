@@ -248,11 +248,11 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=ca9bc00';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=1f1784c';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=ca9bc00', loft: 'examples/loft.gltf?v=ca9bc00', star: 'examples/star.gltf?v=ca9bc00', bench: 'examples/bench.gltf?v=ca9bc00' };
+const examples = { box: 'examples/box.gltf?v=1f1784c', loft: 'examples/loft.gltf?v=1f1784c', star: 'examples/star.gltf?v=1f1784c', bench: 'examples/bench.gltf?v=1f1784c' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -277,7 +277,7 @@ const DEFAULTS = { translation: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1,
 const nodeSrc = (i, slot) => doc.nodes[i]?.extensions?.[EXT]?.[slot] ?? doc.nodes[i]?.[slot] ?? DEFAULTS[slot];
 const setNodeSlot = (i, slot, v) => { X(i)[slot] = v; delete doc.nodes[i][slot]; }; // the core slot would be a stale bake cache
 const SLOT = { translate: 'translation', rotate: 'rotation', scale: 'scale' };
-// Rotation in degrees, Blender XYZ (three.js order 'ZYX'); the editor writes it as euler, never as a quaternion.
+// Rotation in degrees about glTF's axes, x then y then z (three.js order 'ZYX'); the editor writes it as euler, never as a quaternion.
 const eulerSrc = (i) => doc.nodes[i]?.extensions?.[EXT]?.euler;
 const toDeg = (q) => { const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(...q).normalize(), 'ZYX'); return [e.x, e.y, e.z].map((r) => +((r * 180) / Math.PI).toFixed(2)); };
 const setEuler = (i, a) => { X(i).euler = a; delete X(i).rotation; delete doc.nodes[i].rotation; };
