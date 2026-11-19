@@ -258,16 +258,18 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=3d31d13';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=fb98969';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=3d31d13', loft: 'examples/loft.gltf?v=3d31d13', star: 'examples/star.gltf?v=3d31d13', bench: 'examples/bench.gltf?v=3d31d13' };
+const examples = { box: 'examples/box.gltf?v=fb98969', loft: 'examples/loft.gltf?v=fb98969', star: 'examples/star.gltf?v=fb98969', bench: 'examples/bench.gltf?v=fb98969',
+  finger: 'examples/finger.gltf?v=fb98969', hand: 'examples/hand.gltf?v=fb98969' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
 
 let doc = structuredClone(clean), out = null, err = '', note = '', fileName = 'model.gltf';
+let files = {}; // draft f10: documents the open one places by uri, by file name (an example's folder)
 const values = {};                       // slider values, by parameter name (not stored in the document)
 let past = [stringify(doc)], future = [];
 let sel = null;                          // { node } | { node, point } | { node, section }
@@ -303,7 +305,7 @@ function normalize() {
   if (isObj(r.baked_values)) r.baked_values = Object.fromEntries(Object.keys(r.params ?? {}).map((k) => [k, r.baked_values[k] ?? r.params[k].default]));
 }
 function evaluate() {
-  try { out = read(doc, values); err = ''; } catch (e) { err = e.message; }
+  try { out = read(doc, values, { files }); err = ''; } catch (e) { err = e.message; }
 }
 function commit() {
   normalize();
@@ -425,7 +427,7 @@ function draw() {
     meshLayer.add(m);
   }
   if (!dragging && !sketchDrag) model.position.y = -out.floor; // hold still while dragging, so the handle stays under the pointer
-  const inst = sel && out.instances.find((i) => i.node === sel.node);
+  const inst = sel && out.instances.find((i) => i.node === sel.node && !i.model);
   if (mode === 'edit' && inst && out.meshes[inst.mesh].type === 'loft') {
     const m = out.meshes[inst.mesh], group = new THREE.Group();
     group.matrixAutoUpdate = false; group.matrix.fromArray(inst.matrix);
@@ -474,7 +476,7 @@ function placeGizmo() {
     tc.showX = !isStr(src[0]) || gizmo === 'rotate'; tc.showY = !isStr(src[1]) || gizmo === 'rotate'; tc.showZ = !isStr(src[2]) || gizmo === 'rotate';
     if (locked.length === 3) return;
   } else if (sel.point !== undefined && edit) {
-    const inst = out.instances.find((i) => i.node === sel.node);
+    const inst = out.instances.find((i) => i.node === sel.node && !i.model);
     pivot.matrix.fromArray(inst.matrix);
     proxy.position.fromArray(edit.mesh.path[sel.point]); proxy.quaternion.identity(); proxy.scale.set(1, 1, 1);
     const src = loftOf(sel.node).path[sel.point];
@@ -1129,11 +1131,11 @@ function download(name, text) {
 }
 // Open a document: its baked_values set the sliders. `fresh` starts a new undo history (first load); otherwise Undo
 // brings the previous document back.
-function load(text, name, fresh = false) {
+function load(text, name, fresh = false, placed = {}) {
   let d;
   try { d = strip(JSON.parse(text)); } catch (e) { note = `Open ${name}: ${e.message}`; return status(); }
   if (!isObj(d?.extensions?.[EXT])) { note = `Open ${name}: not a JIG document (no extensions.${EXT})`; return status(); }
-  doc = d; fileName = name; sel = null; mode = 'object'; sketchFor = '';
+  doc = d; fileName = name; sel = null; mode = 'object'; sketchFor = ''; files = placed;
   for (const k of Object.keys(values)) delete values[k];
   $('#fileName').textContent = name;
   if (fresh) { past = [stringify(doc)]; future = []; update(); }
@@ -1142,14 +1144,17 @@ function load(text, name, fresh = false) {
 }
 async function openExample(name, fresh = false) {
   if (name === 'new') { load(stringify(clean), 'model.gltf', fresh); history.replaceState(null, '', location.pathname); return; }
-  try { load(await (await fetch(examples[name])).text(), `${name}.gltf`, fresh); }
+  try {
+    const url = new URL(examples[name], location.href), text = await (await fetch(url)).text();
+    load(text, `${name}.gltf`, fresh, await loadFiles(JSON.parse(text), async (f) => (await fetch(new URL(f, url))).text()));
+  }
   catch (e) { note = `Open example ${name}: ${e.message}`; return status(); }
   history.replaceState(null, '', `?example=${name}`); // a reload keeps the example
 }
 const save = () => { download(fileName, stringify(doc)); note = `Saved ${fileName} (recipe, no baked meshes).`; status(); };
 function bakeDownload() {
   let gltf;
-  try { gltf = bake(doc, values, { set: chosenSet || null }).gltf; } catch (e) { note = `Bake: ${e.message}`; return status(); }
+  try { gltf = bake(doc, values, { set: chosenSet || null, files }).gltf; } catch (e) { note = `Bake: ${e.message}`; return status(); }
   download(fileName, stringify(gltf));
   // The bake records the slider values as baked_values; keep them in the document.
   const r = strip(gltf).extensions[EXT];

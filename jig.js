@@ -5,10 +5,12 @@ export const VERSION = '0.1';
 export const EXT = 'JIG_recipe';
 
 // Read a document. `values` overrides parameter values by name (over baked_values, over defaults).
-// Returns { params, vars, floor, meshes, nodes, instances } or throws an Error whose message starts with the
-// JSON path. `meshes` are the evaluated recipe meshes; `instances` are { node, mesh, matrix } for every node of the
-// default scene that draws a recipe mesh, matrix = world transform, column-major as in glTF.
-export function read(doc, values = {}) {
+// Returns { params, vars, floor, meshes, nodes, instances, tree, skins } or throws an Error whose message starts with
+// the JSON path. `meshes` are the evaluated recipe meshes, then those of placed documents (draft f10);
+// `instances` are { node, mesh, matrix, rec, model } for every shape drawn in the default scene, matrix = world
+// transform, column-major as in glTF; `node` is the node of this document that draws or places it.
+// `files` (draft f10): file name -> document, for a model's relative `uri`, as if all were in one folder.
+export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
   need(isObj(doc), '', 'document must be an object');
   need(isObj(doc.asset) && doc.asset.version === '2.0', '/asset/version', 'must be "2.0" (a glTF 2.0 document)');
   need(Array.isArray(doc.extensionsUsed) && doc.extensionsUsed.includes(EXT), '/extensionsUsed', `must list "${EXT}"`);
@@ -17,7 +19,7 @@ export function read(doc, values = {}) {
   const rat = `/extensions/${EXT}`;
   const r = doc.extensions?.[EXT];
   need(isObj(r), rat, 'must be an object');
-  only(r, ['version', 'params', 'sets', 'vars', 'floor', 'meshes', 'baked_values', 'baked_set'], rat);
+  only(r, ['version', 'params', 'sets', 'vars', 'floor', 'meshes', 'models', 'skins', 'baked_values', 'baked_set'], rat);
   need(r.version === VERSION, `${rat}/version`, `must be "${VERSION}"`);
 
   need(r.params === undefined || isObj(r.params), `${rat}/params`, 'must be an object');
@@ -108,6 +110,25 @@ export function read(doc, values = {}) {
   });
   const meshes = list(r.meshes, `${rat}/meshes`).map((m, i) => mesh(m, scope, `${rat}/meshes/${i}`, materials.length));
 
+  // Draft f10 (D-72..D-74): other JIG documents, placed by nodes with their own parameter values. Embedded as
+  // `document`, or a `uri` as glTF's: a data: URI or a file name looked up in `files`.
+  need(r.models === undefined || Array.isArray(r.models), `${rat}/models`, 'must be a list');
+  const models = (r.models ?? []).map((m, k) => {
+    const at = `${rat}/models/${k}`;
+    need(isObj(m), at, 'must be an object');
+    only(m, ['uri', 'document'], at);
+    need((m.uri === undefined) !== (m.document === undefined), at, 'needs one of uri or document');
+    if (m.document !== undefined) return { doc: m.document, label: `models/${k}` };
+    need(typeof m.uri === 'string' && m.uri !== '', `${at}/uri`, 'must be a non-empty string');
+    const data = /^data:[^,]*?(;base64)?,(.*)$/s.exec(m.uri);
+    if (data) {
+      try { return { doc: JSON.parse(data[1] ? atob(data[2]) : decodeURIComponent(data[2])), label: `models/${k}` }; }
+      catch (e) { need(false, `${at}/uri`, `is not a JSON document: ${e.message}`); }
+    }
+    need(Object.hasOwn(files, m.uri), `${at}/uri`, `no file "${m.uri}" next to this document`);
+    return { doc: files[m.uri], label: m.uri };
+  });
+
   need(doc.nodes === undefined || Array.isArray(doc.nodes), '/nodes', 'must be a list');
   const src = doc.nodes ?? [];
 
@@ -116,8 +137,9 @@ export function read(doc, values = {}) {
   // transform from JIG_recipe only, so the source subtree draws nothing in a plain glTF tool (D-45).
   need(Array.isArray(doc.scenes) && doc.scenes.length > 0, '/scenes', 'must be a non-empty list');
   need(Number.isInteger(doc.scene) && doc.scene >= 0 && doc.scene < doc.scenes.length, '/scene', 'must be a scene index');
-  const roots = doc.scenes[doc.scene]?.nodes ?? [];
-  need(Array.isArray(roots), `/scenes/${doc.scene}/nodes`, 'must be a list');
+  const all = doc.scenes[doc.scene]?.nodes ?? [];
+  need(Array.isArray(all), `/scenes/${doc.scene}/nodes`, 'must be a list');
+  const roots = all.filter((i) => !isBaked(src[i])); // baked roots draw skins (draft f10)
   const seen = new Set(), repeated = new Set();
   const check =(i, at, inRepeat) => {
     need(Number.isInteger(i) && i >= 0 && i < src.length, at, 'must be a node index');
@@ -135,40 +157,121 @@ export function read(doc, values = {}) {
   };
   roots.forEach((i, j) => check(i, `/scenes/${doc.scene}/nodes/${j}`, false));
 
-  // Evaluate the tree with world matrices. A repeated node is evaluated once per copy, its index bound for its
-  // subtree (D-44, D-46). `tree` holds one record per copy: { i, node, rep, shown, kids }; a repeat of 0 still
-  // evaluates copy 0, unshown, so its errors surface. `nodes[i]` is node i's first copy.
+  // Draft f10 (D-76, D-77): skins as glTF's; each joint is a node of the scene, and every copy of it a joint.
+  need(r.skins === undefined || Array.isArray(r.skins), `${rat}/skins`, 'must be a list');
+  const jointOf = new Map();
+  (r.skins ?? []).forEach((sk, k) => {
+    const at = `${rat}/skins/${k}`;
+    need(isObj(sk), at, 'must be an object');
+    only(sk, ['joints'], at);
+    list(sk.joints, `${at}/joints`).forEach((j, m) => {
+      need(seen.has(j), `${at}/joints/${m}`, 'must be a node of the default scene');
+      need(!jointOf.has(j), `${at}/joints/${m}`, `node ${j} is already a joint`);
+      jointOf.set(j, k);
+    });
+  });
+  const skins = (r.skins ?? []).map(() => []);
+
+  // Evaluate the tree with world matrices. A repeated node is evaluated once per copy, its index and row bound
+  // for its subtree (D-44, D-46, D-75). `tree` holds one record per copy: { i, node, rep, shown, kids, world, name,
+  // mesh, bound }; a repeat of 0 still evaluates copy 0, unshown, so its errors surface. `nodes[i]` is node i's
+  // first copy. `bound` is { rec, skin }: the joint a shape is bound to, the nearest joint at or above its node.
+  // A placed document's tree hangs under the placing record, marked `foreign`.
   const nodes = [], instances = [];
-  const walk = (i, parent, s, shown, copy) => {
-    const x = src[i].extensions?.[EXT], at = `/nodes/${i}`;
-    const rep = isObj(x) && x.repeat !== undefined ? repeat(x.repeat, s, `${at}/extensions/${EXT}/repeat`) : null;
+  const walk = (i, parent, s, shown, copy, bone) => {
+    const x = src[i].extensions?.[EXT], at = `/nodes/${i}`, xat = `${at}/extensions/${EXT}`;
+    const rep = isObj(x) && x.repeat !== undefined ? repeat(x.repeat, s, `${xat}/repeat`) : null;
     return Array.from({ length: rep ? Math.max(1, rep.count) : 1 }, (_, k) => {
-      const sk = rep ? { ...s, [rep.index]: k } : s, c = rep ? [...copy, k] : copy;
+      const sk = rep ? { ...s, [rep.index]: k, ...rep.rows?.[k] } : s, c = rep ? [...copy, k] : copy;
       const n = node(src[i], meshes.length, sk, at), vis = shown && (!rep || k < rep.count);
       nodes[i] ??= { ...n, repeated: repeated.has(i) };
       const world = mul(parent, n.matrix);
-      if (vis && n.mesh !== undefined) instances.push({ node: i, mesh: n.mesh, matrix: world, copy: c });
-      const kids = n.children.filter((ch) => !isBaked(src[ch])).flatMap((ch) => walk(ch, world, sk, vis, c));
-      return { i, node: n, rep: !!rep, shown: vis, kids };
+      const rec = { i, node: n, rep: !!rep, shown: vis, kids: [], world, name: src[i].name, mesh: n.mesh };
+      let b = bone;
+      if (jointOf.has(i)) { b = { rec, skin: jointOf.get(i) }; if (vis) skins[b.skin].push(rec); }
+      if (n.mesh !== undefined && b) rec.bound = b;
+      if (vis && n.mesh !== undefined) instances.push({ node: i, mesh: n.mesh, matrix: world, copy: c, rec });
+      rec.kids = n.children.filter((ch) => !isBaked(src[ch])).flatMap((ch) => walk(ch, world, sk, vis, c, b));
+      if (n.jig.model !== undefined) place(n.jig, sk, xat, rec, vis, c, b);
+      return rec;
     });
   };
-  const tree = roots.flatMap((i) => walk(i, IDENTITY, scope, true, []));
+  // Draft f10: a node's `model` and `values`. The placed document is read with those values; its shapes, skins
+  // and tree join this one under the node. Its skins join the placing node's skin, or are skins of their own.
+  const place = (x, s, xat, rec, vis, c, bone) => {
+    need(Number.isInteger(x.model) && x.model >= 0 && x.model < models.length, `${xat}/model`, `must be a model index 0..${models.length - 1}`);
+    const m = models[x.model];
+    need(m.doc !== doc && !stack.includes(m.doc) && stack.length < 16, `${xat}/model`, 'places itself, or nests deeper than 16');
+    need(x.values === undefined || isObj(x.values), `${xat}/values`, 'must be an object');
+    const ps = m.doc?.extensions?.[EXT]?.params ?? {}, vals = {};
+    for (const [k, e] of Object.entries(x.values ?? {})) {
+      if (k.startsWith('//')) continue;
+      const kat = `${xat}/values/${k}`;
+      need(isObj(ps) && Object.hasOwn(ps, k), kat, `is not a parameter of ${m.label}`);
+      need(ps[k]?.type !== 'color', kat, 'a color parameter cannot be passed yet');
+      const v = num(e, s, kat);
+      vals[k] = ps[k]?.type === 'bool' ? v !== 0 : v;
+    }
+    let sub;
+    try { sub = read(m.doc, vals, { files, stack: [...stack, doc] }); } catch (e) { need(false, `${xat}/model`, `in ${m.label}: ${e.message}`); }
+    const off = meshes.length;
+    meshes.push(...sub.meshes.map(({ material, ...m }) => m)); // shortcut: a placed document's materials are dropped, until f10 decides how they carry over
+    const skinAt = sub.skins.map(() => (bone ? bone.skin : skins.push([]) - 1));
+    if (vis) sub.skins.forEach((js, k) => skins[skinAt[k]].push(...js));
+    const relink = (r) => {
+      r.foreign = true; r.world = mul(rec.world, r.world);
+      if (r.mesh !== undefined) { r.mesh += off; r.bound = r.bound ? { rec: r.bound.rec, skin: skinAt[r.bound.skin] } : bone ?? undefined; }
+      r.kids.forEach(relink);
+    };
+    sub.tree.forEach(relink);
+    rec.kids.push(...sub.tree);
+    if (vis) for (const si of sub.instances) {
+      instances.push({ node: rec.i, mesh: si.rec.mesh, matrix: mul(rec.world, si.matrix), copy: [...c, ...si.copy], rec: si.rec, model: true });
+    }
+  };
+  const tree = roots.flatMap((i) => walk(i, IDENTITY, scope, true, [], null));
   src.forEach((n, i) => { if (!nodes[i] && !isBaked(n)) nodes[i] = node(n, meshes.length, scope, `/nodes/${i}`); });
 
   // y of the floor in model space; hosts stand the model there. Default: the lowest point on the vertical line
   // through the origin, or 0 when no shape crosses that line.
   const floor = r.floor === undefined ? lowestOnAxis(meshes, instances) : num(r.floor, scope, `${rat}/floor`);
-  return { params, sets, vars, floor, materials, meshes, nodes, instances, tree };
+  return { params, sets, vars, floor, materials, meshes, nodes, instances, tree, skins };
+}
+
+// Draft f10: the files a document's models name by relative `uri`, and theirs, as { name: document }, for read's
+// `files`. `load(name)` returns a file's text (or a promise of it); names are relative to one folder.
+export async function loadFiles(doc, load, files = {}) {
+  for (const m of doc?.extensions?.[EXT]?.models ?? []) {
+    const u = m?.uri;
+    if (typeof u !== 'string' || u.startsWith('data:') || Object.hasOwn(files, u)) continue;
+    files[u] = JSON.parse(await load(u));
+    await loadFiles(files[u], load, files);
+  }
+  if (Array.isArray(doc?.extensions?.[EXT]?.models)) for (const m of doc.extensions[EXT].models) if (m?.document) await loadFiles(m.document, load, files);
+  return files;
 }
 
 // A node's `repeat` (D-44): count rounded and clamped to 0..1024; the index is a fresh lower_snake_case name.
 function repeat(r, scope, at) {
   need(isObj(r), at, 'must be an object');
-  only(r, ['count', 'index'], at);
-  need(typeof r.index === 'string' && /^[a-z_][a-z0-9_]*$/.test(r.index), `${at}/index`, 'must be a lower_snake_case name');
-  need(!Object.hasOwn(scope, r.index) && !Object.hasOwn(FUNCS, r.index), `${at}/index`,
-    `"${r.index}" is already a parameter, variable, enclosing index or function`);
-  return { count: Math.min(1024, Math.max(0, Math.round(num(r.count, scope, `${at}/count`)))), index: r.index };
+  only(r, ['count', 'index', 'each'], at);
+  const fresh = (name, nat) => {
+    need(typeof name === 'string' && /^[a-z_][a-z0-9_]*$/.test(name), nat, 'must be a lower_snake_case name');
+    need(!Object.hasOwn(scope, name) && !Object.hasOwn(FUNCS, name), nat, `"${name}" is already a parameter, variable, enclosing name or function`);
+  };
+  fresh(r.index, `${at}/index`);
+  if (r.each === undefined) return { count: Math.min(1024, Math.max(0, Math.round(num(r.count, scope, `${at}/count`)))), index: r.index };
+  // Draft f10 (D-75): one row of named values per copy; a row's values do not see the rows' names.
+  need(r.count === undefined, `${at}/count`, 'cannot stand next to each (the rows are the count)');
+  const rows = list(r.each, `${at}/each`), keys = isObj(rows[0]) ? Object.keys(rows[0]).filter((k) => !k.startsWith('//')) : [];
+  need(rows.length <= 1024, `${at}/each`, 'has more than 1024 rows');
+  keys.forEach((k) => { fresh(k, `${at}/each/0/${k}`); need(k !== r.index, `${at}/each/0/${k}`, 'is the index'); });
+  return { count: rows.length, index: r.index, rows: rows.map((row, j) => {
+    need(isObj(row), `${at}/each/${j}`, 'must be an object');
+    const ks = Object.keys(row).filter((k) => !k.startsWith('//'));
+    need(ks.length === keys.length && ks.every((k) => keys.includes(k)), `${at}/each/${j}`, `must have the keys of row 0: ${keys.join(', ')}`);
+    return Object.fromEntries(ks.map((k) => [k, num(row[k], scope, `${at}/each/${j}/${k}`)]));
+  }) };
 }
 
 // A glTF node. Its JIG_recipe may set mesh, translation, rotation and scale; the core slots with a twin there
@@ -178,7 +281,8 @@ function node(n, meshCount, scope, at) {
   const xat = `${at}/extensions/${EXT}`;
   const x = n.extensions?.[EXT] ?? {};
   need(isObj(x), xat, 'must be an object');
-  only(x, ['mesh', 'translation', 'rotation', 'euler', 'scale', 'repeat'], xat);
+  only(x, ['mesh', 'translation', 'rotation', 'euler', 'scale', 'repeat', 'model', 'values'], xat);
+  need(x.values === undefined || x.model !== undefined, `${xat}/values`, 'needs model');
   need(x.rotation === undefined || x.euler === undefined, `${xat}/euler`, 'cannot stand next to rotation');
   if (x.mesh !== undefined) {
     need(Number.isInteger(x.mesh) && x.mesh >= 0 && x.mesh < meshCount, `${xat}/mesh`, `must be a recipe mesh index 0..${meshCount - 1}`);
@@ -236,7 +340,7 @@ function mesh(m, scope, at, materialCount) {
 
 // --- Bake (D-11, D-14..D-17, D-23) ---
 
-const OWNED = ['meshes', 'accessors', 'bufferViews', 'buffers', 'nodes', 'materials'];
+const OWNED = ['meshes', 'accessors', 'bufferViews', 'buffers', 'nodes', 'materials', 'skins'];
 const KHR_VARIANTS = 'KHR_materials_variants';
 const isBaked = (o) => o?.extensions?.[EXT]?.baked === true;
 
@@ -267,6 +371,9 @@ export function strip(doc) {
     }
     if (isObj(m.pbrMetallicRoughness) && !Object.keys(m.pbrMetallicRoughness).length) delete m.pbrMetallicRoughness;
   }
+  for (const sc of Array.isArray(d.scenes) ? d.scenes : []) { // drop baked skinned-mesh roots (draft f10)
+    if (Array.isArray(sc?.nodes)) sc.nodes = sc.nodes.filter((c) => c < (d.nodes?.length ?? 0));
+  }
   for (const n of Array.isArray(d.nodes) ? d.nodes : []) {
     if (Array.isArray(n?.children)) { // drop links to removed baked copies (D-45)
       const kept = n.children.filter((c) => c < d.nodes.length);
@@ -283,14 +390,14 @@ export function strip(doc) {
 // separate file (D-23). The same document and values give the same bytes (D-15).
 // `set` names a set to bake with (its values under `values`) and records it as baked_set; null drops baked_set;
 // left out, baked_set stays as it is.
-export function bake(doc, values = {}, { uri, set } = {}) {
+export function bake(doc, values = {}, { uri, set, files } = {}) {
   const d = strip(doc);
   const r = d.extensions?.[EXT];
   if (typeof set === 'string') {
     need(isObj(r?.sets?.[set]), `/extensions/${EXT}/sets`, `has no set named "${set}"`);
     values = { ...r.sets[set], ...values };
   }
-  const out = read(d, values);
+  const out = read(d, values, { files });
   d.asset.generator = `JIG ${VERSION} reference baker`;
   r.baked_values = Object.fromEntries(Object.entries(out.params).map(([k, p]) => [k, p.value]));
   if (set !== undefined) { delete r.baked_set; if (set !== null) r.baked_set = set; }
@@ -303,7 +410,7 @@ export function bake(doc, values = {}, { uri, set } = {}) {
   // values (over this bake's) gets a baked copy with them, mapped on every primitive that uses the material.
   const names = Object.keys(out.sets), mapping = {};
   names.forEach((name, v) => {
-    const mats = read(d, { ...r.baked_values, ...out.sets[name] }).materials;
+    const mats = read(d, { ...r.baked_values, ...out.sets[name] }, { files }).materials;
     mats.forEach((m, i) => {
       if (!m || JSON.stringify(m) === JSON.stringify(out.materials[i])) return;
       const { extensions: { [EXT]: _, ...ext } = {}, ...rest } = authored[i];
@@ -323,12 +430,12 @@ export function bake(doc, values = {}, { uri, set } = {}) {
     const padded = new Uint8Array(Math.ceil(bytes.byteLength / 4) * 4); // keep every view 4-byte aligned
     padded.set(bytes);
     chunks.push(padded);
-    const i = add('bufferViews', { buffer: base.buffers, byteOffset: offset, byteLength: bytes.byteLength, target });
+    const i = add('bufferViews', { buffer: base.buffers, byteOffset: offset, byteLength: bytes.byteLength, ...(target && { target }) });
     offset += padded.byteLength;
     return i;
   };
-  // Only meshes a shown node draws are baked, in recipe order; meshAt maps recipe mesh to core mesh.
-  const used = new Set(out.instances.map((x) => x.mesh)), meshAt = {};
+  // Only meshes a shown node draws unskinned are baked, in recipe order; meshAt maps recipe mesh to core mesh.
+  const used = new Set(out.instances.filter((x) => !x.rec.bound).map((x) => x.mesh)), meshAt = {};
   for (const [mi, m] of out.meshes.entries()) {
     if (!used.has(mi)) continue;
     meshAt[mi] = base.meshes + Object.keys(meshAt).length;
@@ -345,31 +452,77 @@ export function bake(doc, values = {}, { uri, set } = {}) {
       ...(mapping[m.material] && { extensions: { [KHR_VARIANTS]: { mappings: mapping[m.material] } } }) }] });
   }
   out.materials.forEach((m, i) => { if (m) slots(d.materials[i], m); }); // the material cache (D-57)
+
+  // Nodes outside any repeat get their cache in place; each shown copy of a repeated node becomes a baked node,
+  // with baked copies of its subtree, appended to the repeated node's children (D-45); so does each shown node of
+  // a placed document (draft f10). A shape bound to a joint is drawn by its skin's mesh, not by its node.
+  const nodeOf = new Map();
+  const copyOf = (rec) => {
+    const kids = rec.kids.filter((r) => r.shown).map(copyOf), n = rec.node, b = {};
+    if (rec.name !== undefined) b.name = rec.name;
+    if (rec.mesh !== undefined && !rec.bound) b.mesh = meshAt[rec.mesh];
+    for (const [k, id] of [['translation', '0,0,0'], ['rotation', '0,0,0,1'], ['scale', '1,1,1']]) if (String(n[k]) !== id) b[k] = n[k];
+    if (kids.length) b.children = kids;
+    const i = add('nodes', b);
+    nodeOf.set(rec, i);
+    return i;
+  };
+  const bound = new Set(out.instances.filter((x) => !x.model && x.rec.bound).map((x) => x.node));
+  for (const [i, n] of out.nodes.entries()) {
+    if (!n || n.repeated) continue;
+    if (n.jig.mesh !== undefined && !bound.has(i)) d.nodes[i].mesh = meshAt[n.jig.mesh];
+    for (const k of ['translation', 'rotation', 'scale']) if (twin(n.jig, k) !== undefined) d.nodes[i][k] = n[k];
+  }
+  const place = (recs) => recs.forEach((rec) => {
+    if (!rec.rep && !rec.foreign) { nodeOf.set(rec, rec.i); return place(rec.kids); }
+    if (rec.shown) (d.nodes[nodeOf.get(rec.parent) ?? rec.i].children ??= []).push(copyOf(rec));
+  });
+  const parents = (recs, parent) => recs.forEach((rec) => { if (rec.foreign && !parent?.foreign) rec.parent = parent; parents(rec.kids, rec); });
+  parents(out.tree, null);
+  place(out.tree);
+
+  // Skins (draft f10, D-77): glTF skins with the joints' baked nodes and inverse bind matrices at this pose. The
+  // shapes bound to a skin are one baked mesh, a primitive per shape, in model space at the bind pose, each vertex
+  // bound to its joint with weight 1, drawn by a baked root node of the default scene.
+  const geoms = {};
+  out.skins.forEach((joints, s) => {
+    if (!joints.length) return;
+    const shapes = out.instances.filter((x) => x.rec.bound?.skin === s);
+    const ibm = new Float32Array(joints.flatMap((j) => invert(j.world)));
+    const inverseBindMatrices = add('accessors', { bufferView: view(ibm), componentType: 5126, count: joints.length, type: 'MAT4' });
+    const skin = add('skins', { inverseBindMatrices, joints: joints.map((j) => nodeOf.get(j)) });
+    if (!shapes.length) return;
+    const primitives = shapes.map((x) => {
+      const g = (geoms[x.mesh] ??= geometry(out.meshes[x.mesh])), n = g.positions.length / 3, m = x.matrix;
+      const nm = inverse3([0, 1, 2].map((rw) => [0, 1, 2].map((c) => m[c * 4 + rw]))) ?? [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+      const positions = new Float32Array(3 * n), normals = new Float32Array(3 * n);
+      for (let v = 0; v < n; v++) {
+        const [px, py, pz] = g.positions.subarray(3 * v, 3 * v + 3), [qx, qy, qz] = g.normals.subarray(3 * v, 3 * v + 3);
+        for (let a = 0; a < 3; a++) positions[3 * v + a] = m[a] * px + m[4 + a] * py + m[8 + a] * pz + m[12 + a];
+        const w = [0, 1, 2].map((a) => nm[0][a] * qx + nm[1][a] * qy + nm[2][a] * qz), l = Math.hypot(...w) || 1;
+        for (let a = 0; a < 3; a++) normals[3 * v + a] = w[a] / l;
+      }
+      const joint = joints.indexOf(x.rec.bound.rec);
+      const short = n <= 65535, indices = short ? Uint16Array.from(g.indices) : g.indices;
+      const min = [0, 1, 2].map((a) => Math.min(...positions.filter((_, i) => i % 3 === a)));
+      const max = [0, 1, 2].map((a) => Math.max(...positions.filter((_, i) => i % 3 === a)));
+      const acc = (array, componentType, type, extra = {}) => add('accessors', { bufferView: view(array, 34962), componentType, count: n, type, ...extra });
+      const attributes = { POSITION: acc(positions, 5126, 'VEC3', { min, max }), NORMAL: acc(normals, 5126, 'VEC3'),
+        JOINTS_0: acc(new Uint16Array(4 * n).map((_, i) => (i % 4 ? 0 : joint)), 5123, 'VEC4'),
+        WEIGHTS_0: acc(new Float32Array(4 * n).map((_, i) => (i % 4 ? 0 : 1)), 5126, 'VEC4') };
+      const idx = add('accessors', { bufferView: view(indices, 34963), componentType: short ? 5123 : 5125, count: indices.length, type: 'SCALAR' });
+      const mat = out.meshes[x.mesh].material;
+      return { attributes, indices: idx, ...(mat !== undefined && { material: mat }),
+        ...(mapping[mat] && { extensions: { [KHR_VARIANTS]: { mappings: mapping[mat] } } }) };
+    });
+    const mesh = add('meshes', { primitives });
+    d.scenes[d.scene].nodes.push(add('nodes', { name: `skin ${s}`, mesh, skin }));
+  });
+
   const bin = new Uint8Array(offset);
   let at = 0;
   for (const c of chunks) { bin.set(c, at); at += c.byteLength; }
   add('buffers', { byteLength: bin.byteLength, uri: uri ?? `data:application/octet-stream;base64,${base64(bin)}` });
-
-  // Nodes outside any repeat get their cache in place; each shown copy of a repeated node becomes a baked node,
-  // with baked copies of its subtree, appended to the repeated node's children (D-45).
-  const copyOf = (rec) => {
-    const kids = rec.kids.filter((r) => r.shown).map(copyOf), n = rec.node, b = {};
-    if (d.nodes[rec.i].name !== undefined) b.name = d.nodes[rec.i].name;
-    if (n.jig.mesh !== undefined) b.mesh = meshAt[n.jig.mesh];
-    for (const [k, id] of [['translation', '0,0,0'], ['rotation', '0,0,0,1'], ['scale', '1,1,1']]) if (String(n[k]) !== id) b[k] = n[k];
-    if (kids.length) b.children = kids;
-    return add('nodes', b);
-  };
-  for (const [i, n] of out.nodes.entries()) {
-    if (!n || n.repeated) continue;
-    if (n.jig.mesh !== undefined) d.nodes[i].mesh = meshAt[n.jig.mesh];
-    for (const k of ['translation', 'rotation', 'scale']) if (twin(n.jig, k) !== undefined) d.nodes[i][k] = n[k];
-  }
-  const place = (recs) => recs.forEach((rec) => {
-    if (!rec.rep) return place(rec.kids);
-    if (rec.shown) (d.nodes[rec.i].children ??= []).push(copyOf(rec));
-  });
-  place(out.tree);
   return { gltf: d, bin };
 }
 
@@ -478,6 +631,14 @@ function lowestOnTriangles({ positions: p, indices }, m) {
     if (u >= 0 && v >= 0 && u + v <= 1) low = Math.min(low, a[1] + u * (b[1] - a[1]) + v * (c[1] - a[1]));
   }
   return low;
+}
+
+// Inverse of an affine column-major 4x4 (a node's world transform); a flat one has none, so identity stands in.
+function invert(m) {
+  const r = inverse3([0, 1, 2].map((rw) => [0, 1, 2].map((c) => m[c * 4 + rw])));
+  if (!r) return IDENTITY;
+  const t = r.map((row) => -(row[0] * m[12] + row[1] * m[13] + row[2] * m[14]));
+  return [r[0][0], r[1][0], r[2][0], 0, r[0][1], r[1][1], r[2][1], 0, r[0][2], r[1][2], r[2][2], 0, t[0], t[1], t[2], 1];
 }
 
 function inverse3([[a, b, c], [d, e, f], [g, h, i]]) {
