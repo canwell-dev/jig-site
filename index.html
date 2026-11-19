@@ -47,7 +47,6 @@ kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); bor
 .menu small { color: var(--mute); margin-left: auto; padding-left: 16px; }
 .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; width: 100%; }
 .menu .mh { font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); padding: 6px 10px 2px; }
-#scanPart { max-width: 16em; }
 .pane { background: var(--panel); min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .pane-h { font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); padding: 7px 12px; border-bottom: 1px solid var(--line); background: var(--chip); display: flex; gap: 8px; align-items: center; }
 .pane-b { overflow: auto; flex: 1; min-height: 0; }
@@ -63,8 +62,6 @@ kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); bor
 .ic.box { border-radius: 2px; }
 .ic.loft { border-radius: 6px 6px 2px 2px; height: 13px; width: 8px; }
 .ic.empty { border-style: dashed; border-radius: 50%; }
-.ic.ref { border-style: dotted; border-color: var(--helper); border-radius: 50%; }
-#tree li.ref { color: var(--helper); cursor: default; }
 #vp { grid-area: vp; position: relative; background: var(--vp); min-height: 0; overflow: hidden; }
 #vp canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 .vp-tag { position: absolute; left: 10px; top: 10px; font: 11px var(--mono); color: var(--mute); pointer-events: none; display: grid; gap: 2px; }
@@ -167,11 +164,8 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
       <button type="button" role="menuitem" data-file="save">Save .gltf<small>Ctrl S</small></button>
       <button type="button" role="menuitem" data-file="bake">Bake &amp; download<small>with meshes</small></button>
       <button type="button" role="menuitem" data-file="copy">Copy glTF text</button>
-      <hr>
-      <button type="button" role="menuitem" data-file="scan">Scan mesh…<small>fit a loft (sketch)</small></button>
     </div>
     <input id="open" type="file" accept=".gltf,model/gltf+json" hidden>
-    <input id="scanFile" type="file" accept=".glb,.gltf" hidden>
     <button class="btn" id="undo" type="button" title="Undo (Ctrl Z)">↶ Undo</button>
     <button class="btn" id="redo" type="button" title="Redo (Ctrl Shift Z)">↷ Redo</button>
     <span class="sep"></span>
@@ -186,7 +180,6 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
     </span>
     <span class="seg" role="group" aria-label="Tool" id="tools"></span>
     <span class="grow"></span>
-    <select class="btn" id="scanPart" aria-label="Part to scan" hidden></select>
     <span id="fileName" style="color:var(--mute);font:12px var(--mono)"></span>
   </header>
 
@@ -247,13 +240,11 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=9f0e89e';
-import { scanLoft } from './scan.js?v=9f0e89e';
-import { parseGltf, namedParts } from './glb.js?v=9f0e89e';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=1ac3481';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=9f0e89e', loft: 'examples/loft.gltf?v=9f0e89e', star: 'examples/star.gltf?v=9f0e89e' };
+const examples = { box: 'examples/box.gltf?v=1ac3481', loft: 'examples/loft.gltf?v=1ac3481', star: 'examples/star.gltf?v=1ac3481' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -319,8 +310,7 @@ const model = new THREE.Group(), meshLayer = new THREE.Group(), helperLayer = ne
 pivot.matrixAutoUpdate = false;
 const proxy = new THREE.Object3D();
 pivot.add(proxy);
-const refLayer = new THREE.Group(); // a scanned mesh, drawn faintly over the loft fitted to it
-model.add(meshLayer, helperLayer, pivot, refLayer);
+model.add(meshLayer, helperLayer, pivot);
 scene.add(model);
 const matBase = new THREE.MeshStandardMaterial({ color: 0xc9c4bc, roughness: 0.75 });
 const matSel = new THREE.MeshStandardMaterial({ color: 0xc9c4bc, roughness: 0.75, emissiveIntensity: 0.3 });
@@ -522,10 +512,7 @@ function outliner() {
     li.style.paddingLeft = `${12 + depth * 14}px`;
     return [li, ...(n.children ?? []).flatMap((c) => row(c, depth + 1))];
   };
-  const ref = scan && el('li', { className: 'ref', title: scan.note }, el('span', { className: 'ic ref' }), el('span', { className: 'nm', textContent: `scan: ${scan.name}` }),
-    el('button', { type: 'button', className: 'x', textContent: '×', title: 'Hide the scanned mesh', ariaLabel: 'Hide the scanned mesh', style: 'margin-left:auto',
-      onclick: () => { scan = null; refLayer.clear(); update(); } }));
-  $('#tree').replaceChildren(el('li', { style: 'color:var(--mute);cursor:default' }, `Scene ${doc.scene ?? 0}`), ...roots.flatMap((i) => row(i, 1)), ...(ref ? [ref] : []));
+  $('#tree').replaceChildren(el('li', { style: 'color:var(--mute);cursor:default' }, `Scene ${doc.scene ?? 0}`), ...roots.flatMap((i) => row(i, 1)));
 }
 
 // ---------- properties ----------
@@ -847,14 +834,13 @@ function live() {
 }
 
 // ---------- edits ----------
-// A new node with a new mesh. `loft` (from a scan) goes in with no node transform, so it sits where the scan does.
-function addShape(kind, loft) {
+function addShape(kind) {
   const r = R();
   r.meshes = [...(r.meshes ?? []), kind === 'box' ? { box: { size: [0.4, 0.4, 0.4] } }
-    : { loft: loft ?? { path: [[0, 0, 0], [0, 0.4, 0], [0.2, 0.7, 0]], sections: [{ t: 0, points: circle(0.1) }, { t: 1, points: circle(0.04) }] } }];
+    : { loft: { path: [[0, 0, 0], [0, 0.4, 0], [0.2, 0.7, 0]], sections: [{ t: 0, points: circle(0.1) }, { t: 1, points: circle(0.04) }] } }];
   const mesh = r.meshes.length - 1, at = out ? -out.floor : 0;
   doc.nodes = doc.nodes ?? [];
-  doc.nodes.push({ name: `${kind} ${mesh}`, extensions: { [EXT]: { mesh, ...(!loft && { translation: [0.9, r4(kind === 'box' ? at + 0.2 : at), 0.4] }) } } });
+  doc.nodes.push({ name: `${kind} ${mesh}`, extensions: { [EXT]: { mesh, translation: [0.9, r4(kind === 'box' ? at + 0.2 : at), 0.4] } } });
   doc.scenes ??= [{ nodes: [] }]; doc.scene ??= 0;
   (doc.scenes[doc.scene].nodes ??= []).push(doc.nodes.length - 1);
   sel = { node: doc.nodes.length - 1 }; mode = 'object'; gizmo = 'translate';
@@ -1008,7 +994,6 @@ function load(text, name, fresh = false) {
   if (!isObj(d?.extensions?.[EXT])) { note = `Open ${name}: not a JIG document (no extensions.${EXT})`; return status(); }
   doc = d; fileName = name; sel = null; mode = 'object'; sketchFor = '';
   for (const k of Object.keys(values)) delete values[k];
-  scan = null; refLayer.clear();
   $('#fileName').textContent = name;
   if (fresh) { past = [stringify(doc)]; future = []; update(); }
   else { note = `Opened ${name}. Undo brings the previous document back.`; commit(); }
@@ -1037,53 +1022,12 @@ function copyText() {
   try { navigator.clipboard.writeText(text).then(() => { note = 'Copied the glTF text.'; status(); }, fallback); } catch { fallback(); }
 }
 const fileActions = {
-  new: () => openExample('new'), open: () => $('#open').click(), save, bake: bakeDownload, copy: copyText, scan: () => $('#scanFile').click(),
+  new: () => openExample('new'), open: () => $('#open').click(), save, bake: bakeDownload, copy: copyText,
 };
 const exHead = $('#exHead');
 exHead.after(...Object.keys(examples).map((name) => el('button', { type: 'button', role: 'menuitem', textContent: name, onclick: () => { closeMenus(); openExample(name); } })));
 for (const b of $('#fileMenu').querySelectorAll('[data-file]')) b.onclick = () => { closeMenus(); fileActions[b.dataset.file](); };
 $('#open').onchange = async (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { load(await f.text(), f.name); history.replaceState(null, '', location.pathname); } };
-
-// ---------- scan (sketch, viewer/scan.js) ----------
-// Fit a loft to a .glb or self-contained .gltf. A file with named parts offers each one (viewer/glb.js): every named
-// mesh, and for a skinned mesh every named bone. Each pick adds one loft, with no node transform, so it sits where
-// the mesh does; the part scanned stays on screen, faint, to compare. tools/scan.mjs does the same from the command line.
-// shortcut: one file only (no external .bin).
-const ghost = new THREE.MeshStandardMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.25, depthWrite: false });
-let scan = null, scanFile = '', scanParts = [];
-function scanPart(k) {
-  const p = scanParts[k];
-  try {
-    const { loft, error, size } = scanLoft(p.positions, p.indices, { guide: p.guide, reach: p.reach });
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(p.positions, 3));
-    g.setIndex(p.indices);
-    g.computeVertexNormals();
-    refLayer.clear(); refLayer.add(new THREE.Mesh(g, ghost));
-    const mm = (x) => `${+(x * 1000).toFixed(1)} mm`;
-    scan = { name: `${scanFile}, ${p.name}`, note: `${loft.sections.length} sections, ${loft.path.length} path points; off by ${mm(error.mean)} mean, ${mm(error.max)} max (size ${mm(size)}, units taken as metres)` };
-    addShape('loft', loft);
-    note = `Scanned ${scan.name}: ${scan.note}`; status();
-    camera.far = Math.max(100, size * 20); camera.updateProjectionMatrix();
-    frame();
-  } catch (e) { note = `Scan: ${e.message}`; status(); }
-}
-const partEl = $('#scanPart');
-$('#scanFile').onchange = async (e) => {
-  const f = e.target.files[0];
-  e.target.value = '';
-  if (!f) return;
-  try { scanFile = f.name; scanParts = namedParts(parseGltf(await f.arrayBuffer())); }
-  catch (er) { note = `Scan: ${er.message}`; return status(); }
-  // One mesh (named or not): scan it now. Named parts: pick one, then another for the next loft.
-  partEl.hidden = scanParts.length <= 2;
-  partEl.replaceChildren(el('option', { value: '', textContent: 'Scan part…', disabled: true }),
-    ...scanParts.map((p, k) => el('option', { value: k, textContent: `${p.name} (${p.kind}, ${p.indices.length / 3} triangles)` })));
-  partEl.value = '';
-  if (partEl.hidden) scanPart(0);
-  else { note = `${f.name}: pick a part to scan in the list at the top right.`; status(); }
-};
-partEl.onchange = () => { scanPart(+partEl.value); partEl.value = ''; }; // so the same part can be picked again
 
 $('#undo').onclick = undo; $('#redo').onclick = redo;
 $('#mObject').onclick = () => { mode = 'object'; if (sel) sel = { node: sel.node }; update(); };
