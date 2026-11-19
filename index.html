@@ -8,7 +8,7 @@
   :root { --bg: #f4f2ee; --fg: #222; --panel: #fff; --line: #ddd; --err: #b00020; }
   @media (prefers-color-scheme: dark) { :root { --bg: #1b1b1d; --fg: #e8e8e8; --panel: #252528; --line: #3a3a3e; --err: #ff6b7f; } }
   * { box-sizing: border-box; }
-  body { margin: 0; height: 100vh; display: grid; grid-template-columns: minmax(320px, 40%) 1fr; background: var(--bg); color: var(--fg); font: 14px system-ui, sans-serif; }
+  body { margin: 0; height: 100vh; height: 100dvh; display: grid; grid-template-columns: minmax(320px, 40%) minmax(0, 1fr); background: var(--bg); color: var(--fg); font: 14px system-ui, sans-serif; }
   #side { display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--panel); min-height: 0; }
   textarea { flex: 1; resize: none; border: 0; padding: 12px; background: transparent; color: inherit; font: 13px/1.5 ui-monospace, monospace; outline: none; }
   #defs { padding: 10px 12px; border-bottom: 1px solid var(--line); overflow: auto; max-height: 45%; display: grid; gap: 6px; }
@@ -24,12 +24,12 @@
   #defs[aria-disabled=true] { opacity: .5; pointer-events: none; }
   #sliders { position: absolute; left: 12px; bottom: 12px; display: grid; gap: 6px; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--line); max-width: calc(100% - 24px); }
   #sliders:empty { display: none; }
-  #sliders label { display: grid; grid-template-columns: 7em minmax(80px, 220px) 4em; gap: 8px; align-items: center; }
+  #sliders label { display: grid; grid-template-columns: minmax(3em, 7em) minmax(60px, 220px) 3.5em; gap: 8px; align-items: center; }
   #sliders output { font: 12px ui-monospace, monospace; text-align: right; }
   #err { padding: 8px 12px; color: var(--err); font-family: ui-monospace, monospace; min-height: 2.2em; border-top: 1px solid var(--line); }
   #view { position: relative; min-height: 0; }
   canvas { display: block; width: 100%; height: 100%; }
-  @media (max-width: 700px) { body { grid-template-columns: 1fr; grid-template-rows: 50vh 50vh; } }
+  @media (max-width: 700px) { body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); } }
 </style>
 <script type="importmap">
 { "imports": {
@@ -45,6 +45,13 @@
   <div id="err" role="status"></div>
 </div>
 <div id="view"><div id="sliders" aria-label="Parameter values"></div></div>
+<script>
+// Classic script, so it also reports a module that fails to load (no devtools on a phone).
+const showError = (msg) => { document.getElementById('err').textContent = `viewer: ${msg}`; };
+addEventListener('error', (e) => showError(e.message || `could not load ${e.target?.src || e.target?.href || 'a file'}`), true);
+addEventListener('unhandledrejection', (e) => showError(e.reason?.message ?? e.reason));
+if (!HTMLScriptElement.supports?.('importmap')) showError('this browser does not support import maps');
+</script>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
