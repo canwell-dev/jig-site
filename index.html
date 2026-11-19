@@ -82,8 +82,8 @@ if (!HTMLScriptElement.supports?.('importmap')) showError('this browser does not
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { scanLoft } from './scan.js';
-import { read, bake, strip, stringify, geometry, sectionAt, loftCurve, loftFrame, outline, EXT } from './jig.js?v=d86874d';
+import { scanLoft } from './scan.js?v=3886609';
+import { read, bake, strip, stringify, geometry, sectionAt, loftCurve, loftFrame, outline, EXT } from './jig.js?v=3886609';
 
 const src = document.getElementById('src'), defsEl = document.getElementById('defs'), errEl = document.getElementById('err');
 const view = document.getElementById('view'), slidersEl = document.getElementById('sliders');
@@ -576,7 +576,7 @@ document.getElementById('bake').onclick = () => {
   a.click();
   URL.revokeObjectURL(a.href);
 };
-const examples = { box: 'examples/box.gltf?v=d86874d', loft: 'examples/loft.gltf?v=d86874d', star: 'examples/star.gltf?v=d86874d' };
+const examples = { box: 'examples/box.gltf?v=3886609', loft: 'examples/loft.gltf?v=3886609', star: 'examples/star.gltf?v=3886609' };
 const pick = document.getElementById('example');
 pick.append(el('option', { value: '', textContent: 'Open example…', disabled: true }),
   ...Object.keys(examples).map((name) => el('option', { value: name, textContent: name })));
