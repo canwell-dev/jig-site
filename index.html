@@ -24,7 +24,7 @@ html, body { height: 100%; }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.4 var(--ui); }
 [hidden] { display: none !important; }
-#app { height: 100%; display: grid; grid-template-columns: 230px minmax(0, 1fr) 310px; grid-template-rows: auto minmax(0, 1fr) 230px 28px;
+#app { --wo: 230px; --wp: 310px; --hb: 230px; height: 100%; display: grid; grid-template-columns: var(--wo) minmax(0, 1fr) var(--wp); grid-template-rows: auto minmax(0, 1fr) var(--hb) 28px;
   grid-template-areas: "top top top" "out vp props" "out bot props" "st st st"; }
 #top { grid-area: top; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px max(12px, env(safe-area-inset-right, 0px)) 6px max(12px, env(safe-area-inset-left, 0px)); background: var(--panel); border-bottom: 1px solid var(--line); position: relative; }
 #top .brand { font-weight: 600; letter-spacing: .02em; margin-right: 6px; }
@@ -47,7 +47,13 @@ kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); bor
 .menu small { color: var(--mute); margin-left: auto; padding-left: 16px; }
 .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; width: 100%; }
 .menu .mh { font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); padding: 6px 10px 2px; }
-.pane { background: var(--panel); min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.pane { background: var(--panel); min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.gut { position: absolute; z-index: 4; touch-action: none; }
+.gut[aria-orientation="vertical"] { top: 0; bottom: 0; width: 7px; cursor: col-resize; }
+.gut[aria-orientation="horizontal"] { left: 0; right: 0; height: 7px; top: -4px; cursor: row-resize; }
+#out .gut { right: -4px; }
+#props .gut { left: -4px; }
+.gut:hover, .gut:focus-visible, .gut.on { background: color-mix(in srgb, var(--accent) 45%, transparent); outline: none; }
 .pane-h { font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); padding: 7px 12px; border-bottom: 1px solid var(--line); background: var(--chip); display: flex; gap: 8px; align-items: center; }
 .pane-b { overflow: auto; flex: 1; min-height: 0; }
 #out { grid-area: out; border-right: 1px solid var(--line); }
@@ -148,6 +154,7 @@ input.f.expr { color: var(--expr); border-color: color-mix(in srgb, var(--expr) 
   #st { min-height: 28px; }
   .ptable { grid-template-columns: minmax(60px, 1fr) minmax(80px, 2fr) 48px 22px; }
   .ptable .wide { display: none; }
+  .gut { display: none; }
 }
 </style>
 <script>
@@ -193,6 +200,7 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 
   <section id="out" class="pane" aria-label="Outliner">
     <div class="pane-h">Outliner</div>
+    <div class="gut" data-gut="wo" role="separator" aria-orientation="vertical" aria-label="Resize outliner" tabindex="0"></div>
     <div class="pane-b"><ul id="tree"></ul></div>
   </section>
 
@@ -208,10 +216,12 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 
   <section id="props" class="pane" aria-label="Properties">
     <div class="pane-h">Properties <span class="grow" style="flex:1"></span><span class="legend">ƒ expression</span></div>
+    <div class="gut" data-gut="wp" role="separator" aria-orientation="vertical" aria-label="Resize properties" tabindex="0"></div>
     <div class="pane-b" id="propsBody"></div>
   </section>
 
   <section id="bot" class="pane">
+    <div class="gut" data-gut="hb" role="separator" aria-orientation="horizontal" aria-label="Resize bottom panel" tabindex="0"></div>
     <div class="tabs" role="tablist">
       <button type="button" role="tab" id="tabParams" aria-selected="true" data-tab="params">Parameters</button>
       <button type="button" role="tab" id="tabSrc" aria-selected="false" data-tab="src">Source</button>
@@ -248,11 +258,11 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=1f1784c';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=3d31d13';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=1f1784c', loft: 'examples/loft.gltf?v=1f1784c', star: 'examples/star.gltf?v=1f1784c', bench: 'examples/bench.gltf?v=1f1784c' };
+const examples = { box: 'examples/box.gltf?v=3d31d13', loft: 'examples/loft.gltf?v=3d31d13', star: 'examples/star.gltf?v=3d31d13', bench: 'examples/bench.gltf?v=3d31d13' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -351,6 +361,31 @@ new ResizeObserver(() => {
   renderer.setSize(w, h, false); camera.aspect = w / Math.max(h, 1); camera.updateProjectionMatrix();
 }).observe(vp);
 renderer.setAnimationLoop(() => renderer.render(scene, camera));
+
+// Pane sizes: drag or arrow-key a separator; remembered per browser.
+const app = $('#app'), GUT = { wo: [120, 1, 'clientX'], wp: [180, -1, 'clientX'], hb: [60, -1, 'clientY'] }; // min px, sign, axis
+const setGut = (k, px) => {
+  const [min, , ax] = GUT[k], room = ax === 'clientX' ? innerWidth - 240 - (k === 'wo' ? $('#props') : $('#out')).offsetWidth : innerHeight - 200;
+  app.style.setProperty(`--${k}`, `${Math.round(Math.max(min, Math.min(px, room)))}px`);
+};
+const sizeOf = (k) => ({ wo: $('#out').offsetWidth, wp: $('#props').offsetWidth, hb: $('#bot').offsetHeight })[k];
+const saveGuts = () => { try { localStorage.setItem('jig.panes', JSON.stringify(Object.fromEntries(Object.keys(GUT).map((k) => [k, sizeOf(k)])))); } catch {} };
+try { for (const [k, px] of Object.entries(JSON.parse(localStorage.getItem('jig.panes')) ?? {})) if (GUT[k]) setGut(k, px); } catch {}
+for (const el of document.querySelectorAll('.gut')) {
+  const k = el.dataset.gut, [, sign, ax] = GUT[k];
+  el.onpointerdown = (e) => {
+    e.preventDefault(); el.setPointerCapture(e.pointerId); el.classList.add('on');
+    const from = e[ax], size = sizeOf(k);
+    el.onpointermove = (m) => setGut(k, size + sign * (m[ax] - from));
+    el.onpointerup = el.onpointercancel = () => { el.onpointermove = el.onpointerup = el.onpointercancel = null; el.classList.remove('on'); saveGuts(); };
+  };
+  el.onkeydown = (e) => {
+    const d = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
+    if (!d) return;
+    e.preventDefault(); e.stopPropagation(); setGut(k, sizeOf(k) + sign * d * 16); saveGuts();
+  };
+  el.ondblclick = () => { app.style.removeProperty(`--${k}`); saveGuts(); };
+}
 
 let geos = [], mats = [], edit = null; // edit: { curve, group, mesh, rings } of the loft being edited
 function bufferGeometry({ positions, normals, indices }) {
