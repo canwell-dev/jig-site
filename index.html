@@ -82,8 +82,8 @@ if (!HTMLScriptElement.supports?.('importmap')) showError('this browser does not
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { scanLoft } from './scan.js?v=3886609';
-import { read, bake, strip, stringify, geometry, sectionAt, loftCurve, loftFrame, outline, EXT } from './jig.js?v=3886609';
+import { scanLoft } from './scan.js?v=7f7d122';
+import { read, bake, strip, stringify, geometry, sectionAt, loftCurve, loftFrame, outline, EXT, VERSION } from './jig.js?v=7f7d122';
 
 const src = document.getElementById('src'), defsEl = document.getElementById('defs'), errEl = document.getElementById('err');
 const view = document.getElementById('view'), slidersEl = document.getElementById('sliders');
@@ -576,19 +576,23 @@ document.getElementById('bake').onclick = () => {
   a.click();
   URL.revokeObjectURL(a.href);
 };
-const examples = { box: 'examples/box.gltf?v=3886609', loft: 'examples/loft.gltf?v=3886609', star: 'examples/star.gltf?v=3886609' };
+const examples = { box: 'examples/box.gltf?v=7f7d122', loft: 'examples/loft.gltf?v=7f7d122', star: 'examples/star.gltf?v=7f7d122' };
+// The clean model: the smallest valid document (meshes may not be empty), one unit box.
+const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
+  scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
 const pick = document.getElementById('example');
-pick.append(el('option', { value: '', textContent: 'Open example…', disabled: true }),
+pick.append(el('option', { value: '', textContent: 'Open example…', disabled: true }), el('option', { value: 'new', textContent: 'new' }),
   ...Object.keys(examples).map((name) => el('option', { value: name, textContent: name })));
 const openExample = async (name) => {
   pick.value = name;
+  if (name === 'new') { load(stringify(clean)); history.replaceState(null, '', location.pathname); return; }
   load(await (await fetch(examples[name])).text());
   history.replaceState(null, '', `?example=${name}`); // a reload keeps the example
 };
 pick.onchange = () => openExample(pick.value);
 document.getElementById('open').addEventListener('change', () => { pick.value = ''; });
 const asked = new URLSearchParams(location.search).get('example');
-await openExample(examples[asked] ? asked : 'box');
+await openExample(examples[asked] ? asked : 'new');
 </script>
 </body>
 </html>
