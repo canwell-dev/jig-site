@@ -82,9 +82,9 @@ if (!HTMLScriptElement.supports?.('importmap')) showError('this browser does not
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { scanLoft } from './scan.js?v=6b7ceff';
-import { parseGltf, namedParts } from './glb.js?v=6b7ceff';
-import { read, bake, strip, stringify, geometry, sectionAt, loftCurve, loftFrame, outline, EXT, VERSION } from './jig.js?v=6b7ceff';
+import { scanLoft } from './scan.js?v=c3c1352';
+import { parseGltf, namedParts } from './glb.js?v=c3c1352';
+import { read, bake, strip, stringify, geometry, sectionAt, loftCurve, loftFrame, outline, turn, EXT, VERSION } from './jig.js?v=c3c1352';
 
 const src = document.getElementById('src'), defsEl = document.getElementById('defs'), errEl = document.getElementById('err');
 const view = document.getElementById('view'), slidersEl = document.getElementById('sliders');
@@ -282,7 +282,7 @@ function loftHelpers(out) {
     }
     m.sections.forEach((s, i) => {
       const f = loftFrame(curve, s.t);
-      const ring = outline(s.points).map(([u, v]) => v3(f.p.map((c, a) => c + u * f.x[a] + v * f.y[a])));
+      const ring = turn(outline(s.points), s.twist).map(([u, v]) => v3(f.p.map((c, a) => c + u * f.x[a] + v * f.y[a])));
       g.add(line(ring, sel?.mesh === k && sel.section === i ? hot : cold, true));
       // The ring's line, and its centre on the curve, so a click there grabs it instead of adding a section.
       if (tool === 'sections') picks.push({ ...helper, kind: 'ring', index: i, local: ring, loop: true },
@@ -304,9 +304,6 @@ function toolbar(out) {
   if (hasLoft) {
     kids.push(btn('Curve', pick('curve'), tool === 'curve'), btn('Sections', pick('sections'), tool === 'sections'));
     if (sel?.point !== undefined || sel?.section !== undefined) kids.push(btn('Delete', remove));
-    // How sections' points pair up (sketch): for the selected loft, or the first one.
-    const mesh = sel?.mesh ?? out.meshes.findIndex((m) => m.type === 'loft'), match = out.meshes[mesh].match;
-    kids.push(btn(`Match: ${match}`, () => edit((r) => { loftOf(r, mesh).match = match === 'corners' ? 'length' : 'corners'; })));
     if (scan) kids.push(btn('Hide scan', () => { scan = null; rebuild(); }), el('small', {}, scan.note));
     kids.push(el('small', {}, tool === 'curve' ? 'Drag a point. Click the curve to add a point.'
       : 'Click the curve to add a section. Drag a ring to slide it.'));
@@ -444,9 +441,10 @@ canvas.addEventListener('pointerdown', (e) => {
       sel = { mesh, point: at };
       startPointDrag(pick, p.applyMatrix4(pick.group.matrixWorld));
     } else {
-      const t = tOnCurve(onCurve), points = sectionAt(last.meshes[mesh], t).map((p) => p.map(r3)); // the shape already there
+      const t = tOnCurve(onCurve), at = sectionAt(last.meshes[mesh], t); // the shape already there
+      const added = { t, points: at.points.map((p) => p.map(r3)), ...(at.twist && { twist: r3(at.twist) }) };
       let section;
-      edit((r) => { section = loftOf(r, mesh).sections.push({ t, points }) - 1; });
+      edit((r) => { section = loftOf(r, mesh).sections.push(added) - 1; });
       sel = { mesh, section };
       drag = { kind: 't', mesh, section };
     }
@@ -498,7 +496,7 @@ addEventListener('keydown', (e) => {
 const svgNS = 'http://www.w3.org/2000/svg';
 const svgEl = (tag, attrs) => { const e = document.createElementNS(svgNS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
 const svg = svgEl('svg', {}), pointBar = el('div', { className: 'points' });
-let tInput, shapeDrag = null, shapePoint = 0;
+let tInput, twistInput, shapeDrag = null, shapePoint = 0;
 
 // Where a + sits on edge i, and the point that splits the edge there (smooth when the edge curves).
 function midpoint(pts, i) {
@@ -522,20 +520,23 @@ function shapePanel(out) {
     shapeScale = Math.max(0.05, ...out.meshes[sel.mesh].sections.flatMap((x) => x.points.flatMap((p) => p.slice(0, 2)).map(Math.abs))) * 1.4;
     tInput = el('input', { type: 'number', step: 0.01, min: 0, max: 1, ariaLabel: 'section t',
       oninput: (e) => { const t = e.target.valueAsNumber; if (t >= 0 && t <= 1) edit((r) => { loftOf(r, sel.mesh).sections[sel.section].t = t; }); } });
+    twistInput = el('input', { type: 'number', step: 1, ariaLabel: 'section twist in degrees',
+      oninput: (e) => { const w = e.target.valueAsNumber; if (Number.isFinite(w)) edit((r) => { const x = loftOf(r, sel.mesh).sections[sel.section]; if (w) x.twist = w; else delete x.twist; }); } });
     shapeEl.replaceChildren(
-      el('header', {}, el('span', {}, `Section ${sel.section} · t`), tInput,
+      el('header', {}, el('span', {}, `Section ${sel.section} · t`), tInput, el('span', {}, 'twist°'), twistInput,
         el('button', { type: 'button', textContent: '×', title: 'Close', onclick: () => { sel = { mesh: sel.mesh }; rebuild(); } })),
       svg, pointBar,
-      el('small', {}, 'Drag a point or a handle. Drag a + to add a point. Double-click a point to switch corner / smooth.'));
+      el('small', {}, 'Drag a point or a handle. Drag a + to add a point (to every section). Double-click a point to switch corner / smooth.'));
   }
   if (document.activeElement !== tInput) tInput.value = s.t;
+  if (document.activeElement !== twistInput) twistInput.value = s.twist;
   const pts = s.points;
   shapePoint = Math.min(shapePoint, pts.length - 1);
   const smooth = pts[shapePoint].length === 4;
   pointBar.replaceChildren(el('span', {}, `Point ${shapePoint}`),
     el('button', { type: 'button', textContent: smooth ? 'Make corner' : 'Make smooth', onclick: () => toggleSmooth(shapePoint) }),
     el('button', { type: 'button', textContent: 'Remove', disabled: pts.length <= 3,
-      onclick: () => editPoints((p) => { if (p.length > 3) p.splice(shapePoint, 1); }) }));
+      onclick: () => editAllPoints((p) => { if (p.length > 3) p.splice(shapePoint, 1); }) }));
   const k = shapeScale, r = k * 0.045, thin = k / 150;
   svg.setAttribute('viewBox', `${-k} ${-k} ${2 * k} ${2 * k}`);
   const handles = pts.flatMap(([u, v, hu, hv], i) => (hu === undefined ? [] : [
@@ -565,6 +566,8 @@ let s0 = null;
 
 const uv = (e) => { const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse()); return [r3(p.x), r3(-p.y)]; };
 const editPoints = (fn) => edit((r) => fn(loftOf(r, sel.mesh).sections[sel.section].points));
+// Every section of the selected loft, with its evaluated twin (numbers where the JSON has expressions).
+const editAllPoints = (fn) => edit((r) => loftOf(r, sel.mesh).sections.forEach((x, i) => fn(x.points, last.meshes[sel.mesh].sections[i].points)));
 let lastTap = {};
 svg.addEventListener('pointerdown', (e) => {
   const { vtx, mid, hin, hout } = e.target.dataset ?? {};
@@ -581,7 +584,7 @@ svg.addEventListener('pointerdown', (e) => {
   else if (mid !== undefined) {
     const i = +mid + 1;
     shapePoint = i; shapeDrag = { i };
-    editPoints((p) => p.splice(i, 0, midpoint(s0.points, +mid).map(r3)));
+    editAllPoints((p, ev) => p.splice(i, 0, midpoint(ev, +mid).map(r3)));
   } else return;
   svg.setPointerCapture(e.pointerId);
 });
@@ -619,7 +622,7 @@ document.getElementById('bake').onclick = () => {
   a.click();
   URL.revokeObjectURL(a.href);
 };
-const examples = { box: 'examples/box.gltf?v=6b7ceff', loft: 'examples/loft.gltf?v=6b7ceff', star: 'examples/star.gltf?v=6b7ceff' };
+const examples = { box: 'examples/box.gltf?v=c3c1352', loft: 'examples/loft.gltf?v=c3c1352', star: 'examples/star.gltf?v=c3c1352' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };

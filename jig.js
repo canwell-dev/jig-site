@@ -315,20 +315,21 @@ function inverse3([[a, b, c], [d, e, f], [g, h, i]]) {
 }
 
 // --- Loft (sketch, draft f4) ---
-// { path: [[x, y, z], ...], sections: [{ t, points: [[u, v], ...] }, ...], sides, steps, match }. The surface runs the
-// whole curve through `path`; t is the fraction of the curve's length. Between sections the shape blends
-// linearly; before the first and after the last it holds. Both ends are capped.
+// { path: [[x, y, z], ...], sections: [{ t, points: [[u, v], ...], twist }, ...], sides, steps, blend }. The surface
+// runs the whole curve through `path`; t is the fraction of the curve's length. Every section has the same number
+// of points and point k meets point k (D-34). Between sections the points, handles and twist blend linearly or
+// smoothly (`blend`); before the first and after the last section the shape holds. Both ends are capped.
 
 function loft(l, scope, at) {
   need(isObj(l), at, 'must be an object');
-  only(l, ['path', 'sections', 'sides', 'steps', 'match'], at);
+  only(l, ['path', 'sections', 'sides', 'steps', 'blend'], at);
   const path = list(l.path, `${at}/path`).map((p, i) => vec(p, 3, scope, `${at}/path/${i}`));
   need(path.length >= 2, `${at}/path`, 'needs at least 2 points');
   path.forEach((p, i) => need(i === 0 || dist(p, path[i - 1]) > 1e-9, `${at}/path/${i}`, 'repeats the point before it'));
   const sections = list(l.sections, `${at}/sections`).map((s, i) => {
     const sat = `${at}/sections/${i}`;
     need(isObj(s), sat, 'must be an object');
-    only(s, ['t', 'points'], sat);
+    only(s, ['t', 'points', 'twist'], sat);
     const t = num(s.t, scope, `${sat}/t`);
     need(t >= 0 && t <= 1, `${sat}/t`, `must be in 0..1, is ${t}`);
     const pts = list(s.points, `${sat}/points`).map((p, j) => {
@@ -338,19 +339,21 @@ function loft(l, scope, at) {
     });
     need(pts.length >= 3, `${sat}/points`, 'needs at least 3 points');
     need(Math.abs(area(outline(pts))) > 1e-12, `${sat}/points`, 'must enclose an area');
-    return { t, points: pts };
+    return { t, points: pts, twist: s.twist === undefined ? 0 : num(s.twist, scope, `${sat}/twist`) };
   });
-  const int = (k, dflt, lo, hi) => {
-    const v = l[k] === undefined ? dflt : num(l[k], scope, `${at}/${k}`);
-    need(Number.isInteger(v) && v >= lo && v <= hi, `${at}/${k}`, `must be a whole number ${lo}..${hi}`);
-    return v;
-  };
-  const match = l.match ?? 'corners';
-  need(MATCH.includes(match), `${at}/match`, `must be one of ${MATCH.map((x) => `"${x}"`).join(', ')}`);
-  return { type: 'loft', path, sections, sides: int('sides', 24, 3, 256), steps: int('steps', 48, 1, 1024), match };
+  sections.forEach((s, i) => {
+    const sat = `${at}/sections/${i}/points`;
+    need(s.points.length === sections[0].points.length, sat, `must have ${sections[0].points.length} points, as section 0 has`);
+    need(Math.sign(area(outline(s.points))) === Math.sign(area(outline(sections[0].points))), sat, 'must wind the same way as section 0');
+  });
+  // Rounded, then clamped (D-37), so a quality parameter can drive them.
+  const int = (k, dflt, lo, hi) => Math.min(hi, Math.max(lo, Math.round(l[k] === undefined ? dflt : num(l[k], scope, `${at}/${k}`))));
+  const blend = l.blend ?? 'linear';
+  need(BLEND.includes(blend), `${at}/blend`, `must be one of ${BLEND.map((x) => `"${x}"`).join(', ')}`);
+  return { type: 'loft', path, sections, sides: int('sides', 24, 3, 256), steps: int('steps', 48, 1, 1024), blend };
 }
 
-const MATCH = ['corners', 'length'];
+const BLEND = ['linear', 'smooth'];
 const SAMPLES = 32; // curve samples per path segment
 
 // Dense samples along the curve: { t, p, x, y, z, segment }; z is the tangent, x and y the section's axes.
@@ -388,15 +391,12 @@ export function loftFrame(curve, t) {
 
 function loftGeometry(m) {
   const curve = loftCurve(m), sorted = [...m.sections].sort((a, b) => a.t - b.t);
-  const matched = rings(sorted, m.sides, m.match).rings, n = matched[0].length;
-  const secs = sorted.map((s, i) => ({ t: s.t, ring: matched[i] }));
-  const ts = [...new Set([...Array.from({ length: m.steps + 1 }, (_, i) => i / m.steps), ...secs.map((s) => s.t)])].sort((a, b) => a - b);
+  const spans = edgeSpans(sorted, m.sides), n = spans.reduce((a, b) => a + b, 0);
+  const ccw = area(outline(sorted[0].points)) > 0;
+  const ts = [...new Set([...Array.from({ length: m.steps + 1 }, (_, i) => i / m.steps), ...sorted.map((s) => s.t)])].sort((a, b) => a - b);
   const shapeAt = (t) => {
-    const j = secs.findIndex((s) => s.t > t);
-    if (j === 0) return secs[0].ring;
-    if (j < 0) return secs[secs.length - 1].ring;
-    const a = secs[j - 1], b = secs[j], f = (t - a.t) / (b.t - a.t);
-    return a.ring.map((p, k) => [p[0] + (b.ring[k][0] - p[0]) * f, p[1] + (b.ring[k][1] - p[1]) * f]);
+    const { points, twist } = blendAt(sorted, m.blend, t), ring = turn(resample(points, spans), twist);
+    return ccw ? ring : [ring[0], ...ring.slice(1).reverse()]; // counter-clockwise, so the surface faces out
   };
   const positions = [], indices = [];
   const frames = ts.map((t) => loftFrame(curve, t));
@@ -453,71 +453,78 @@ function flatten(pts) {
   return { poly: out, starts };
 }
 
-// Every section as a ring of the same length, point k matching point k (sketch, draft f4). Rings run
-// counter-clockwise from point 0, so the surface faces out. "length": `sides` points evenly by perimeter.
-// "corners": point 0 and every corner point are anchors; a section with fewer anchors than the most gets more by
-// halving its longest span (as CAD splits an edge); anchor j matches anchor j, and each span gets points in
-// proportion to its mean share of the perimeter, so corners stay corners.
-function rings(sections, sides, match) {
-  const prep = sections.map(({ points }) => {
-    const { poly, starts } = flatten(points);
-    const cum = perimeterTo(poly), total = cum[poly.length];
-    let anchors = match === 'corners' ? points.flatMap((p, i) => (i > 0 && p.length === 2 ? [cum[starts[i]] / total] : [])) : [];
-    let ring = poly;
-    if (area(poly) < 0) { ring = [poly[0], ...poly.slice(1).reverse()]; anchors = anchors.map((a) => 1 - a); }
-    return { ring, anchors: [0, ...anchors.sort((a, b) => a - b)] };
-  });
-  const gaps = (a) => a.map((x, j) => (a[j + 1] ?? 1) - x);
-  const count = Math.max(...prep.map((p) => p.anchors.length));
-  for (const p of prep) {
-    while (p.anchors.length < count) {
-      const g = gaps(p.anchors), j = g.indexOf(Math.max(...g));
-      p.anchors.splice(j + 1, 0, p.anchors[j] + g[j] / 2);
-    }
-  }
-  const all = prep.map((p) => gaps(p.anchors));
-  // + 1e-9: equal spans round alike despite float error (a quarter of 6 is 1.5 or 1.4999...).
-  const spans = all[0].map((_, j) => Math.max(1, Math.round((sides * all.reduce((s, g) => s + g[j], 0)) / all.length + 1e-9)));
-  const starts = spans.map((_, j) => spans.slice(0, j).reduce((a, b) => a + b, 0)); // ring index of anchor j
-  return { starts, rings: prep.map((p, i) => p.anchors.flatMap((a, j) =>
-    Array.from({ length: spans[j] }, (_, k) => pointAt(p.ring, a + (all[i][j] * k) / spans[j])))) };
+// Section points as [u, v, hu, hv] (a corner has zero handles), and twist, at t: held before the first and after the
+// last section; between them blended linearly or by centripetal Catmull-Rom over the sections (D-35, D-41, D-42).
+function blendAt(sorted, blend, t) {
+  const n = sorted.length, j = sorted.findIndex((s) => s.t > t);
+  const full = (s) => s.points.flatMap((p) => [p[0], p[1], p[2] ?? 0, p[3] ?? 0]).concat([s.twist]);
+  const out = (v) => ({ points: Array.from({ length: (v.length - 1) / 4 }, (_, k) => v.slice(4 * k, 4 * k + 4)), twist: v[v.length - 1] });
+  if (j <= 0) return out(full(sorted[j < 0 ? n - 1 : 0]));
+  const f = (t - sorted[j - 1].t) / (sorted[j].t - sorted[j - 1].t);
+  // Shape and twist in separate curves: their units differ, and each gets its own centripetal knots.
+  const part = (i, tw) => { const v = full(sorted[i]); return tw ? v.slice(-1) : v.slice(0, -1); };
+  const at = (i, tw) => {
+    if (i >= 0 && i < n) return part(i, tw);
+    const [e, inner] = i < 0 ? [0, 1] : [n - 1, n - 2]; // ends extended by reflection, as the path
+    return part(e, tw).map((c, q) => 2 * c - part(inner, tw)[q]);
+  };
+  const mix = (tw) => (blend === 'smooth'
+    ? catmullRom(at(j - 2, tw), at(j - 1, tw), at(j, tw), at(j + 1, tw), f)
+    : at(j - 1, tw).map((c, q) => c + (at(j, tw)[q] - c) * f));
+  return out([...mix(false), ...mix(true)]);
 }
 
-// The loft's cross-section at t as section points, for a new section that keeps the shape (sketch). Between two
-// sections with the same kinds of points, every point and handle is interpolated. Otherwise the matched rings are:
-// their anchors become corners (exact for polygons), or, with fewer than 3 anchors, every ring point does.
-// Outside the sections, the end section is copied.
+// Points per edge: `sides` in all, each edge by its mean share of the perimeter over the sections (at least 1).
+function edgeSpans(sections, sides) {
+  const shares = sections.map((s) => { const L = edges(s.points).map(polyLength), sum = L.reduce((a, b) => a + b, 0); return L.map((x) => x / sum); });
+  // + 1e-9: equal spans round alike despite float error (a quarter of 6 is 1.5 or 1.4999...).
+  return shares[0].map((_, e) => Math.max(1, Math.round((sides * shares.reduce((a, s) => a + s[e], 0)) / shares.length + 1e-9)));
+}
+
+// Each edge (point k to point k + 1) as an open polyline from its start to its end.
+function edges(pts) {
+  const { poly, starts } = flatten(pts);
+  return starts.map((s, k) => poly.slice(s, starts[k + 1] ?? poly.length).concat([poly[starts[k + 1] ?? 0]]));
+}
+
+const polyLength = (poly) => poly.reduce((a, p, i) => (i ? a + dist(p, poly[i - 1]) : 0), 0);
+
+// The ring: edge e gets spans[e] points, evenly by length, starting at its point.
+function resample(pts, spans) {
+  return edges(pts).flatMap((poly, e) => {
+    const cum = [0];
+    for (let i = 1; i < poly.length; i++) cum.push(cum[i - 1] + dist(poly[i], poly[i - 1]));
+    return Array.from({ length: spans[e] }, (_, k) => {
+      const d = (k / spans[e]) * cum[cum.length - 1];
+      let i = 0;
+      while (i < poly.length - 2 && cum[i + 1] < d) i++;
+      const len = cum[i + 1] - cum[i], g = len ? (d - cum[i]) / len : 0;
+      return [poly[i][0] + (poly[i + 1][0] - poly[i][0]) * g, poly[i][1] + (poly[i + 1][1] - poly[i][1]) * g];
+    });
+  });
+}
+
+// 2D points turned by deg degrees, from +u toward +v.
+export function turn(pts, deg) {
+  if (!deg) return pts;
+  const c = Math.cos((deg * Math.PI) / 180), s = Math.sin((deg * Math.PI) / 180);
+  return pts.map(([u, v]) => [u * c - v * s, u * s + v * c]);
+}
+
+// The loft's section at t, for a new section that keeps the shape: { points, twist }. A point stays a corner when
+// it is a corner in the sections around t.
 export function sectionAt(m, t) {
   const sorted = [...m.sections].sort((a, b) => a.t - b.t), j = sorted.findIndex((s) => s.t > t);
-  if (j <= 0) return structuredClone(sorted[j < 0 ? sorted.length - 1 : 0].points);
-  const a = sorted[j - 1], b = sorted[j], f = (t - a.t) / (b.t - a.t);
-  const lerp = (p, q) => p.map((c, k) => c + (q[k] - c) * f);
-  if (a.points.length === b.points.length && a.points.every((p, k) => p.length === b.points[k].length)) {
-    return a.points.map((p, k) => lerp(p, b.points[k]));
-  }
-  const { rings: r, starts } = rings(sorted, m.sides, m.match), ring = r[j - 1].map((p, k) => lerp(p, r[j][k]));
-  return starts.length >= 3 ? starts.map((k) => ring[k]) : ring;
-}
-
-// Distance along a closed polygon to each of its points; the last entry is the whole perimeter.
-function perimeterTo(pts) {
-  const cum = [0];
-  pts.forEach((p, i) => cum.push(cum[i] + dist(p, pts[(i + 1) % pts.length])));
-  return cum;
-}
-
-// The point a fraction f of the way around a closed polygon from its point 0.
-function pointAt(pts, f) {
-  const cum = perimeterTo(pts), d = f * cum[pts.length];
-  let e = 0;
-  while (e < pts.length - 1 && cum[e + 1] < d) e++;
-  const len = cum[e + 1] - cum[e], g = len ? (d - cum[e]) / len : 0, a = pts[e], b = pts[(e + 1) % pts.length];
-  return [a[0] + (b[0] - a[0]) * g, a[1] + (b[1] - a[1]) * g];
+  const around = j < 0 ? [sorted[sorted.length - 1]] : j === 0 ? [sorted[0]] : [sorted[j - 1], sorted[j]];
+  const { points, twist } = blendAt(sorted, m.blend, t);
+  return { points: points.map((p, k) => (around.every((s) => s.points[k].length === 2) ? p.slice(0, 2) : p)), twist };
 }
 
 // Barry-Goldman form, alpha = 0.5; u in 0..1 runs from p1 to p2.
+// A knot gap of 0 (two equal sections) counts as tiny, so the blend holds still there.
 function catmullRom(p0, p1, p2, p3, u) {
-  const t1 = Math.sqrt(dist(p0, p1)), t2 = t1 + Math.sqrt(dist(p1, p2)), t3 = t2 + Math.sqrt(dist(p2, p3));
+  const k = (a, b) => Math.sqrt(dist(a, b)) || 1e-9;
+  const t1 = k(p0, p1), t2 = t1 + k(p1, p2), t3 = t2 + k(p2, p3);
   const t = t1 + u * (t2 - t1);
   const L = (a, b, ta, tb) => a.map((c, i) => ((tb - t) * c + (t - ta) * b[i]) / (tb - ta));
   const a1 = L(p0, p1, 0, t1), a2 = L(p1, p2, t1, t2), a3 = L(p2, p3, t2, t3);
