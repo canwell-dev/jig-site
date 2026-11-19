@@ -74,15 +74,16 @@ function rebuild() {
   let out;
   try { out = read(JSON.parse(src.value), values); errEl.textContent = ''; }
   catch (e) { errEl.textContent = e.message; return; }
-  model.replaceChildren(...out.nodes.map((n) => {
+  model.clear(); // three.js Object3D, not a DOM node: no replaceChildren
+  for (const n of out.nodes) {
     const m = new THREE.Mesh(unitBox, material);
     m.scale.fromArray(out.meshes[n.mesh].size);
     const node = new THREE.Group().add(m);
     node.position.fromArray(n.translation);
     node.quaternion.fromArray(n.rotation);
     node.scale.fromArray(n.scale);
-    return node;
-  }));
+    model.add(node);
+  }
   model.position.y = -out.floor; // stand the model's floor on the grid
   // Rebuild the sliders only when the parameter set changes, so dragging keeps focus.
   const key = JSON.stringify(Object.entries(out.params).map(([k, p]) => [k, p.min, p.max]));
