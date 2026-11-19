@@ -62,7 +62,8 @@
 <div id="side">
   <div id="bar"><label>Open .gltf <input id="open" type="file" accept=".gltf,model/gltf+json"></label>
     <select id="example" aria-label="Open example"></select>
-    <button id="bake" type="button">Bake &amp; download</button></div>
+    <button id="bake" type="button">Bake &amp; download</button>
+    <label title="Fit a loft to one tube-like mesh (sketch)">Scan mesh <input id="scan" type="file" accept=".glb,.gltf"></label></div>
   <section id="defs" aria-label="Parameters and variables"></section>
   <textarea id="src" spellcheck="false" aria-label="JIG document"></textarea>
   <div id="err" role="status"></div>
@@ -80,7 +81,9 @@ if (!HTMLScriptElement.supports?.('importmap')) showError('this browser does not
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { read, bake, strip, stringify, geometry, sectionAt, loftCurve, loftFrame, outline, EXT } from './jig.js?v=19d317f';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { scanLoft } from './scan.js';
+import { read, bake, strip, stringify, geometry, sectionAt, loftCurve, loftFrame, outline, EXT } from './jig.js?v=d86874d';
 
 const src = document.getElementById('src'), defsEl = document.getElementById('defs'), errEl = document.getElementById('err');
 const view = document.getElementById('view'), slidersEl = document.getElementById('sliders');
@@ -102,6 +105,7 @@ scene.add(model);
 const values = {}; // slider settings, by parameter name
 let shownParams = '', sliderInputs = {}, varOutputs = {};
 let geoms = [], last = null;
+let scan = null; // { object, note }: a scanned mesh, drawn faintly over the loft fitted to it
 
 function bufferGeometry({ positions, normals, indices }) {
   const g = new THREE.BufferGeometry();
@@ -116,6 +120,7 @@ function rebuild() {
   try { out = read(JSON.parse(src.value), values); errEl.textContent = ''; }
   catch (e) { errEl.textContent = e.message; return; }
   model.clear(); // three.js Object3D, not a DOM node: no replaceChildren
+  if (scan) model.add(scan.object);
   for (const g of geoms) g?.dispose();
   geoms = out.meshes.map((m) => (m.type === 'box' ? null : bufferGeometry(geometry(m))));
   for (const i of out.instances) {
@@ -291,32 +296,64 @@ function toolbar(out) {
   const hasLoft = out.meshes.some((m) => m.type === 'loft');
   const btn = (text, onclick, pressed) => el('button', { type: 'button', textContent: text, onclick, ...(pressed !== undefined && { ariaPressed: String(pressed) }) });
   const pick = (t) => () => { tool = t; sel = null; rebuild(); };
-  const kids = [btn('+ loft', addLoft)];
+  const kids = [btn('+ loft', () => addLoft())];
   if (hasLoft) {
     kids.push(btn('Curve', pick('curve'), tool === 'curve'), btn('Sections', pick('sections'), tool === 'sections'));
     if (sel?.point !== undefined || sel?.section !== undefined) kids.push(btn('Delete', remove));
     // How sections' points pair up (sketch): for the selected loft, or the first one.
     const mesh = sel?.mesh ?? out.meshes.findIndex((m) => m.type === 'loft'), match = out.meshes[mesh].match;
     kids.push(btn(`Match: ${match}`, () => edit((r) => { loftOf(r, mesh).match = match === 'corners' ? 'length' : 'corners'; })));
+    if (scan) kids.push(btn('Hide scan', () => { scan = null; rebuild(); }), el('small', {}, scan.note));
     kids.push(el('small', {}, tool === 'curve' ? 'Drag a point. Click the curve to add a point.'
       : 'Click the curve to add a section. Drag a ring to slide it.'));
   }
   toolsEl.replaceChildren(...kids);
 }
 
-function addLoft() {
+function addLoft(loft = { path: [[0, 0, 0], [0, 0.4, 0], [0.2, 0.7, 0]], sections: [{ t: 0, points: circle(0.1) }, { t: 1, points: circle(0.04) }] },
+  node = { translation: [1, 0, 0] }) {
   let mesh;
   edit((r, doc) => {
-    r.meshes = [...(r.meshes ?? []), { loft: { path: [[0, 0, 0], [0, 0.4, 0], [0.2, 0.7, 0]],
-      sections: [{ t: 0, points: circle(0.1) }, { t: 1, points: circle(0.04) }] } }];
+    r.meshes = [...(r.meshes ?? []), { loft }];
     mesh = r.meshes.length - 1;
-    const node = (doc.nodes ??= []).push({ translation: [1, 0, 0], extensions: { [EXT]: { mesh } } }) - 1;
+    node = (doc.nodes ??= []).push({ ...node, extensions: { [EXT]: { mesh } } }) - 1;
     doc.scenes ??= [{ nodes: [] }];
     doc.scene ??= 0;
     (doc.scenes[doc.scene].nodes ??= []).push(node);
   });
-  tool = 'curve'; sel = { mesh }; rebuild();
+  tool = 'curve'; sel = mesh === undefined ? null : { mesh }; rebuild();
+  return mesh;
 }
+
+// Scan: fit a loft to a .glb or self-contained .gltf (sketch, viewer/scan.js). The loft goes into the open document
+// with no node transform, so it sits where the mesh does; the mesh stays on screen, faint, to compare.
+// shortcut: one file only (no external .bin or textures), every mesh in it fitted as one piece.
+const ghost = new THREE.MeshStandardMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.25, depthWrite: false });
+document.getElementById('scan').onchange = async (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  try {
+    const { scene: object } = await new GLTFLoader().parseAsync(await f.arrayBuffer(), '');
+    object.updateMatrixWorld(true);
+    const positions = [], indices = [], v = new THREE.Vector3();
+    object.traverse((o) => {
+      if (!o.isMesh) return;
+      const p = o.geometry.attributes.position, base = positions.length / 3;
+      for (let i = 0; i < p.count; i++) positions.push(...v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld).toArray());
+      for (let i = 0; i < (o.geometry.index?.count ?? p.count); i++) indices.push(base + (o.geometry.index ? o.geometry.index.getX(i) : i));
+      o.material = ghost;
+    });
+    const { loft, error, size } = scanLoft(positions, indices);
+    const mm = (x) => `${+(x * 1000).toFixed(1)} mm`;
+    scan = { object, note: `${f.name}: ${loft.sections.length} sections, ${loft.path.length} path points; off by ${mm(error.mean)} mean, ${mm(error.max)} max (size ${mm(size)}, units taken as metres)` };
+    if (addLoft(loft, {}) === undefined) throw new Error('open a JIG document first');
+    // Frame the scan: it may be far from the origin or another size than the 2 m the camera starts at.
+    const box = new THREE.Box3().setFromObject(object), c = box.getCenter(new THREE.Vector3());
+    camera.far = Math.max(100, size * 20); camera.updateProjectionMatrix();
+    controls.target.copy(c); camera.position.copy(c).add(new THREE.Vector3(0.8, 0.6, 1).multiplyScalar(size));
+  } catch (err) { scan = null; rebuild(); errEl.textContent = `scan: ${err.message}`; }
+};
 
 function remove() {
   if (!sel) return;
@@ -529,7 +566,7 @@ src.addEventListener('input', form);
 // Open a .gltf (its baked_values set the sliders) and download it baked at the slider values (D-14, D-23).
 // The text shows the recipe without the bake's cache; the download carries a fresh one.
 const unbaked = (text) => { try { return stringify(strip(JSON.parse(text))); } catch { return text; } }; // show bad JSON as is, read() reports it
-const load = (text) => { for (const k of Object.keys(values)) delete values[k]; shownParams = ''; src.value = unbaked(text); form(); };
+const load = (text) => { scan = null; for (const k of Object.keys(values)) delete values[k]; shownParams = ''; src.value = unbaked(text); form(); };
 document.getElementById('open').onchange = async (e) => { const f = e.target.files[0]; if (f) load(await f.text()); };
 document.getElementById('bake').onclick = () => {
   let gltf;
@@ -539,7 +576,7 @@ document.getElementById('bake').onclick = () => {
   a.click();
   URL.revokeObjectURL(a.href);
 };
-const examples = { box: 'examples/box.gltf?v=19d317f', loft: 'examples/loft.gltf?v=19d317f', star: 'examples/star.gltf?v=19d317f' };
+const examples = { box: 'examples/box.gltf?v=d86874d', loft: 'examples/loft.gltf?v=d86874d', star: 'examples/star.gltf?v=d86874d' };
 const pick = document.getElementById('example');
 pick.append(el('option', { value: '', textContent: 'Open example…', disabled: true }),
   ...Object.keys(examples).map((name) => el('option', { value: name, textContent: name })));
