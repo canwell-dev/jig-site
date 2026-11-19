@@ -1,6 +1,4 @@
-# JIG site
+# JIG viewer
 
-Generated pages, built from [canwell-dev/jig](https://github.com/canwell-dev/jig). Don't edit them here.
-
-- `index.html` — the workshop: `tools/build_site.ps1` → `site/index.html`
-- `spec.html` — the spec: `bash .claude/status/build-spec-page.sh` → `.claude/status/jig-spec.html`
+Live viewer and editor for JIG 2, published from `canwell-dev/jig2` (commit 4cb3fd7).
+The 0.19 workshop and spec are in this repo's history (commit ef0c222).
