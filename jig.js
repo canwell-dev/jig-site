@@ -216,13 +216,14 @@ export function eulerQuat(deg) {
 
 function mesh(m, scope, at, materialCount) {
   need(isObj(m), at, 'must be an object');
-  only(m, ['box', 'loft', 'material'], at);
-  need(Object.keys(m).filter((k) => !k.startsWith('//') && k !== 'material').length === 1, at, 'must have one shape: box or loft');
+  only(m, ['box', 'loft', 'extrude', 'material'], at);
+  need(Object.keys(m).filter((k) => !k.startsWith('//') && k !== 'material').length === 1, at, 'must have one shape: box, loft or extrude');
   if (m.material !== undefined) { // sketch (draft f6): glTF's primitive.material
     need(Number.isInteger(m.material) && m.material >= 0 && m.material < materialCount, `${at}/material`, `must be a material index 0..${materialCount - 1}`);
     return { ...mesh({ ...m, material: undefined }, scope, at), material: m.material };
   }
   if (m.loft !== undefined) return loft(m.loft, scope, `${at}/loft`);
+  if (m.extrude !== undefined) return extrude(m.extrude, scope, `${at}/extrude`);
   const b = m.box;
   at += '/box';
   need(isObj(b), at, 'must be an object');
@@ -369,6 +370,7 @@ export function bake(doc, values = {}, { uri, set } = {}) {
 // Triangles of a recipe mesh: { positions, normals, indices } (Float32Array, Float32Array, Uint32Array).
 export function geometry(m) {
   if (m.type === 'loft') return loftGeometry(m);
+  if (m.type === 'extrude') return extrudeGeometry(m);
   const g = boxGeometry(m.size);
   return { ...g, indices: Uint32Array.from(g.indices) };
 }
@@ -500,13 +502,7 @@ function loft(l, scope, at) {
     only(s, ['t', 'points', 'twist'], sat);
     const t = num(s.t, scope, `${sat}/t`);
     need(t >= 0 && t <= 1, `${sat}/t`, `must be in 0..1, is ${t}`);
-    const pts = list(s.points, `${sat}/points`).map((p, j) => {
-      const pat = `${sat}/points/${j}`;
-      need(Array.isArray(p) && (p.length === 2 || p.length === 4), pat, 'must be [u, v] or [u, v, hu, hv]');
-      return p.map((e, k) => num(e, scope, `${pat}/${k}`));
-    });
-    need(pts.length >= 3, `${sat}/points`, 'needs at least 3 points');
-    need(Math.abs(area(outline(pts))) > 1e-12, `${sat}/points`, 'must enclose an area');
+    const pts = points(s.points, scope, `${sat}/points`);
     return { t, points: pts, twist: s.twist === undefined ? 0 : num(s.twist, scope, `${sat}/twist`) };
   });
   sections.forEach((s, i) => {
@@ -520,6 +516,112 @@ function loft(l, scope, at) {
   need(BLEND.includes(blend), `${at}/blend`, `must be one of ${BLEND.map((x) => `"${x}"`).join(', ')}`);
   return { type: 'loft', path, sections, sides: int('sides', 24, 3, 256), steps: int('steps', 48, 1, 1024), blend };
 }
+
+// A closed outline in loft's point form (D-39): [u, v] corners and [u, v, hu, hv] smooth points.
+function points(x, scope, at) {
+  const pts = list(x, at).map((p, j) => {
+    need(Array.isArray(p) && (p.length === 2 || p.length === 4), `${at}/${j}`, 'must be [u, v] or [u, v, hu, hv]');
+    return p.map((e, k) => num(e, scope, `${at}/${j}/${k}`));
+  });
+  need(pts.length >= 3, at, 'needs at least 3 points');
+  need(Math.abs(area(outline(pts))) > 1e-12, at, 'must enclose an area');
+  return pts;
+}
+
+// Draft f9: a flat outline with holes, in loft's point form, in the xy plane, pushed along z by depth, centred on
+// the origin like a box.
+function extrude(e, scope, at) {
+  need(isObj(e), at, 'must be an object');
+  only(e, ['outline', 'holes', 'depth'], at);
+  const out = points(e.outline, scope, `${at}/outline`);
+  const holes = e.holes === undefined ? [] : list(e.holes, `${at}/holes`).map((h, i) => points(h, scope, `${at}/holes/${i}`));
+  const poly = outline(out);
+  // shortcut: checks one point of each hole, not that holes stay clear of the outline and of each other; upgrade
+  // when a model needs that error.
+  holes.forEach((h, i) => need(inside(h[0], poly), `${at}/holes/${i}`, 'must lie inside the outline'));
+  const depth = num(e.depth, scope, `${at}/depth`);
+  need(depth > 0, `${at}/depth`, `must be > 0, is ${depth}`);
+  return { type: 'extrude', outline: out, holes, depth };
+}
+const inside = ([x, y], poly) => poly.reduce((c, p, i) => {
+  const q = poly[(i + 1) % poly.length];
+  return (p[1] > y) !== (q[1] > y) && x < p[0] + ((y - p[1]) * (q[0] - p[0])) / (q[1] - p[1]) ? !c : c;
+}, false);
+
+// Caps: ear clipping, holes first bridged to the outline. Walls: a quad per outline edge, smooth normals across
+// curve samples and smooth points, split at corners.
+function extrudeGeometry(m) {
+  const loops = [m.outline, ...m.holes].map((pts, i) => {
+    const { poly, starts } = flatten(pts);
+    const hard = new Set(starts.filter((_, k) => pts[k].length === 2));
+    const keep = (area(poly) > 0) === (i === 0); // outline counter-clockwise, holes clockwise
+    const order = keep ? poly.map((_, k) => k) : poly.map((_, k) => (poly.length - k) % poly.length);
+    return { poly: order.map((k) => poly[k]), hard: order.map((k) => hard.has(k)) };
+  });
+  const positions = [], normals = [], indices = [], h = m.depth / 2;
+  const flat = loops.flatMap((l) => l.poly);
+  const tris = triangulate(loops.map((l) => l.poly));
+  for (const [z, s] of [[h, 1], [-h, -1]]) {
+    const first = positions.length / 3;
+    for (const [x, y] of flat) { positions.push(x, y, z); normals.push(0, 0, s); }
+    for (let k = 0; k < tris.length; k += 3) {
+      const t = s > 0 ? [tris[k], tris[k + 1], tris[k + 2]] : [tris[k], tris[k + 2], tris[k + 1]];
+      indices.push(...t.map((i) => first + i));
+    }
+  }
+  for (const { poly, hard } of loops) {
+    const L = poly.length;
+    const edge = (k) => { const a = poly[k % L], b = poly[(k + 1) % L]; return norm([b[1] - a[1], a[0] - b[0], 0]); };
+    const at = (k, e) => (hard[k % L] ? edge(e) : norm(edge((k + L - 1) % L).map((c, q) => c + edge(k)[q])));
+    for (let k = 0; k < L; k++) {
+      const a = poly[k], b = poly[(k + 1) % L], na = at(k, k), nb = at(k + 1, k), first = positions.length / 3;
+      for (const [p, nn, z] of [[a, na, -h], [b, nb, -h], [b, nb, h], [a, na, h]]) { positions.push(p[0], p[1], z); normals.push(...nn); }
+      indices.push(first, first + 1, first + 2, first, first + 2, first + 3);
+    }
+  }
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices) };
+}
+
+// Triangles over loops[0] (counter-clockwise) minus the other loops (clockwise), as indices into all loops' points
+// in order. Each hole joins the ring by a bridge to the nearest ring point it sees, rightmost holes first.
+export function triangulate(loops) {
+  const pts = loops.flat(), same = (a, b) => a[0] === b[0] && a[1] === b[1];
+  let off = 0;
+  const ids = loops.map((l) => { const r = l.map((_, k) => off + k); off += l.length; return r; });
+  let ring = ids[0];
+  const right = (l) => Math.max(...l.map((i) => pts[i][0]));
+  const holes = ids.slice(1).sort((a, b) => right(b) - right(a));
+  const o = (p, q, r) => Math.sign((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]));
+  const crosses = (a, b, c, d) => // segments ab and cd cross, not just touch at an end
+    ![c, d].some((p) => same(p, a) || same(p, b)) && o(a, b, c) !== o(a, b, d) && o(c, d, a) !== o(c, d, b);
+  holes.forEach((hole, hi) => {
+    const m = hole.reduce((best, i) => (pts[i][0] > pts[best][0] ? i : best), hole[0]), M = pts[m];
+    const edges = [ring, ...holes.slice(hi)].flatMap((l) => l.map((i, k) => [pts[i], pts[l[(k + 1) % l.length]]]));
+    const near = ring.map((_, k) => k).sort((a, b) => dist2(pts[ring[a]], M) - dist2(pts[ring[b]], M));
+    const k = near.find((k) => edges.every(([c, d]) => !crosses(M, pts[ring[k]], c, d)));
+    need(k !== undefined, '', 'a hole cannot be joined to the outline');
+    const j = hole.indexOf(m);
+    ring = [...ring.slice(0, k + 1), ...hole.slice(j), ...hole.slice(0, j), m, ring[k], ...ring.slice(k + 1)];
+  });
+  const turn = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  const inTri = (p, a, b, c) => turn(a, b, p) >= 0 && turn(b, c, p) >= 0 && turn(c, a, p) >= 0;
+  const tri = (V, i) => [V[(i + V.length - 1) % V.length], V[i], V[(i + 1) % V.length]];
+  const tris = [], V = [...ring];
+  while (V.length > 3) {
+    let cut = V.findIndex((_, i) => {
+      const [a, b, c] = tri(V, i).map((x) => pts[x]);
+      return turn(a, b, c) > 0 && !V.some((x) => ![a, b, c].some((q) => same(pts[x], q)) && inTri(pts[x], a, b, c));
+    });
+    if (cut < 0) cut = V.findIndex((_, i) => turn(...tri(V, i).map((x) => pts[x])) === 0); // drop a flat corner
+    need(cut >= 0, '', 'outline and holes overlap or cross');
+    const t = tri(V, cut);
+    if (turn(...t.map((x) => pts[x])) > 0) tris.push(...t);
+    V.splice(cut, 1);
+  }
+  if (turn(...V.map((x) => pts[x])) > 0) tris.push(...V);
+  return tris;
+}
+const dist2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
 
 const BLEND = ['linear', 'smooth'];
 const SAMPLES = 32; // curve samples per path segment

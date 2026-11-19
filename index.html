@@ -61,6 +61,7 @@ kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); bor
 .ic { width: 11px; height: 11px; flex: none; border: 1.5px solid var(--mute); }
 .ic.box { border-radius: 2px; }
 .ic.loft { border-radius: 6px 6px 2px 2px; height: 13px; width: 8px; }
+.ic.extrude { border-radius: 2px; box-shadow: inset 0 0 0 3px var(--panel, transparent); }
 .ic.empty { border-style: dashed; border-radius: 50%; }
 #vp { grid-area: vp; position: relative; background: var(--vp); min-height: 0; overflow: hidden; }
 #vp canvas { display: block; width: 100%; height: 100%; touch-action: none; }
@@ -179,6 +180,7 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
     <div id="addMenu" class="menu" role="menu" hidden>
       <button type="button" role="menuitem" data-add="box"><span class="ic box"></span>Box<small>size x y z</small></button>
       <button type="button" role="menuitem" data-add="loft"><span class="ic loft"></span>Loft<small>path + sections</small></button>
+      <button type="button" role="menuitem" data-add="extrude"><span class="ic extrude"></span>Extrude<small>outline + holes</small></button>
     </div>
     <span class="seg" role="group" aria-label="Mode">
       <button class="btn" id="mObject" type="button" aria-pressed="true">Object</button>
@@ -246,11 +248,11 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=0efcfe6';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=ca9bc00';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=0efcfe6', loft: 'examples/loft.gltf?v=0efcfe6', star: 'examples/star.gltf?v=0efcfe6', bench: 'examples/bench.gltf?v=0efcfe6' };
+const examples = { box: 'examples/box.gltf?v=ca9bc00', loft: 'examples/loft.gltf?v=ca9bc00', star: 'examples/star.gltf?v=ca9bc00', bench: 'examples/bench.gltf?v=ca9bc00' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -268,6 +270,7 @@ const r4 = (v) => +(+v).toFixed(4);
 const fmt = (v) => (v === undefined || !Number.isFinite(+v) ? '' : String(+(+v).toFixed(3)));
 const R = () => doc.extensions[EXT];
 const meshOf = (i) => doc.nodes?.[i]?.extensions?.[EXT]?.mesh;
+const shapeKind = (m) => (m?.loft ? 'loft' : m?.extrude ? 'extrude' : 'box');
 const loftOf = (i) => R().meshes?.[meshOf(i)]?.loft;
 const X = (i) => ((doc.nodes[i].extensions ??= {})[EXT] ??= {});
 const DEFAULTS = { translation: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] };
@@ -531,7 +534,7 @@ function outliner() {
   (doc.nodes ?? []).forEach((_, i) => { const m = meshOf(i); if (m !== undefined) users[m] = (users[m] ?? 0) + 1; });
   const row = (i, depth) => {
     const n = doc.nodes[i]; if (!n) return [];
-    const mi = meshOf(i), kind = mi === undefined ? 'empty' : R().meshes?.[mi]?.loft ? 'loft' : 'box';
+    const mi = meshOf(i), kind = mi === undefined ? 'empty' : shapeKind(R().meshes?.[mi]);
     const li = el('li', { className: sel?.node === i ? 'sel' : '', tabIndex: 0, role: 'treeitem', onclick: () => select({ node: i }),
       onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select({ node: i }); } } },
       el('span', { className: `ic ${kind}` }), el('span', { className: 'nm', textContent: n.name ?? `node ${i}` }),
@@ -583,7 +586,7 @@ function props() {
   const name = el('input', { id: 'name', className: 'f', value: n.name ?? '', placeholder: `node ${i}`, autocomplete: 'off',
     onchange: (e) => { const v = e.target.value.trim(); if (v) n.name = v; else delete n.name; commit(); } });
   name.setAttribute('aria-label', 'Node name');
-  kids.push(sec(el('h2', {}, el('span', { className: `ic ${mi === undefined ? 'empty' : loftOf(i) ? 'loft' : 'box'}` }), `node ${i}`),
+  kids.push(sec(el('h2', {}, el('span', { className: `ic ${mi === undefined ? 'empty' : shapeKind(R().meshes?.[mi])}` }), `node ${i}`),
     el('div', { className: 'vrow one' }, el('label', { htmlFor: 'name', textContent: 'Name' }), name)));
 
   const t = sec(h3('Transform'));
@@ -615,7 +618,7 @@ function props() {
   if (mi !== undefined) {
     const users = doc.nodes.filter((_, k) => meshOf(k) === mi).length;
     const pickMesh = el('select', { id: 'meshPick', className: 'f', onchange: (e) => { X(i).mesh = +e.target.value; commit(); } },
-      ...R().meshes.map((m, k) => el('option', { value: k, textContent: `mesh ${k} · ${m.loft ? 'loft' : 'box'}`, selected: k === mi })));
+      ...R().meshes.map((m, k) => el('option', { value: k, textContent: `mesh ${k} · ${shapeKind(m)}`, selected: k === mi })));
     pickMesh.setAttribute('aria-label', 'Mesh');
     const m = R().meshes[mi], om = out?.meshes?.[mi];
     const ms = sec(h3('Mesh'), el('div', { className: 'vrow one' }, el('label', { htmlFor: 'meshPick', textContent: 'Uses' }), pickMesh));
@@ -939,10 +942,11 @@ function live() {
 function addShape(kind) {
   const r = R();
   r.meshes = [...(r.meshes ?? []), kind === 'box' ? { box: { size: [0.4, 0.4, 0.4] } }
+    : kind === 'extrude' ? { extrude: { outline: [[-0.2, -0.2], [0.2, -0.2], [0.2, 0.2], [-0.2, 0.2]], holes: [circle(0.1)], depth: 0.05 } }
     : { loft: { path: [[0, 0, 0], [0, 0.4, 0], [0.2, 0.7, 0]], sections: [{ t: 0, points: circle(0.1) }, { t: 1, points: circle(0.04) }] } }];
   const mesh = r.meshes.length - 1, at = out ? -out.floor : 0;
   doc.nodes = doc.nodes ?? [];
-  doc.nodes.push({ name: `${kind} ${mesh}`, extensions: { [EXT]: { mesh, translation: [0.9, r4(kind === 'box' ? at + 0.2 : at), 0.4] } } });
+  doc.nodes.push({ name: `${kind} ${mesh}`, extensions: { [EXT]: { mesh, translation: [0.9, r4(kind === 'loft' ? at : at + 0.2), 0.4] } } });
   doc.scenes ??= [{ nodes: [] }]; doc.scene ??= 0;
   (doc.scenes[doc.scene].nodes ??= []).push(doc.nodes.length - 1);
   sel = { node: doc.nodes.length - 1 }; mode = 'object'; gizmo = 'translate';
