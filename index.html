@@ -119,6 +119,9 @@ input.f.expr { color: var(--expr); border-color: color-mix(in srgb, var(--expr) 
 .ptable { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(90px, 2fr) 54px 64px 64px 64px 22px; gap: 4px 6px; align-items: center; padding: 8px 12px; }
 .vtable { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(120px, 3fr) 64px 22px; gap: 4px 6px; align-items: center; padding: 0 12px 10px; }
 .ptable .hd, .vtable .hd { font: 10.5px var(--mono); color: var(--mute); text-transform: uppercase; letter-spacing: .05em; }
+.ptable .cdef { grid-column: span 3; display: flex; gap: 4px; min-width: 0; }
+.ptable .cdef .f { min-width: 0; } .ptable .cdef select { flex: 0 0 auto; } .ptable .cdef input:not([type]) { flex: 1; }
+.ptable .swatch { height: 18px; border-radius: 3px; border: 1px solid var(--line); }
 .ptable output, .vtable output { font: 12px var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
 .ptable input[type=range] { width: 100%; min-width: 0; accent-color: var(--accent); }
 .gh { grid-column: 1 / -1; font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); padding-top: 4px; }
@@ -240,11 +243,11 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=a0e63cc';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, EXT, VERSION } from './jig.js?v=3a5cc4d';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=a0e63cc', loft: 'examples/loft.gltf?v=a0e63cc', star: 'examples/star.gltf?v=a0e63cc', bench: 'examples/bench.gltf?v=a0e63cc' };
+const examples = { box: 'examples/box.gltf?v=3a5cc4d', loft: 'examples/loft.gltf?v=3a5cc4d', star: 'examples/star.gltf?v=3a5cc4d', bench: 'examples/bench.gltf?v=3a5cc4d' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -343,7 +346,7 @@ new ResizeObserver(() => {
 }).observe(vp);
 renderer.setAnimationLoop(() => renderer.render(scene, camera));
 
-let geos = [], edit = null; // edit: { curve, group, mesh, rings } of the loft being edited
+let geos = [], mats = [], edit = null; // edit: { curve, group, mesh, rings } of the loft being edited
 function bufferGeometry({ positions, normals, indices }) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -353,13 +356,30 @@ function bufferGeometry({ positions, normals, indices }) {
 }
 const v3 = (a) => new THREE.Vector3(...a);
 function draw() {
-  for (const g of geos) g.dispose();
+  for (const g of [...geos, ...mats]) g.dispose();
   for (const c of helperLayer.children) c.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
   meshLayer.clear(); helperLayer.clear(); edit = null;
   if (!out) return;
   geos = out.meshes.map((m) => bufferGeometry(geometry(m)));
+  // A mesh's glTF material color (linear, as three.js works), from the recipe or the core material.
+  const tinted = new Map(); mats = [];
+  const matOf = (mi, on) => { // glTF's material, its recipe slots over its core ones, glTF defaults otherwise
+    const core = mi === undefined ? null : doc.materials?.[mi];
+    if (!isObj(core)) return on ? matSel : matBase;
+    const key = `${mi} ${on}`;
+    if (!tinted.has(key)) {
+      const x = out.materials[mi] ?? {}, pbr = core.pbrMetallicRoughness ?? {}, t = (on ? matSel : matBase).clone();
+      const f = x.baseColorFactor ?? pbr.baseColorFactor ?? [1, 1, 1, 1], e = x.emissiveFactor ?? core.emissiveFactor;
+      t.color.setRGB(f[0], f[1], f[2]);
+      if (core.alphaMode === 'BLEND') { t.transparent = true; t.opacity = f[3]; }
+      t.metalness = x.metallicFactor ?? pbr.metallicFactor ?? 1; t.roughness = x.roughnessFactor ?? pbr.roughnessFactor ?? 1;
+      if (e && !on) t.emissive.setRGB(...e);
+      tinted.set(key, t); mats.push(t);
+    }
+    return tinted.get(key);
+  };
   for (const inst of out.instances) {
-    const m = new THREE.Mesh(geos[inst.mesh], sel?.node === inst.node ? matSel : matBase);
+    const m = new THREE.Mesh(geos[inst.mesh], matOf(out.meshes[inst.mesh].material, sel?.node === inst.node));
     m.matrixAutoUpdate = false; m.matrix.fromArray(inst.matrix); m.userData.node = inst.node;
     meshLayer.add(m);
   }
@@ -798,6 +818,36 @@ function sketchUp() { if (sketchDrag) { sketchDrag = null; commit(); } }
 
 // ---------- parameters ----------
 let varOut = {}, sliderOut = {};
+// Color forms to type a color in. The file always holds linear [r, g, b, a] 0..1 (glTF, Blender); the others are
+// sRGB like a color picker: hex, 0..255 channels, HSV (h 0..360, s and v 0..100). Alpha is never converted.
+let colorForm = 'hex';
+const toS = (c) => (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055);
+const toL = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+const lin = (srgb, a = 1) => [...srgb.map((c) => r4(toL(c))), a];
+const hexOf = (c) => '#' + c.slice(0, 3).map((v) => Math.round(toS(v) * 255).toString(16).padStart(2, '0')).join('');
+const nums = (t, n) => { const a = t.split(/[\s,]+/).filter(Boolean).map(Number); return (a.length === n || a.length === n + 1) && a.every(Number.isFinite) ? a : null; };
+const alphaOk = (a) => (a === undefined ? 1 : a >= 0 && a <= 1 ? a : null);
+function hsv([r, g, b]) {
+  const v = Math.max(r, g, b), d = v - Math.min(r, g, b);
+  let h = !d ? 0 : v === r ? ((g - b) / d) % 6 : v === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(h * 60 + 360) % 360, v ? d / v : 0, v];
+}
+const rgbOf = (h, s, v) => [5, 3, 1].map((n) => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); });
+const COLOR_FORMS = {
+  hex: { label: 'Hex', hint: '#rrggbb or #rrggbbaa',
+    show: (c) => hexOf(c) + (c[3] < 1 ? Math.round(c[3] * 255).toString(16).padStart(2, '0') : ''),
+    parse: (t) => { const m = /^#?([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(t); if (!m) return null;
+      return lin([0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16) / 255), m[2] ? r4(parseInt(m[2], 16) / 255) : 1); } },
+  rgb: { label: 'RGB', hint: 'r, g, b 0–255, alpha 0–1',
+    show: (c) => [...c.slice(0, 3).map((v) => Math.round(toS(v) * 255)), ...(c[3] < 1 ? [c[3]] : [])].join(', '),
+    parse: (t) => { const a = nums(t, 3), al = a && alphaOk(a[3]); return a && al !== null && a.slice(0, 3).every((v) => v >= 0 && v <= 255) ? lin(a.slice(0, 3).map((v) => v / 255), al) : null; } },
+  hsv: { label: 'HSV', hint: 'h 0–360, s v 0–100, alpha 0–1',
+    show: (c) => { const [h, s, v] = hsv(c.slice(0, 3).map(toS)); return [Math.round(h), Math.round(s * 100), Math.round(v * 100), ...(c[3] < 1 ? [c[3]] : [])].join(', '); },
+    parse: (t) => { const a = nums(t, 3), al = a && alphaOk(a[3]); return a && al !== null && a[0] >= 0 && a[0] <= 360 && [a[1], a[2]].every((v) => v >= 0 && v <= 100) ? lin(rgbOf(a[0] % 360, a[1] / 100, a[2] / 100), al) : null; } },
+  linear: { label: 'Linear', hint: 'r, g, b, a 0–1 (as saved)',
+    show: (c) => c.join(', '),
+    parse: (t) => { const a = nums(t, 3), al = a && alphaOk(a[3]); return a && al !== null && a.slice(0, 3).every((v) => v >= 0 && v <= 1) ? [...a.slice(0, 3), al] : null; } },
+};
 const renamed = (o, from, to) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k === from ? to : k, v]));
 const fresh = (prefix, taken) => { let n = 1; while (taken.has(prefix + n)) n++; return prefix + n; };
 function params() {
@@ -827,6 +877,21 @@ function params() {
         return [nameIn('params', k), box(`p-val-${k}`, `${k} value`, now, (v) => { values[k] = v; live(); }), sliderOut[k],
           box(`p-default-${k}`, `${k} default`, p.default, (v) => { p.default = v; commit(); }), el('span', { className: 'wide' }), el('span', { className: 'wide' }), del('params', k)];
       }
+      if (p.type === 'color') { // a picker to try; the default as a picker or typed in any form, saved as linear RGBA
+        const pick = (id, label, c, on, when) => { // a picker is sRGB with no alpha: keep the alpha
+          const e = el('input', { id, type: 'color', value: hexOf(c), [when]: (ev) => on([...COLOR_FORMS.hex.parse(ev.target.value).slice(0, 3), c[3]]) });
+          e.setAttribute('aria-label', label); return e;
+        };
+        sliderOut[k] = el('output', { className: 'swatch', style: `background:${hexOf(now)}`, title: COLOR_FORMS.linear.show(now) });
+        const form = el('select', { id: `p-form-${k}`, className: 'f', onchange: (ev) => { colorForm = ev.target.value; params(); } },
+          ...Object.entries(COLOR_FORMS).map(([v, f]) => el('option', { value: v, textContent: f.label, selected: v === colorForm })));
+        form.setAttribute('aria-label', `${k} color form`);
+        const text = el('input', { id: `p-default-${k}`, className: 'f', value: COLOR_FORMS[colorForm].show(p.default), placeholder: COLOR_FORMS[colorForm].hint, autocomplete: 'off', spellcheck: false,
+          onchange: (ev) => { const c = COLOR_FORMS[colorForm].parse(ev.target.value.trim()); if (!c) { note = `Not a color in ${COLOR_FORMS[colorForm].label} form: ${COLOR_FORMS[colorForm].hint}.`; return status(); } p.default = c; commit(); } });
+        text.setAttribute('aria-label', `${k} default`);
+        return [nameIn('params', k), pick(`p-val-${k}`, `${k} value`, now, (v) => { values[k] = v; live(); }, 'oninput'), sliderOut[k],
+          el('span', { className: 'cdef' }, pick(`p-pick-${k}`, `${k} default picker`, p.default, (v) => { p.default = v; commit(); }, 'onchange'), form, text), del('params', k)];
+      }
       const range = el('input', { id: `p-val-${k}`, type: 'range', min: p.min, max: p.max, step: (p.max - p.min) / 200 || 'any', value: now,
         oninput: (ev) => { values[k] = Number(ev.target.value); live(); } });
       range.setAttribute('aria-label', `${k} value`);
@@ -847,7 +912,7 @@ function params() {
 // A slider moved: values only, not the document, so no undo step.
 function live() {
   evaluate(); draw(); if (!dragging) placeGizmo(); props(); status();
-  for (const [k, o] of Object.entries(sliderOut)) { const v = out?.params?.[k]?.value; o.textContent = typeof v === 'boolean' ? String(v) : fmt(v); }
+  for (const [k, o] of Object.entries(sliderOut)) { const v = out?.params?.[k]?.value; if (Array.isArray(v)) { o.style.background = hexOf(v); o.title = COLOR_FORMS.linear.show(v); } else o.textContent = typeof v === 'number' ? fmt(v) : String(v); }
   for (const [k, o] of Object.entries(varOut)) o.textContent = fmt(out?.vars?.[k]);
 }
 

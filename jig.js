@@ -31,7 +31,16 @@ export function read(doc, values = {}) {
     const at = `${rat}/params/${name}`;
     need(/^[a-z_][a-z0-9_]*$/.test(name), at, 'name must be lower_snake_case');
     need(isObj(p), at, 'must be an object');
-    need(p.type === undefined || p.type === 'bool', `${at}/type`, 'must be "bool" (leave it out for a number)');
+    need(p.type === undefined || p.type === 'bool' || p.type === 'color', `${at}/type`, 'must be "bool" or "color" (leave it out for a number)');
+    if (p.type === 'color') { // draft f6: linear [r, g, b, a] in 0..1, as glTF's baseColorFactor; not a number, so expressions cannot use it
+      only(p, ['type', 'default'], at);
+      need(isColor(p.default), `${at}/default`, 'must be a color: linear [r, g, b, a], numbers 0..1');
+      if (baked) need(isColor(baked[name]), `${rat}/baked_values/${name}`, 'must be a color: linear [r, g, b, a], numbers 0..1 (baked_values holds every parameter)');
+      const v = values[name] ?? baked?.[name] ?? p.default;
+      need(isColor(v), `${rat}/params/${name}`, `value must be a color: linear [r, g, b, a], numbers 0..1, is ${JSON.stringify(v)}`);
+      params[name] = { ...p, value: [...v] };
+      continue;
+    }
     if (p.type === 'bool') { // D-47: true/false, 1/0 in expressions
       only(p, ['type', 'default'], at);
       need(typeof p.default === 'boolean', `${at}/default`, 'must be true or false');
@@ -46,7 +55,7 @@ export function read(doc, values = {}) {
     const v = values[name] ?? baked?.[name] ?? p.default;
     params[name] = { ...p, value: Math.min(p.max, Math.max(p.min, v)) };
   }
-  const scope = Object.fromEntries(Object.entries(params).map(([k, p]) => [k, +p.value]));
+  const scope = Object.fromEntries(Object.entries(params).filter(([, p]) => p.type !== 'color').map(([k, p]) => [k, +p.value]));
 
   // Sketch (draft f2): named expressions, in order; each sees the params and the vars before it.
   need(r.vars === undefined || isObj(r.vars), `${rat}/vars`, 'must be an object');
@@ -60,7 +69,27 @@ export function read(doc, values = {}) {
     vars[name] = scope[name] = num(e, scope, at);
   }
 
-  const meshes = list(r.meshes, `${rat}/meshes`).map((m, i) => mesh(m, scope, `${rat}/meshes/${i}`));
+  // Draft f6: a core glTF material's JIG_recipe sets its color and factor slots; the core slots are the bake's
+  // cache. A color is a color parameter's name or a list of linear channels, numbers or expressions, clamped to 0..1.
+  need(doc.materials === undefined || Array.isArray(doc.materials), '/materials', 'must be a list');
+  const materials = (doc.materials ?? []).map((m, i) => {
+    const x = m?.extensions?.[EXT], at = `/materials/${i}/extensions/${EXT}`;
+    if (x === undefined) return null;
+    need(isObj(x), at, 'must be an object');
+    only(x, Object.keys(MATERIAL_SLOTS), at);
+    const unit = (v) => Math.min(1, Math.max(0, v));
+    const color = (c, n, sat) => { // n channels: 4 for baseColorFactor, 3 for emissiveFactor (a parameter's alpha is dropped)
+      if (typeof c === 'string' && params[c]?.type === 'color') return params[c].value.slice(0, n);
+      need(Array.isArray(c), sat, `must be a color parameter's name or a list of ${n} linear channels`);
+      return vec(c, n, scope, sat).map(unit);
+    };
+    const o = {};
+    if (x.baseColorFactor !== undefined) o.baseColorFactor = color(x.baseColorFactor, 4, `${at}/baseColorFactor`);
+    for (const k of ['metallicFactor', 'roughnessFactor']) if (x[k] !== undefined) o[k] = unit(num(x[k], scope, `${at}/${k}`));
+    if (x.emissiveFactor !== undefined) o.emissiveFactor = color(x.emissiveFactor, 3, `${at}/emissiveFactor`);
+    return o;
+  });
+  const meshes = list(r.meshes, `${rat}/meshes`).map((m, i) => mesh(m, scope, `${rat}/meshes/${i}`, materials.length));
 
   need(doc.nodes === undefined || Array.isArray(doc.nodes), '/nodes', 'must be a list');
   const src = doc.nodes ?? [];
@@ -112,7 +141,7 @@ export function read(doc, values = {}) {
   // y of the floor in model space; hosts stand the model there. Default: the lowest point on the vertical line
   // through the origin, or 0 when no shape crosses that line.
   const floor = r.floor === undefined ? lowestOnAxis(meshes, instances) : num(r.floor, scope, `${rat}/floor`);
-  return { params, vars, floor, meshes, nodes, instances, tree };
+  return { params, vars, floor, materials, meshes, nodes, instances, tree };
 }
 
 // A node's `repeat` (D-44): count rounded and clamped to 0..1024; the index is a fresh lower_snake_case name.
@@ -168,10 +197,14 @@ export function eulerQuat(deg) {
   return [sx * cy * cz - cx * sy * sz, cx * sy * cz + sx * cy * sz, cx * cy * sz - sx * sy * cz, cx * cy * cz + sx * sy * sz];
 }
 
-function mesh(m, scope, at) {
+function mesh(m, scope, at, materialCount) {
   need(isObj(m), at, 'must be an object');
-  only(m, ['box', 'loft'], at);
-  need(Object.keys(m).filter((k) => !k.startsWith('//')).length === 1, at, 'must have one shape: box or loft');
+  only(m, ['box', 'loft', 'material'], at);
+  need(Object.keys(m).filter((k) => !k.startsWith('//') && k !== 'material').length === 1, at, 'must have one shape: box or loft');
+  if (m.material !== undefined) { // sketch (draft f6): glTF's primitive.material
+    need(Number.isInteger(m.material) && m.material >= 0 && m.material < materialCount, `${at}/material`, `must be a material index 0..${materialCount - 1}`);
+    return { ...mesh({ ...m, material: undefined }, scope, at), material: m.material };
+  }
   if (m.loft !== undefined) return loft(m.loft, scope, `${at}/loft`);
   const b = m.box;
   at += '/box';
@@ -199,6 +232,16 @@ export function strip(doc) {
     need(late < 0, `/${k}/${late}`, 'baked items must come after all other items (D-17)');
     d[k] = d[k].slice(0, first);
     if (!d[k].length) delete d[k];
+  }
+  for (const m of Array.isArray(d.materials) ? d.materials : []) {
+    const x = m?.extensions?.[EXT];
+    if (!isObj(x)) continue;
+    for (const [k, place] of Object.entries(MATERIAL_SLOTS)) {
+      if (x[k] === undefined) continue;
+      if (place === 'top') delete m[k];
+      else if (isObj(m.pbrMetallicRoughness)) delete m.pbrMetallicRoughness[k];
+    }
+    if (isObj(m.pbrMetallicRoughness) && !Object.keys(m.pbrMetallicRoughness).length) delete m.pbrMetallicRoughness;
   }
   for (const n of Array.isArray(d.nodes) ? d.nodes : []) {
     if (Array.isArray(n?.children)) { // drop links to removed baked copies (D-45)
@@ -242,8 +285,14 @@ export function bake(doc, values = {}, { uri } = {}) {
       type: 'VEC3', min, max });
     const nor = add('accessors', { bufferView: view(normals, 34962), componentType: 5126, count: normals.length / 3, type: 'VEC3' });
     const idx = add('accessors', { bufferView: view(indices, 34963), componentType: short ? 5123 : 5125, count: indices.length, type: 'SCALAR' });
-    add('meshes', { primitives: [{ attributes: { POSITION: pos, NORMAL: nor }, indices: idx }] });
+    add('meshes', { primitives: [{ attributes: { POSITION: pos, NORMAL: nor }, indices: idx, ...(m.material !== undefined && { material: m.material }) }] });
   }
+  out.materials.forEach((m, i) => { // the material cache (D-6 amended): recipe slots into their core places
+    if (!m) return;
+    const core = d.materials[i], pbr = Object.fromEntries(Object.entries(m).filter(([k]) => MATERIAL_SLOTS[k] === 'pbr'));
+    if (Object.keys(pbr).length) core.pbrMetallicRoughness = { ...pbr, ...core.pbrMetallicRoughness };
+    if (m.emissiveFactor) core.emissiveFactor = m.emissiveFactor;
+  });
   const bin = new Uint8Array(offset);
   let at = 0;
   for (const c of chunks) { bin.set(c, at); at += c.byteLength; }
@@ -679,6 +728,10 @@ const FUNCS = {
 };
 
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+// Material slots a recipe may set, and where glTF keeps them (D-6 amended).
+const MATERIAL_SLOTS = { baseColorFactor: 'pbr', metallicFactor: 'pbr', roughnessFactor: 'pbr', emissiveFactor: 'top' };
+// A color value: linear [r, g, b, a], numbers 0..1, as glTF's baseColorFactor and Blender's color sockets.
+const isColor = (c) => Array.isArray(c) && c.length === 4 && c.every((x) => typeof x === 'number' && x >= 0 && x <= 1);
 // A recipe slot that sets core slot k: euler sets rotation.
 const twin = (x, k) => x[k] ?? (k === 'rotation' ? x.euler : undefined);
 function need(ok, at, msg) { if (!ok) throw new Error(`${at || '/'}: ${msg}`); }

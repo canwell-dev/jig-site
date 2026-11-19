@@ -10,7 +10,9 @@
         "height": { "default": 0.45, "min": 0.35, "max": 0.6 },
         "backrest": { "type": "bool", "default": true },
         "recline": { "default": 10, "min": 0, "max": 25 },
-        "arm_rests": { "type": "bool", "default": false }
+        "arm_rests": { "type": "bool", "default": false },
+        "wood": { "type": "color", "default": [0.35, 0.16, 0.05, 1] },
+        "metal": { "type": "color", "default": [0.033, 0.038, 0.043, 1] }
       },
       "vars": {
         "// legs": "a pair of legs at each end, and more pairs so they stand at most 1.2 m apart",
@@ -24,13 +26,16 @@
       },
       "floor": 0,
       "meshes": [
-        { "box": { "size": ["width", "seat", "depth"] } },
-        { "box": { "size": ["leg", "height - seat", "leg"] } },
-        { "box": { "size": ["leg * 0.7", 0.04, "depth - 2 * inset"] } },
-        { "box": { "size": ["leg", "back_h", "leg"] } },
-        { "box": { "size": ["span", 0.09, 0.025] } },
-        { "box": { "size": ["leg", "arm_h", "leg"] } },
-        { "box": { "size": [0.07, 0.03, "depth - 2 * inset + leg + 0.04"] } }
+        { "box": { "size": ["width", "seat", "depth"] }, "material": 0 },
+        { "box": { "size": ["leg", "height - seat", "leg"] }, "material": 1 },
+        { "box": { "size": ["leg * 0.7", 0.04, "depth - 2 * inset"] }, "material": 1 },
+        { "box": { "size": ["leg", "back_h", "leg"] }, "material": 1 },
+        { "box": { "size": ["span", 0.09, 0.025] }, "material": 0 },
+        { "box": { "size": ["leg", "arm_h", "leg"] }, "material": 1 },
+        {
+          "box": { "size": [0.07, 0.03, "depth - 2 * inset + leg + 0.04"] },
+          "material": 0
+        }
       ],
       "baked_values": {
         "width": 1.6,
@@ -38,10 +43,32 @@
         "height": 0.45,
         "backrest": true,
         "recline": 10,
-        "arm_rests": false
+        "arm_rests": false,
+        "wood": [0.35, 0.16, 0.05, 1],
+        "metal": [0.033, 0.038, 0.043, 1]
       }
     }
   },
+  "materials": [
+    {
+      "name": "wood",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.35, 0.16, 0.05, 1],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.8
+      },
+      "extensions": { "JIG_recipe": { "baseColorFactor": "wood" } }
+    },
+    {
+      "name": "metal",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.033, 0.038, 0.043, 1],
+        "metallicFactor": 0.6,
+        "roughnessFactor": 0.5
+      },
+      "extensions": { "JIG_recipe": { "baseColorFactor": "metal" } }
+    }
+  ],
   "scene": 0,
   "scenes": [{ "nodes": [0, 1, 4, 7] }],
   "nodes": [
@@ -543,31 +570,31 @@
   ],
   "meshes": [
     {
-      "primitives": [{ "attributes": { "POSITION": 0, "NORMAL": 1 }, "indices": 2 }],
+      "primitives": [{ "attributes": { "POSITION": 0, "NORMAL": 1 }, "indices": 2, "material": 0 }],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [{ "attributes": { "POSITION": 3, "NORMAL": 4 }, "indices": 5 }],
+      "primitives": [{ "attributes": { "POSITION": 3, "NORMAL": 4 }, "indices": 5, "material": 1 }],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [{ "attributes": { "POSITION": 6, "NORMAL": 7 }, "indices": 8 }],
+      "primitives": [{ "attributes": { "POSITION": 6, "NORMAL": 7 }, "indices": 8, "material": 1 }],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [{ "attributes": { "POSITION": 9, "NORMAL": 10 }, "indices": 11 }],
+      "primitives": [{ "attributes": { "POSITION": 9, "NORMAL": 10 }, "indices": 11, "material": 1 }],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [{ "attributes": { "POSITION": 12, "NORMAL": 13 }, "indices": 14 }],
+      "primitives": [{ "attributes": { "POSITION": 12, "NORMAL": 13 }, "indices": 14, "material": 0 }],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [{ "attributes": { "POSITION": 15, "NORMAL": 16 }, "indices": 17 }],
+      "primitives": [{ "attributes": { "POSITION": 15, "NORMAL": 16 }, "indices": 17, "material": 1 }],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [{ "attributes": { "POSITION": 18, "NORMAL": 19 }, "indices": 20 }],
+      "primitives": [{ "attributes": { "POSITION": 18, "NORMAL": 19 }, "indices": 20, "material": 0 }],
       "extensions": { "JIG_recipe": { "baked": true } }
     }
   ],
