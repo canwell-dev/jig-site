@@ -60,7 +60,7 @@ if (!HTMLScriptElement.supports?.('importmap')) showError('this browser does not
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { read, bake, stringify, EXT } from './jig.js';
+import { read, bake, stringify, EXT } from './jig.js?v=847a2ca';
 
 const src = document.getElementById('src'), defsEl = document.getElementById('defs'), errEl = document.getElementById('err');
 const view = document.getElementById('view'), slidersEl = document.getElementById('sliders');
@@ -213,7 +213,7 @@ document.getElementById('bake').onclick = () => {
   a.click();
   URL.revokeObjectURL(a.href);
 };
-load(await (await fetch('examples/box.gltf')).text());
+load(await (await fetch('examples/box.gltf?v=847a2ca')).text());
 </script>
 </body>
 </html>
