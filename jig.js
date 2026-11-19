@@ -315,13 +315,13 @@ function inverse3([[a, b, c], [d, e, f], [g, h, i]]) {
 }
 
 // --- Loft (sketch, draft f4) ---
-// { path: [[x, y, z], ...], sections: [{ t, points: [[u, v], ...] }, ...], sides, steps }. The surface runs the
+// { path: [[x, y, z], ...], sections: [{ t, points: [[u, v], ...] }, ...], sides, steps, match }. The surface runs the
 // whole curve through `path`; t is the fraction of the curve's length. Between sections the shape blends
 // linearly; before the first and after the last it holds. Both ends are capped.
 
 function loft(l, scope, at) {
   need(isObj(l), at, 'must be an object');
-  only(l, ['path', 'sections', 'sides', 'steps'], at);
+  only(l, ['path', 'sections', 'sides', 'steps', 'match'], at);
   const path = list(l.path, `${at}/path`).map((p, i) => vec(p, 3, scope, `${at}/path/${i}`));
   need(path.length >= 2, `${at}/path`, 'needs at least 2 points');
   path.forEach((p, i) => need(i === 0 || dist(p, path[i - 1]) > 1e-9, `${at}/path/${i}`, 'repeats the point before it'));
@@ -345,9 +345,12 @@ function loft(l, scope, at) {
     need(Number.isInteger(v) && v >= lo && v <= hi, `${at}/${k}`, `must be a whole number ${lo}..${hi}`);
     return v;
   };
-  return { type: 'loft', path, sections, sides: int('sides', 24, 3, 256), steps: int('steps', 48, 1, 1024) };
+  const match = l.match ?? 'corners';
+  need(MATCH.includes(match), `${at}/match`, `must be one of ${MATCH.map((x) => `"${x}"`).join(', ')}`);
+  return { type: 'loft', path, sections, sides: int('sides', 24, 3, 256), steps: int('steps', 48, 1, 1024), match };
 }
 
+const MATCH = ['corners', 'length'];
 const SAMPLES = 32; // curve samples per path segment
 
 // Dense samples along the curve: { t, p, x, y, z, segment }; z is the tangent, x and y the section's axes.
@@ -384,10 +387,9 @@ export function loftFrame(curve, t) {
 }
 
 function loftGeometry(m) {
-  const curve = loftCurve(m), n = m.sides;
-  // Rings counter-clockwise, still starting at point 0, so the surface faces out.
-  const ccw = (pts) => (area(pts) > 0 ? pts : [pts[0], ...pts.slice(1).reverse()]);
-  const secs = [...m.sections].sort((a, b) => a.t - b.t).map((s) => ({ t: s.t, ring: resample(ccw(outline(s.points)), n) }));
+  const curve = loftCurve(m), sorted = [...m.sections].sort((a, b) => a.t - b.t);
+  const matched = rings(sorted, m.sides, m.match), n = matched[0].length;
+  const secs = sorted.map((s, i) => ({ t: s.t, ring: matched[i] }));
   const ts = [...new Set([...Array.from({ length: m.steps + 1 }, (_, i) => i / m.steps), ...secs.map((s) => s.t)])].sort((a, b) => a - b);
   const shapeAt = (t) => {
     const j = secs.findIndex((s) => s.t > t);
@@ -432,10 +434,14 @@ const CURVE_STEPS = 16; // polygon edges per bezier edge
 
 // A section's closed outline as a polygon, starting at its point 0. A point [u, v] is a corner; [u, v, hu, hv]
 // is smooth, with bezier handles at (u, v) ± (hu, hv). An edge with a smooth end is a cubic bezier.
-export function outline(pts) {
-  const out = [];
+export const outline = (pts) => flatten(pts).poly;
+
+// The outline, and where each point starts in it.
+function flatten(pts) {
+  const out = [], starts = [];
   pts.forEach((a, i) => {
     const b = pts[(i + 1) % pts.length];
+    starts.push(out.length);
     out.push([a[0], a[1]]);
     if (a.length < 4 && b.length < 4) return;
     const c1 = [a[0] + (a[2] ?? 0), a[1] + (a[3] ?? 0)], c2 = [b[0] - (b[2] ?? 0), b[1] - (b[3] ?? 0)];
@@ -444,22 +450,52 @@ export function outline(pts) {
       out.push([0, 1].map((q) => s * s * s * a[q] + 3 * s * s * t * c1[q] + 3 * s * t * t * c2[q] + t * t * t * b[q]));
     }
   });
-  return out;
+  return { poly: out, starts };
 }
 
-// n points evenly spaced along a closed polygon's perimeter, starting at its point 0.
-function resample(pts, n) {
-  const edges = pts.map((p, i) => dist(p, pts[(i + 1) % pts.length]));
-  const total = edges.reduce((a, b) => a + b, 0);
-  const out = [];
-  let e = 0, start = 0;
-  for (let k = 0; k < n; k++) {
-    const d = (k / n) * total;
-    while (e < edges.length - 1 && start + edges[e] < d) start += edges[e++];
-    const f = edges[e] ? (d - start) / edges[e] : 0, a = pts[e], b = pts[(e + 1) % pts.length];
-    out.push([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]);
+// Every section as a ring of the same length, point k matching point k (sketch, draft f4). Rings run
+// counter-clockwise from point 0, so the surface faces out. "length": `sides` points evenly by perimeter.
+// "corners": point 0 and every corner point are anchors; a section with fewer anchors than the most gets more by
+// halving its longest span (as CAD splits an edge); anchor j matches anchor j, and each span gets points in
+// proportion to its mean share of the perimeter, so corners stay corners.
+function rings(sections, sides, match) {
+  const prep = sections.map(({ points }) => {
+    const { poly, starts } = flatten(points);
+    const cum = perimeterTo(poly), total = cum[poly.length];
+    let anchors = match === 'corners' ? points.flatMap((p, i) => (i > 0 && p.length === 2 ? [cum[starts[i]] / total] : [])) : [];
+    let ring = poly;
+    if (area(poly) < 0) { ring = [poly[0], ...poly.slice(1).reverse()]; anchors = anchors.map((a) => 1 - a); }
+    return { ring, anchors: [0, ...anchors.sort((a, b) => a - b)] };
+  });
+  const gaps = (a) => a.map((x, j) => (a[j + 1] ?? 1) - x);
+  const count = Math.max(...prep.map((p) => p.anchors.length));
+  for (const p of prep) {
+    while (p.anchors.length < count) {
+      const g = gaps(p.anchors), j = g.indexOf(Math.max(...g));
+      p.anchors.splice(j + 1, 0, p.anchors[j] + g[j] / 2);
+    }
   }
-  return out;
+  const all = prep.map((p) => gaps(p.anchors));
+  // + 1e-9: equal spans round alike despite float error (a quarter of 6 is 1.5 or 1.4999...).
+  const spans = all[0].map((_, j) => Math.max(1, Math.round((sides * all.reduce((s, g) => s + g[j], 0)) / all.length + 1e-9)));
+  return prep.map((p, i) => p.anchors.flatMap((a, j) =>
+    Array.from({ length: spans[j] }, (_, k) => pointAt(p.ring, a + (all[i][j] * k) / spans[j]))));
+}
+
+// Distance along a closed polygon to each of its points; the last entry is the whole perimeter.
+function perimeterTo(pts) {
+  const cum = [0];
+  pts.forEach((p, i) => cum.push(cum[i] + dist(p, pts[(i + 1) % pts.length])));
+  return cum;
+}
+
+// The point a fraction f of the way around a closed polygon from its point 0.
+function pointAt(pts, f) {
+  const cum = perimeterTo(pts), d = f * cum[pts.length];
+  let e = 0;
+  while (e < pts.length - 1 && cum[e + 1] < d) e++;
+  const len = cum[e + 1] - cum[e], g = len ? (d - cum[e]) / len : 0, a = pts[e], b = pts[(e + 1) % pts.length];
+  return [a[0] + (b[0] - a[0]) * g, a[1] + (b[1] - a[1]) * g];
 }
 
 // Barry-Goldman form, alpha = 0.5; u in 0..1 runs from p1 to p2.

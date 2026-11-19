@@ -79,7 +79,7 @@ if (!HTMLScriptElement.supports?.('importmap')) showError('this browser does not
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { read, bake, stringify, geometry, loftCurve, loftFrame, outline, EXT } from './jig.js?v=c62e46c';
+import { read, bake, stringify, geometry, loftCurve, loftFrame, outline, EXT } from './jig.js?v=0491128';
 
 const src = document.getElementById('src'), defsEl = document.getElementById('defs'), errEl = document.getElementById('err');
 const view = document.getElementById('view'), slidersEl = document.getElementById('sliders');
@@ -294,6 +294,9 @@ function toolbar(out) {
   if (hasLoft) {
     kids.push(btn('Curve', pick('curve'), tool === 'curve'), btn('Sections', pick('sections'), tool === 'sections'));
     if (sel?.point !== undefined || sel?.section !== undefined) kids.push(btn('Delete', remove));
+    // How sections' points pair up (sketch): for the selected loft, or the first one.
+    const mesh = sel?.mesh ?? out.meshes.findIndex((m) => m.type === 'loft'), match = out.meshes[mesh].match;
+    kids.push(btn(`Match: ${match}`, () => edit((r) => { loftOf(r, mesh).match = match === 'corners' ? 'length' : 'corners'; })));
     kids.push(el('small', {}, tool === 'curve' ? 'Drag a point. Click the curve to add a point.'
       : 'Click the curve to add a section. Drag a ring to slide it.'));
   }
@@ -534,7 +537,8 @@ document.getElementById('bake').onclick = () => {
   a.click();
   URL.revokeObjectURL(a.href);
 };
-const example = new URLSearchParams(location.search).get('example') === 'loft' ? 'examples/loft.gltf?v=c62e46c' : 'examples/box.gltf?v=c62e46c';
+const examples = { box: 'examples/box.gltf?v=0491128', loft: 'examples/loft.gltf?v=0491128', star: 'examples/star.gltf?v=0491128' };
+const example = examples[new URLSearchParams(location.search).get('example')] ?? examples.box;
 load(await (await fetch(example)).text());
 </script>
 </body>
