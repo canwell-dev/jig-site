@@ -67,6 +67,7 @@ kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); bor
 .ic { width: 11px; height: 11px; flex: none; border: 1.5px solid var(--mute); }
 .ic.box { border-radius: 2px; }
 .ic.loft { border-radius: 6px 6px 2px 2px; height: 13px; width: 8px; }
+.ic.lathe { border-radius: 40% 40% 2px 2px; height: 13px; width: 10px; }
 .ic.extrude { border-radius: 2px; box-shadow: inset 0 0 0 3px var(--panel, transparent); }
 .ic.empty { border-style: dashed; border-radius: 50%; }
 #vp { grid-area: vp; position: relative; background: var(--vp); min-height: 0; overflow: hidden; }
@@ -259,12 +260,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=b88d045';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=f01fc06';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=b88d045', loft: 'examples/loft.gltf?v=b88d045', star: 'examples/star.gltf?v=b88d045', bench: 'examples/bench.gltf?v=b88d045',
-  finger: 'examples/finger.gltf?v=b88d045', hand: 'examples/hand.gltf?v=b88d045' };
+const examples = { box: 'examples/box.gltf?v=f01fc06', loft: 'examples/loft.gltf?v=f01fc06', star: 'examples/star.gltf?v=f01fc06', bench: 'examples/bench.gltf?v=f01fc06', lathe: 'examples/lathe.gltf?v=f01fc06', lantern: 'examples/lantern.gltf?v=f01fc06', paths: 'examples/paths.gltf?v=f01fc06', ends: 'examples/ends.gltf?v=f01fc06',
+  finger: 'examples/finger.gltf?v=f01fc06', hand: 'examples/hand.gltf?v=f01fc06' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -280,11 +281,13 @@ const $ = (s) => document.querySelector(s);
 const isStr = (v) => typeof v === 'string';
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const r4 = (v) => +(+v).toFixed(4);
-const fmt = (v) => (v === undefined || !Number.isFinite(+v) ? '' : String(+(+v).toFixed(3)));
+const fmt = (v) => (Array.isArray(v) ? `vec4(${v.map(fmt).join(', ')})` : v === undefined || !Number.isFinite(+v) ? '' : String(+(+v).toFixed(3)));
 const R = () => doc.extensions[EXT];
 const meshOf = (i) => doc.nodes?.[i]?.extensions?.[EXT]?.mesh;
-const shapeKind = (m) => (m?.loft ? 'loft' : m?.extrude ? 'extrude' : 'box');
+const shapeKind = (m) => (m?.loft ? 'loft' : m?.extrude ? 'extrude' : m?.lathe ? 'lathe' : 'box');
 const loftOf = (i) => R().meshes?.[meshOf(i)]?.loft;
+// shortcut: a path with a corner radius, an arc or a spiral (D-99) has no point editor; edit its JSON
+const plainPath = (l) => l?.path.every((p) => Array.isArray(p) && p.length === 3);
 const X = (i) => ((doc.nodes[i].extensions ??= {})[EXT] ??= {});
 const DEFAULTS = { translation: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] };
 const nodeSrc = (i, slot) => doc.nodes[i]?.extensions?.[EXT]?.[slot] ?? doc.nodes[i]?.[slot] ?? DEFAULTS[slot];
@@ -344,8 +347,8 @@ const proxy = new THREE.Object3D();
 pivot.add(proxy);
 model.add(meshLayer, helperLayer, pivot);
 scene.add(model);
-const matBase = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 1, roughness: 1 }); // glTF's default material (D-84)
-const matSel = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 1, roughness: 1, emissiveIntensity: 0.3 });
+const matBase = new THREE.MeshPhysicalMaterial({ color: 0xffffff, metalness: 1, roughness: 1 }); // glTF's default material (D-84)
+const matSel = new THREE.MeshPhysicalMaterial({ color: 0xffffff, metalness: 1, roughness: 1, emissiveIntensity: 0.3 });
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 function theme() {
   scene.background = new THREE.Color(css('--vp'));
@@ -443,10 +446,12 @@ function draw() {
       const x = (pm === undefined && out.materials[mi]) || {}, pbr = core.pbrMetallicRoughness ?? {}, t = (on ? matSel : matBase).clone();
       const f = x.baseColorFactor ?? pbr.baseColorFactor ?? [1, 1, 1, 1], e = x.emissiveFactor ?? core.emissiveFactor;
       t.color.setRGB(f[0], f[1], f[2]);
-      if (core.alphaMode === 'BLEND') { t.transparent = true; t.opacity = f[3]; }
+      if (core.alphaMode === 'BLEND') { t.transparent = true; t.opacity = f[3]; t.depthWrite = false; } // as GLTFLoader: sorted back to front, no depth write
       t.metalness = x.metallicFactor ?? pbr.metallicFactor ?? 1; t.roughness = x.roughnessFactor ?? pbr.roughnessFactor ?? 1;
       if (e && !on) t.emissive.setRGB(...e);
       if (!on) t.emissiveIntensity = x.emissiveStrength ?? core.extensions?.KHR_materials_emissive_strength?.emissiveStrength ?? 1; // D-82
+      t.transmission = x.transmissionFactor ?? core.extensions?.KHR_materials_transmission?.transmissionFactor ?? 0; // D-102
+      t.ior = x.ior ?? core.extensions?.KHR_materials_ior?.ior ?? 1.5; // three.js clamps to 1..2.333
       // Draft f11: texture slots, with the recipe's KHR_texture_transform over the core one.
       const map = (slot, k, srgb) => textureOf(slot, pm !== undefined, x[k] ?? slot?.extensions?.KHR_texture_transform, srgb);
       t.map = map(pbr.baseColorTexture, 'baseColorTexture', true);
@@ -474,7 +479,7 @@ function draw() {
     const line = (pts, c, loop) => { const l = new (loop ? THREE.LineLoop : THREE.Line)(new THREE.BufferGeometry().setFromPoints(pts), lmat(c)); l.renderOrder = 10; return l; };
     const curve = loftCurve(m);
     group.add(line(curve.map((c) => v3(c.p)), blue));
-    if (editTool === 'path') m.path.forEach((p, j) => {
+    if (editTool === 'path' && plainPath(loftOf(sel.node))) m.path.forEach((p, j) => {
       const on = sel.point === j;
       const dot = new THREE.Points(new THREE.BufferGeometry().setFromPoints([v3(p)]),
         new THREE.PointsMaterial({ color: on ? hot : blue, size: on ? 13 : 9, sizeAttenuation: false, depthTest: false }));
@@ -557,6 +562,7 @@ function pick(e) {
     const scr = (v) => { const p = v.clone().applyMatrix4(edit.group.matrixWorld).project(camera); return [(p.x + 1) / 2 * rect.width, (1 - p.y) / 2 * rect.height]; };
     const l = loftOf(sel.node);
     if (editTool === 'path') {
+      if (!plainPath(l)) return;
       let best = null;
       edit.mesh.path.forEach((p, j) => { const s = scr(v3(p)), d = Math.hypot(s[0] - q[0], s[1] - q[1]); if (d < 14 && (!best || d < best.d)) best = { j, d }; });
       if (best) { sel = { node: sel.node, point: best.j }; return update(); }
@@ -700,7 +706,9 @@ function props() {
     const ms = sec(h3('Mesh'), el('div', { className: 'vrow one' }, el('label', { htmlFor: 'meshPick', textContent: 'Uses' }), pickMesh));
     if (users > 1) ms.append(el('p', {}, `Shared by ${users} nodes: a change here changes all of them.`),
       btn('Make single user', () => { R().meshes.push(structuredClone(m)); X(i).mesh = R().meshes.length - 1; commit(); }));
-    if (m.box) ms.append(vecRow('Size', 'size', m.box.size, om?.size, (a) => { m.box.size = a; }));
+    if (m.box) ms.append(vecRow('Size', 'size', m.box.size, om?.size, (a) => { m.box.size = a; }),
+      el('div', { className: 'vrow one' }, el('label', { htmlFor: 'radius', textContent: 'Radius' }), // D-98
+        field('radius', m.box.radius ?? 0, om?.radius ?? 0, (v) => { if (v === 0) delete m.box.radius; else m.box.radius = v; }, 'Radius')));
     kids.push(ms);
     if (m.loft) kids.push(...loftProps(m.loft, om));
     if (m.extrude) kids.push(...extrudeProps(m.extrude, om));
@@ -720,18 +728,18 @@ function loftProps(l, om) {
       field('sides', l.sides ?? 24, om?.sides, (v) => { l.sides = v; }, 'Sides'), field('steps', l.steps ?? 48, om?.steps, (v) => { l.steps = v; }, 'Steps')),
     el('div', { className: 'vrow one' }, el('label', { htmlFor: 'blend', textContent: 'Blend' }), blend));
   const enter = (s) => { mode = 'edit'; sel = { node: i, ...s }; update(); };
-  const path = sec(h3(`Path · ${l.path.length} points`),
+  const path = !plainPath(l) ? sec(h3(`Path · ${l.path.length} items`), el('small', { textContent: 'Corner radii, arcs or spirals: edit the JSON.' })) : sec(h3(`Path · ${l.path.length} points`),
     ...l.path.map((p, j) => el('div', { className: 'prow' },
       el('button', { type: 'button', className: `idx${sel.point === j ? ' on' : ''}`, textContent: j, title: 'Select this point', onclick: () => { editTool = 'path'; enter({ point: j }); } }),
       ...p.map((v, k) => field(`pt${j}-${k}`, v, om?.path?.[j]?.[k], (x) => { p[k] = x; }, `Point ${j} ${'xyz'[k]}`, k)),
       el('button', { type: 'button', className: 'x', textContent: '×', title: 'Delete point', ariaLabel: `Delete point ${j}`, onclick: () => delPoint(j) }))));
   const sections = sec(h3(`Sections · ${l.sections.length}`, el('span', { className: 'grow' })),
-    el('div', { className: 'srow' }, el('span'), el('small', { textContent: 't' }), el('small', { textContent: 'twist °' }), el('span'), el('span')),
+    el('div', { className: 'srow' }, el('span'), el('small', { textContent: 't or d' }), el('small', { textContent: 'twist °' }), el('span'), el('span')),
     ...l.sections.map((s, j) => el('div', { className: 'srow' },
       el('button', { type: 'button', className: `idx${sel.section === j ? ' on' : ''}`, textContent: j, title: 'Select this section', onclick: () => { editTool = 'sections'; enter({ section: j }); } }),
-      field(`sec${j}-t`, s.t, om?.sections?.[j]?.t, (x) => { s.t = x; }, `Section ${j} t`),
+      field(`sec${j}-t`, s.t ?? s.d, s.d === undefined ? om?.sections?.[j]?.t : undefined, (x) => { if (s.d === undefined) s.t = x; else s.d = x; }, `Section ${j} ${s.d === undefined ? 't' : 'd'}`),
       field(`sec${j}-tw`, s.twist ?? 0, om?.sections?.[j]?.twist, (x) => { if (x === 0) delete s.twist; else s.twist = x; }, `Section ${j} twist`),
-      el('small', { textContent: `${s.points.length} pts` }),
+      el('small', { textContent: Array.isArray(s.points) ? `${s.points.length} pts` : Object.keys(s.points)[0] }),
       el('button', { type: 'button', className: 'x', textContent: '×', title: 'Delete section', ariaLabel: `Delete section ${j}`, onclick: () => delSection(j) }))),
     btn('+ Section at t 0.5', () => {
       if (!om) return;
@@ -740,7 +748,8 @@ function loftProps(l, om) {
       editTool = 'sections'; mode = 'edit'; sel = { node: i, section: l.sections.length - 1 }; commit();
     }));
   const res = [settings, path, sections];
-  if (sel.section !== undefined && l.sections[sel.section]) res.push(...shapePanel(`Section ${sel.section}`, 'Adding or removing a point does it in every section.'));
+  // shortcut: a loft with a circle, ellipse or flutes section (D-89, D-101) has no shape editor; edit its JSON
+  if (sel.section !== undefined && l.sections[sel.section] && l.sections.every((x) => Array.isArray(x.points))) res.push(...shapePanel(`Section ${sel.section}`, 'Adding or removing a point does it in every section.'));
   return res;
 }
 
@@ -780,6 +789,7 @@ function newHole(e, om) {
 function shapeSel() {
   const mi = meshOf(sel?.node), m = R().meshes?.[mi], om = out?.meshes?.[mi];
   if (m?.loft && sel.section !== undefined && m.loft.sections[sel.section]) {
+    if (!m.loft.sections.every((x) => Array.isArray(x.points))) return;
     return { pts: m.loft.sections[sel.section].points, ev: om?.sections?.[sel.section]?.points, key: `s${sel.section}`,
       all: m.loft.sections.map((x, si) => [x.points, om?.sections?.[si]?.points]) };
   }

@@ -5,15 +5,15 @@
     "JIG_recipe": {
       "version": "0.1",
       "params": {
-        "width": { "default": 0.018, "min": 0.008, "max": 0.04 },
-        "height": { "default": 0.016, "min": 0.008, "max": 0.04 },
+        "finger_width": { "default": 0.018, "min": 0.008, "max": 0.04 },
+        "finger_thickness": { "default": 0.016, "min": 0.008, "max": 0.04 },
         "length": { "default": 0.08, "min": 0.03, "max": 0.15 },
         "curl": { "default": 10, "min": -10, "max": 90 },
         "tone": { "type": "color", "default": [0.8, 0.55, 0.45, 1] }
       },
       "vars": {
-        "hw": "width / 2",
-        "hh": "height / 2",
+        "hw": "finger_width / 2",
+        "hh": "finger_thickness / 2",
         "r": "hh * 0.75",
         "c": "hw * 0.75",
         "l1": "length * 0.45",
@@ -549,8 +549,8 @@
         }
       ],
       "baked_values": {
-        "width": 0.018,
-        "height": 0.016,
+        "finger_width": 0.018,
+        "finger_thickness": 0.016,
         "length": 0.08,
         "curl": 10,
         "tone": [0.8, 0.55, 0.45, 1]

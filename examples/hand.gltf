@@ -314,8 +314,8 @@
             "index": "i",
             "each": [
               {
-                "width": 0.023,
-                "height": 0.021,
+                "finger_width": 0.023,
+                "finger_thickness": 0.021,
                 "length": 0.1,
                 "x": 0.016,
                 "y": 0.01,
@@ -327,8 +327,8 @@
                 "bend": 0.7
               },
               {
-                "width": 0.018,
-                "height": 0.02,
+                "finger_width": 0.018,
+                "finger_thickness": 0.02,
                 "length": 0.085,
                 "x": 0.029,
                 "y": 0.094,
@@ -340,8 +340,8 @@
                 "bend": 1
               },
               {
-                "width": 0.019,
-                "height": 0.021,
+                "finger_width": 0.019,
+                "finger_thickness": 0.021,
                 "length": 0.093,
                 "x": 0.0095,
                 "y": 0.096,
@@ -353,8 +353,8 @@
                 "bend": 1
               },
               {
-                "width": 0.018,
-                "height": 0.02,
+                "finger_width": 0.018,
+                "finger_thickness": 0.02,
                 "length": 0.087,
                 "x": -0.0105,
                 "y": 0.094,
@@ -366,8 +366,8 @@
                 "bend": 1
               },
               {
-                "width": 0.015,
-                "height": 0.017,
+                "finger_width": 0.015,
+                "finger_thickness": 0.017,
                 "length": 0.068,
                 "x": -0.03,
                 "y": 0.088,
@@ -383,8 +383,8 @@
           "model": 0,
           "name": "finger_{i}",
           "values": {
-            "width": "width",
-            "height": "height",
+            "finger_width": "finger_width",
+            "finger_thickness": "finger_thickness",
             "length": "length",
             "curl": "curl * bend",
             "tone": "skin_tone"

@@ -34,7 +34,7 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     need(/^[a-z_][a-z0-9_]*$/.test(name), at, 'name must be lower_snake_case');
     need(isObj(p), at, 'must be an object');
     need(p.type === undefined || p.type === 'bool' || p.type === 'color', `${at}/type`, 'must be "bool" or "color" (leave it out for a number)');
-    if (p.type === 'color') { // draft f6: linear [r, g, b, a] in 0..1, as glTF's baseColorFactor; not a number, so expressions cannot use it
+    if (p.type === 'color') { // draft f6: linear [r, g, b, a] in 0..1, as glTF's baseColorFactor; a vec4 in expressions (D-91)
       only(p, ['type', 'default'], at);
       need(isColor(p.default), `${at}/default`, 'must be a color: linear [r, g, b, a], numbers 0..1');
       if (baked) need(isColor(baked[name]), `${rat}/baked_values/${name}`, 'must be a color: linear [r, g, b, a], numbers 0..1 (baked_values holds every parameter)');
@@ -57,6 +57,13 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     const v = values[name] ?? baked?.[name] ?? p.default;
     params[name] = { ...p, value: Math.min(p.max, Math.max(p.min, v)) };
   }
+  // D-96: well-known parameters a host may set by name; the reader checks their kind only, not what the model does.
+  for (const k of ['seed', 'width', 'height', 'depth']) {
+    const p = params[k], at = `${rat}/params/${k}`;
+    if (!p) continue;
+    need(p.type === undefined, `${at}/type`, 'is a well-known parameter (§3.3): must be a number parameter');
+    if (k !== 'seed') need(p.min > 0, `${at}/min`, 'is an extent in metres (§3.3): must be > 0');
+  }
   // Draft f8: named sets of parameter values, as OpenSCAD's parameterSets. A host applies one by passing its
   // values; the reader only checks them. A set may name some parameters only.
   need(r.sets === undefined || isObj(r.sets), `${rat}/sets`, 'must be an object');
@@ -74,9 +81,10 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     sets[name] = set;
   }
   need(r.baked_set === undefined || Object.hasOwn(sets, r.baked_set), `${rat}/baked_set`, 'must name a set');
-  const scope = Object.fromEntries(Object.entries(params).filter(([, p]) => p.type !== 'color').map(([k, p]) => [k, +p.value]));
+  const scope = Object.fromEntries(Object.entries(params).map(([k, p]) => [k, p.type === 'color' ? [...p.value] : +p.value]));
 
-  // Sketch (draft f2): named expressions, in order; each sees the params and the vars before it.
+  // Sketch (draft f2): named expressions, in order; each sees the params and the vars before it. A var may hold a
+  // color (vec4, D-91).
   need(r.vars === undefined || isObj(r.vars), `${rat}/vars`, 'must be an object');
   const vars = {};
   for (const [name, e] of Object.entries(r.vars ?? {})) {
@@ -85,11 +93,11 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     need(/^[a-z_][a-z0-9_]*$/.test(name), at, 'name must be lower_snake_case');
     need(!(name in params), at, 'name is already a parameter');
     need(!Object.hasOwn(FUNCS, name), at, 'name is a built-in function');
-    vars[name] = scope[name] = num(e, scope, at);
+    vars[name] = scope[name] = typeof e === 'number' ? e : value(e, scope, at);
   }
 
   // Draft f6: a core glTF material's JIG_recipe sets its color and factor slots; the core slots are the bake's
-  // cache. A color is a color parameter's name or a list of linear channels, numbers or expressions, clamped to 0..1.
+  // cache. A color is an expression giving a vec4 (D-91) or a list of linear channels, clamped to 0..1.
   need(doc.materials === undefined || Array.isArray(doc.materials), '/materials', 'must be a list');
   const materials = (doc.materials ?? []).map((m, i) => {
     const x = m?.extensions?.[EXT], at = `/materials/${i}/extensions/${EXT}`;
@@ -97,17 +105,15 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     need(isObj(x), at, 'must be an object');
     only(x, [...Object.keys(MATERIAL_SLOTS), ...Object.keys(TEXTURE_SLOTS)], at);
     const unit = (v) => Math.min(1, Math.max(0, v));
-    const color = (c, n, sat) => { // n channels: 4 for baseColorFactor, 3 for emissiveFactor (a parameter's alpha is dropped)
-      if (typeof c === 'string' && params[c]?.type === 'color') return params[c].value.slice(0, n);
-      need(Array.isArray(c), sat, `must be a color parameter's name or a list of ${n} linear channels`);
-      return vec(c, n, scope, sat).map(unit);
-    };
     const o = {};
-    if (x.baseColorFactor !== undefined) o.baseColorFactor = color(x.baseColorFactor, 4, `${at}/baseColorFactor`);
+    if (x.baseColorFactor !== undefined) o.baseColorFactor = color(x.baseColorFactor, 4, scope, `${at}/baseColorFactor`);
     for (const k of ['metallicFactor', 'roughnessFactor']) if (x[k] !== undefined) o[k] = unit(num(x[k], scope, `${at}/${k}`));
-    if (x.emissiveFactor !== undefined) o.emissiveFactor = color(x.emissiveFactor, 3, `${at}/emissiveFactor`);
+    if (x.emissiveFactor !== undefined) o.emissiveFactor = color(x.emissiveFactor, 3, scope, `${at}/emissiveFactor`);
     // Draft f12 (D-82): KHR_materials_emissive_strength's twin, clamped to >= 0.
     if (x.emissiveStrength !== undefined) o.emissiveStrength = Math.max(0, num(x.emissiveStrength, scope, `${at}/emissiveStrength`));
+    // Draft f19 (D-102): KHR_materials_transmission's and KHR_materials_ior's twins; ior is >= 1 or exactly 0, as the extension.
+    if (x.transmissionFactor !== undefined) o.transmissionFactor = unit(num(x.transmissionFactor, scope, `${at}/transmissionFactor`));
+    if (x.ior !== undefined) { const v = num(x.ior, scope, `${at}/ior`); o.ior = v === 0 ? 0 : Math.max(1, v); }
     // Draft f11 (D-81): a texture slot's KHR_texture_transform, its values numbers or expressions.
     for (const [k, place] of Object.entries(TEXTURE_SLOTS)) {
       const t = x[k], tat = `${at}/${k}`;
@@ -123,7 +129,18 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     }
     return o;
   });
-  const meshes = list(r.meshes, `${rat}/meshes`).map((m, i) => mesh(m, scope, `${rat}/meshes/${i}`, materials.length));
+  // Draft f15 (D-92): a recipe mesh is evaluated in the scope of each copy that draws it, so it sees that copy's
+  // indices and rows. meshes[i] is recipe mesh i at the first copy that draws it (at the parameters when none does);
+  // a copy whose evaluated shape differs gets an entry after them. Equal evaluated shapes share one entry.
+  const recipeMeshes = list(r.meshes, `${rat}/meshes`), meshes = new Array(recipeMeshes.length), meshKey = new Map();
+  const intern = (m, key, slot) => {
+    if (!meshKey.has(key)) meshKey.set(key, slot !== undefined && meshes[slot] === undefined ? (meshes[slot] = m, slot) : meshes.push(m) - 1);
+    return meshKey.get(key);
+  };
+  const meshAt = (i, s) => {
+    const m = mesh(recipeMeshes[i], s, `${rat}/meshes/${i}`, materials.length);
+    return intern(m, `${i} ${JSON.stringify(m)}`, i);
+  };
 
   // Draft f10 (D-72..D-74): other JIG documents, placed by nodes with their own parameter values. Embedded as
   // `document`, or a `uri` as glTF's: a data: URI or a file name looked up in `files`.
@@ -218,7 +235,8 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     const rep = isObj(x) && x.repeat !== undefined ? repeat(x.repeat, s, `${xat}/repeat`) : null;
     return Array.from({ length: rep ? Math.max(1, rep.count) : 1 }, (_, k) => {
       const sk = rep ? { ...s, [rep.index]: k, ...rep.rows?.[k] } : s, c = rep ? [...copy, k] : copy;
-      const n = node(src[i], meshes.length, sk, at), vis = shown && (!rep || k < rep.count);
+      const n = node(src[i], recipeMeshes.length, sk, at), vis = shown && (!rep || k < rep.count);
+      if (n.mesh !== undefined) n.mesh = meshAt(n.mesh, sk);
       nodes[i] ??= { ...n, repeated: repeated.has(i) };
       const world = mul(parent, n.matrix);
       const rec = { i, node: n, rep: !!rep, shown: vis, kids: [], world, name: n.name, mesh: n.mesh };
@@ -243,18 +261,12 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
       if (k.startsWith('//')) continue;
       const kat = `${xat}/values/${k}`;
       need(isObj(ps) && Object.hasOwn(ps, k), kat, `is not a parameter of ${m.label}`);
-      if (ps[k]?.type === 'color') { // a color parameter's name here, or linear channels (D-78)
-        if (typeof e === 'string' && params[e]?.type === 'color') { vals[k] = [...params[e].value]; continue; }
-        need(Array.isArray(e), kat, 'must be a color parameter\'s name or a list of 4 linear channels');
-        vals[k] = vec(e, 4, s, kat).map((c) => Math.min(1, Math.max(0, c)));
-        continue;
-      }
+      if (ps[k]?.type === 'color') { vals[k] = color(e, 4, s, kat); continue; } // a color expression or linear channels (D-78, D-91)
       const v = num(e, s, kat);
       vals[k] = ps[k]?.type === 'bool' ? v !== 0 : v;
     }
     let sub;
     try { sub = read(m.doc, vals, { files, stack: [...stack, doc] }); } catch (e) { need(false, `${xat}/model`, `in ${m.label}: ${e.message}`); }
-    const off = meshes.length;
     // Its materials come along (D-78): each one a shape uses, at this copy's values, as a finished glTF material.
     m.stripped ??= strip(m.doc);
     const dir = m.dir ?? '', sd = m.stripped;
@@ -263,19 +275,22 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
       need(isObj(sd.textures?.[i]) && isObj(sd.images?.[source]), `${xat}/model`, `in ${m.label}: texture ${i} or its image is missing`);
       return { texture, image: sd.images[source], sampler: sampler === undefined ? undefined : sd.samplers?.[sampler] };
     };
-    meshes.push(...sub.meshes.map(({ material, placed: pm, ...mesh }) => {
-      if (pm !== undefined) return { ...mesh, placed: addPlaced(lift(structuredClone(sub.placed[pm]), (i) => sub.placedTextures[i], dir, `${xat}/model`)) };
-      if (material === undefined) return mesh;
-      const { extensions: { [EXT]: _, ...ext } = {}, ...rest } = structuredClone(sd.materials[material]);
-      const mat = slots({ ...rest, ...(Object.keys(ext).length && { extensions: ext }) }, sub.materials[material] ?? {});
-      return { ...mesh, placed: addPlaced(lift(mat, own, dir, `${xat}/model`)) };
-    }));
+    // Its shapes join this document's, shared with equal shapes placed before (D-92).
+    const remap = sub.meshes.map(({ material, placed: pm, ...mesh }) => {
+      if (pm !== undefined) mesh.placed = addPlaced(lift(structuredClone(sub.placed[pm]), (i) => sub.placedTextures[i], dir, `${xat}/model`));
+      else if (material !== undefined) {
+        const { extensions: { [EXT]: _, ...ext } = {}, ...rest } = structuredClone(sd.materials[material]);
+        const mat = slots({ ...rest, ...(Object.keys(ext).length && { extensions: ext }) }, sub.materials[material] ?? {});
+        mesh.placed = addPlaced(lift(mat, own, dir, `${xat}/model`));
+      }
+      return intern(mesh, `placed ${JSON.stringify(mesh)}`);
+    });
     const skinAt = sub.skins.map(() => (bone ? bone.skin : skins.push([]) - 1));
     if (vis) sub.skins.forEach((js, k) => skins[skinAt[k]].push(...js));
     const relink = (r) => {
       r.foreign = true; r.world = mul(rec.world, r.world);
       if (rec.name !== undefined && r.name !== undefined) r.name = `${rec.name}/${r.name}`; // D-79: the placing copy's name first
-      if (r.mesh !== undefined) { r.mesh += off; r.bound = r.bound ? { rec: r.bound.rec, skin: skinAt[r.bound.skin] } : bone ?? undefined; }
+      if (r.mesh !== undefined) { r.mesh = remap[r.mesh]; r.bound = r.bound ? { rec: r.bound.rec, skin: skinAt[r.bound.skin] } : bone ?? undefined; }
       r.kids.forEach(relink);
     };
     sub.tree.forEach(relink);
@@ -285,7 +300,8 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     }
   };
   const tree = roots.flatMap((i) => walk(i, IDENTITY, scope, true, [], null));
-  src.forEach((n, i) => { if (!nodes[i] && !isBaked(n)) nodes[i] = node(n, meshes.length, scope, `/nodes/${i}`); });
+  src.forEach((n, i) => { if (!nodes[i] && !isBaked(n)) nodes[i] = node(n, recipeMeshes.length, scope, `/nodes/${i}`); });
+  for (let i = 0; i < recipeMeshes.length; i++) if (meshes[i] === undefined) meshAt(i, scope); // drawn by no copy
 
   // y of the floor in model space; hosts stand the model there. Default: the lowest point on the vertical line
   // through the origin, or 0 when no shape crosses that line.
@@ -383,8 +399,8 @@ export function eulerQuat(deg) {
 
 function mesh(m, scope, at, materialCount) {
   need(isObj(m), at, 'must be an object');
-  only(m, ['box', 'loft', 'extrude', 'material', 'uv'], at);
-  need(Object.keys(m).filter((k) => !k.startsWith('//') && k !== 'material' && k !== 'uv').length === 1, at, 'must have one shape: box, loft or extrude');
+  only(m, ['box', 'loft', 'extrude', 'lathe', 'material', 'uv'], at);
+  need(Object.keys(m).filter((k) => !k.startsWith('//') && k !== 'material' && k !== 'uv').length === 1, at, 'must have one shape: box, loft, extrude or lathe');
   if (m.uv !== undefined) { // draft f11 (D-80): texture coordinates as fractions of the shape, or in meters
     need(UV.includes(m.uv), `${at}/uv`, `must be one of ${UV.map((u) => `"${u}"`).join(', ')}`);
     return { ...mesh({ ...m, uv: undefined }, scope, at, materialCount), uv: m.uv };
@@ -395,13 +411,17 @@ function mesh(m, scope, at, materialCount) {
   }
   if (m.loft !== undefined) return loft(m.loft, scope, `${at}/loft`);
   if (m.extrude !== undefined) return extrude(m.extrude, scope, `${at}/extrude`);
+  if (m.lathe !== undefined) return lathe(m.lathe, scope, `${at}/lathe`);
   const b = m.box;
   at += '/box';
   need(isObj(b), at, 'must be an object');
-  only(b, ['size'], at);
+  only(b, ['size', 'radius'], at);
   const size = vec(b.size, 3, scope, `${at}/size`);
   size.forEach((s, i) => need(s > 0, `${at}/size/${i}`, `must be > 0, is ${s}`));
-  return { type: 'box', size }; // centred on the origin
+  // Draft f19 (D-98): every edge and corner rounded, clamped to half the smallest side.
+  const radius = b.radius === undefined ? 0 : num(b.radius, scope, `${at}/radius`);
+  need(radius >= 0, `${at}/radius`, `must be >= 0, is ${radius}`);
+  return { type: 'box', size, ...(radius > 0 && { radius: Math.min(radius, ...size.map((s) => s / 2)) }) }; // centred on the origin
 }
 
 // --- Bake (D-11, D-14..D-17, D-23) ---
@@ -410,6 +430,9 @@ const OWNED = ['meshes', 'accessors', 'bufferViews', 'buffers', 'nodes', 'materi
 const KHR_TT = 'KHR_texture_transform';
 const KHR_VARIANTS = 'KHR_materials_variants';
 const KHR_ES = 'KHR_materials_emissive_strength';
+// Recipe slots kept in a material extension: [extension, default]; the bake writes the extension only off the default.
+const EXT_SLOTS = { emissiveStrength: [KHR_ES, 1], transmissionFactor: ['KHR_materials_transmission', 0], ior: ['KHR_materials_ior', 1.5] };
+const MATERIAL_EXTS = [KHR_TT, ...Object.values(EXT_SLOTS).map(([e]) => e)];
 const isBaked = (o) => o?.extensions?.[EXT]?.baked === true;
 
 // Remove the bake's cache: every item marked baked, and the core node slots that have a twin in JIG_recipe.
@@ -435,7 +458,7 @@ export function strip(doc) {
     for (const [k, place] of Object.entries(MATERIAL_SLOTS)) {
       if (x[k] === undefined) continue;
       if (place === 'top') delete m[k];
-      else if (place === 'ext') { if (isObj(m.extensions)) { delete m.extensions[KHR_ES]; if (!Object.keys(m.extensions).length) delete m.extensions; } }
+      else if (place === 'ext') { if (isObj(m.extensions)) { delete m.extensions[EXT_SLOTS[k][0]]; if (!Object.keys(m.extensions).length) delete m.extensions; } }
       else if (isObj(m.pbrMetallicRoughness)) delete m.pbrMetallicRoughness[k];
     }
     for (const [k, place] of Object.entries(TEXTURE_SLOTS)) { // the cache of a texture transform twin (draft f11)
@@ -446,7 +469,7 @@ export function strip(doc) {
     }
     if (isObj(m.pbrMetallicRoughness) && !Object.keys(m.pbrMetallicRoughness).length) delete m.pbrMetallicRoughness;
   }
-  for (const e of [KHR_TT, KHR_ES]) if (Array.isArray(d.extensionsUsed) && !JSON.stringify(d.materials ?? []).includes(`"${e}"`)) {
+  for (const e of MATERIAL_EXTS) if (Array.isArray(d.extensionsUsed) && !JSON.stringify(d.materials ?? []).includes(`"${e}"`)) {
     d.extensionsUsed = d.extensionsUsed.filter((u) => u !== e);
   }
   for (const sc of Array.isArray(d.scenes) ? d.scenes : []) { // drop baked skinned-mesh roots (draft f10)
@@ -544,7 +567,7 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
       ...(mapping[m.material] && { extensions: { [KHR_VARIANTS]: { mappings: mapping[m.material] } } }) }] });
   }
   out.materials.forEach((m, i) => { if (m) slots(d.materials[i], m); }); // the material cache (D-57)
-  for (const e of [KHR_TT, KHR_ES]) if (JSON.stringify(d.materials ?? []).includes(`"${e}"`) && !d.extensionsUsed.includes(e)) d.extensionsUsed.push(e);
+  for (const e of MATERIAL_EXTS) if (JSON.stringify(d.materials ?? []).includes(`"${e}"`) && !d.extensionsUsed.includes(e)) d.extensionsUsed.push(e);
 
   // Nodes outside any repeat get their cache in place; each shown copy of a repeated node becomes a baked node,
   // with baked copies of its subtree, appended to the repeated node's children (D-45); so does each shown node of
@@ -563,7 +586,7 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
   const bound = new Set(out.instances.filter((x) => !x.model && x.rec.bound).map((x) => x.node));
   for (const [i, n] of out.nodes.entries()) {
     if (!n || n.repeated) continue;
-    if (n.jig.mesh !== undefined && !bound.has(i)) d.nodes[i].mesh = meshAt[n.jig.mesh];
+    if (n.mesh !== undefined && !bound.has(i)) d.nodes[i].mesh = meshAt[n.mesh];
     for (const k of ['name', 'translation', 'rotation', 'scale']) if (twin(n.jig, k) !== undefined) d.nodes[i][k] = n[k];
   }
   const place = (recs) => recs.forEach((rec) => {
@@ -596,7 +619,10 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
         for (let a = 0; a < 3; a++) normals[3 * v + a] = w[a] / l;
       }
       const joint = joints.indexOf(x.rec.bound.rec);
-      const short = n <= 65535, indices = short ? Uint16Array.from(g.indices) : g.indices;
+      // D-97: a mirroring matrix (negative determinant) turns faces inside out once baked into vertices; flip winding back
+      const det = m[0] * (m[5] * m[10] - m[9] * m[6]) - m[4] * (m[1] * m[10] - m[9] * m[2]) + m[8] * (m[1] * m[6] - m[5] * m[2]);
+      const tri = det < 0 ? Uint32Array.from(g.indices, (_, i) => g.indices[i - (i % 3) + [0, 2, 1][i % 3]]) : g.indices;
+      const short = n <= 65535, indices = short ? Uint16Array.from(tri) : tri;
       const min = [0, 1, 2].map((a) => Math.min(...positions.filter((_, i) => i % 3 === a)));
       const max = [0, 1, 2].map((a) => Math.max(...positions.filter((_, i) => i % 3 === a)));
       const acc = (array, componentType, type, extra = {}) => add('accessors', { bufferView: view(array, 34962), componentType, count: n, type, ...extra });
@@ -627,7 +653,8 @@ export function geometry(m) {
   const fit = (m.uv ?? 'fit') === 'fit';
   if (m.type === 'loft') return loftGeometry(m, fit);
   if (m.type === 'extrude') return extrudeGeometry(m, fit);
-  const g = boxGeometry(m.size, fit);
+  if (m.type === 'lathe') return latheGeometry(m, fit);
+  const g = m.radius ? roundedBoxGeometry(m.size, m.radius, fit) : boxGeometry(m.size, fit);
   return { ...g, indices: Uint32Array.from(g.indices) };
 }
 const UV = ['fit', 'meters'];
@@ -655,6 +682,33 @@ function boxGeometry(size, fit = true) {
     indices.push(first, first + 1, first + 2, first, first + 2, first + 3);
   }
   return { positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uvs), indices: new Uint16Array(indices) };
+}
+
+// Rounded box (D-98): each face a 6 x 6 grid whose outer two rows on each side are half the rounding (0°, 22.5°,
+// 45° from the face), so faces meet at 45° with equal positions and normals. A point is the inner box's nearest
+// point plus r along the normal; edges are quarter circles of BEVEL_STEPS segments, corners sphere octants.
+function roundedBoxGeometry(size, r, fit = true) {
+  const positions = [], normals = [], uvs = [], indices = [], t = Math.tan(Math.PI / 8);
+  // Along a face axis of half-size h: [inner coordinate, normal component before normalizing].
+  const steps = (h) => [[-(h - r), -1], [-(h - r), -t], [-(h - r), 0], [h - r, 0], [h - r, t], [h - r, 1]];
+  for (let a = 0; a < 3; a++) for (const s of [1, -1]) {
+    const u = (a + 1) % 3, v = (a + 2) % 3, first = positions.length / 3, flat = [];
+    const su = steps(size[u] / 2), sv = steps(size[v] / 2);
+    for (const [iv, dv] of sv) for (const [iu, du] of su) {
+      const d = [0, 0, 0], c = [0, 0, 0];
+      d[a] = s; d[u] = du; d[v] = dv;
+      c[a] = s * (size[a] / 2 - r); c[u] = iu; c[v] = iv;
+      const n = norm(d), p = c.map((x, k) => x + r * n[k]);
+      positions.push(...p); normals.push(...n); flat.push([s * p[u], p[v]]); // seen from outside, as boxGeometry
+    }
+    uvs.push(...planarUv(flat, fit).flat());
+    for (let j = 0; j < 5; j++) for (let i = 0; i < 5; i++) {
+      const q = first + j * 6 + i; // u x v = a: counter-clockwise on a + face, reversed on a − face
+      if (s > 0) indices.push(q, q + 1, q + 7, q, q + 7, q + 6);
+      else indices.push(q, q + 7, q + 1, q, q + 6, q + 7);
+    }
+  }
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uvs), indices: new Uint32Array(indices) };
 }
 
 function base64(bytes) {
@@ -705,7 +759,7 @@ export function mul(a, b) {
 function lowestOnAxis(meshes, instances) {
   let low = Infinity;
   for (const { mesh: mi, matrix: m } of instances) {
-    if (meshes[mi].type !== 'box') { low = Math.min(low, lowestOnTriangles(geometry(meshes[mi]), m)); continue; }
+    if (meshes[mi].type !== 'box' || meshes[mi].radius) { low = Math.min(low, lowestOnTriangles(geometry(meshes[mi]), m)); continue; }
     // Local point = A⁻¹(world − t), linear in y along the line: a + y·d. A is the matrix's 3x3 part.
     const inv = inverse3([0, 1, 2].map((r) => [0, 1, 2].map((c) => m[c * 4 + r])));
     if (!inv) continue; // a flat box has no volume to stand on
@@ -761,21 +815,31 @@ function inverse3([[a, b, c], [d, e, f], [g, h, i]]) {
 // { path: [[x, y, z], ...], sections: [{ t, points: [[u, v], ...], twist }, ...], sides, steps, blend }. The surface
 // runs the whole curve through `path`; t is the fraction of the curve's length. Every section has the same number
 // of points and point k meets point k (D-34). Between sections the points, handles and twist blend linearly or
-// smoothly (`blend`); before the first and after the last section the shape holds. Both ends are capped.
+// smoothly (`blend`); before the first and after the last section the shape holds. Ends are capped as `caps` says.
 
 function loft(l, scope, at) {
   need(isObj(l), at, 'must be an object');
-  only(l, ['path', 'sections', 'sides', 'steps', 'blend'], at);
-  const path = list(l.path, `${at}/path`).map((p, i) => vec(p, 3, scope, `${at}/path/${i}`));
-  need(path.length >= 2, `${at}/path`, 'needs at least 2 points');
-  path.forEach((p, i) => need(i === 0 || dist(p, path[i - 1]) > 1e-9, `${at}/path/${i}`, 'repeats the point before it'));
+  only(l, ['path', 'sections', 'sides', 'steps', 'blend', 'caps', 'cap_depth', 'closed'], at);
+  need(l.closed === undefined || typeof l.closed === 'boolean', `${at}/closed`, 'must be true or false');
+  const closed = l.closed === true;
+  need(!closed || l.caps === undefined, `${at}/caps`, 'a closed loft has no ends to cap (D-93)');
+  const { path, radius } = pathOf(l.path, closed, scope, `${at}/path`);
+  const curve = loftCurve({ path, radius, closed }), length = curveLength(curve);
   const sections = list(l.sections, `${at}/sections`).map((s, i) => {
     const sat = `${at}/sections/${i}`;
     need(isObj(s), sat, 'must be an object');
-    only(s, ['t', 'points', 'twist'], sat);
-    const t = num(s.t, scope, `${sat}/t`);
-    need(t >= 0 && t <= 1, `${sat}/t`, `must be in 0..1, is ${t}`);
-    const pts = points(s.points, scope, `${sat}/points`);
+    only(s, ['t', 'd', 'points', 'twist'], sat);
+    need((s.t === undefined) !== (s.d === undefined), sat, 'needs t or d, not both (D-94)');
+    let t;
+    if (s.t !== undefined) {
+      t = num(s.t, scope, `${sat}/t`);
+      need(t >= 0 && t <= 1, `${sat}/t`, `must be in 0..1, is ${t}`);
+    } else {
+      // Metres from the start, or from the end when negative; clamped to the curve, so a parameter may drive it.
+      const d = num(s.d, scope, `${sat}/d`);
+      t = Math.min(1, Math.max(0, (d < 0 ? length + d : d) / length));
+    }
+    const pts = isObj(s.points) ? (s.points.flutes !== undefined ? flutes(s.points, scope, `${sat}/points`) : roundSection(s.points, scope, `${sat}/points`)) : points(s.points, scope, `${sat}/points`);
     return { t, points: pts, twist: s.twist === undefined ? 0 : num(s.twist, scope, `${sat}/twist`) };
   });
   sections.forEach((s, i) => {
@@ -787,19 +851,164 @@ function loft(l, scope, at) {
   const int = (k, dflt, lo, hi) => Math.min(hi, Math.max(lo, Math.round(l[k] === undefined ? dflt : num(l[k], scope, `${at}/${k}`))));
   const blend = l.blend ?? 'linear';
   need(BLEND.includes(blend), `${at}/blend`, `must be one of ${BLEND.map((x) => `"${x}"`).join(', ')}`);
-  return { type: 'loft', path, sections, sides: int('sides', 24, 3, 256), steps: int('steps', 48, 1, 1024), blend };
+  // A closed loft has no ends (D-93): both read as "none", so no flat cap or dome is built.
+  const caps = closed ? { start: 'none', end: 'none' } : capsOf(l.caps, `${at}/caps`, true), dome = [caps?.start, caps?.end].includes('dome');
+  // Draft f17 (D-100): a dome's depth as a fraction of its end ring's mean radius.
+  need(l.cap_depth === undefined || dome, `${at}/cap_depth`, 'needs a "dome" cap');
+  const capDepth = l.cap_depth === undefined ? 1 : num(l.cap_depth, scope, `${at}/cap_depth`);
+  need(capDepth > 0, `${at}/cap_depth`, `must be > 0, is ${capDepth}`);
+  const m = { type: 'loft', path, sections, sides: int('sides', 24, 3, 256), steps: int('steps', 48, 1, 1024), blend, ...(caps && { caps }), ...(dome && { capDepth }),
+    ...(radius && { radius }), ...(closed && { closed }) };
+  // The caps are the first and last section's rings as loftGeometry builds them; triangulate them here to name the section.
+  const sorted = [...sections].sort((a, b) => a.t - b.t), spans = edgeSpans(sorted, m.sides);
+  for (const [s, end] of [[sorted[0], 'start'], [sorted[sorted.length - 1], 'end']]) {
+    // shortcut: a dome over a section that is not star-shaped about its centroid folds without an error; add the check when a model hits it.
+    if (capKind(caps, end) !== 'flat') continue;
+    const ring = resample(s.points, spans);
+    try { triangulate([area(ring) > 0 ? ring : ring.reverse()]); } catch { need(false, `${at}/sections/${sections.indexOf(s)}/points`, 'outline crosses itself'); }
+  }
+  return m;
+}
+
+// Draft f13 (D-90): which ends get a flat cap; an open end shows the inside only through a doubleSided material.
+// Draft f17 (D-100): or per end { start, end }: "flat" (default), "dome" (a loft only) or "none". Read as
+// { start, end }, or undefined for both flat.
+const CAPS = ['both', 'start', 'end', 'none'];
+function capsOf(c = 'both', at, domes = false) {
+  if (isObj(c)) {
+    only(c, ['start', 'end'], at);
+    const kinds = domes ? ['flat', 'dome', 'none'] : ['flat', 'none'];
+    for (const e of ['start', 'end']) need(c[e] === undefined || kinds.includes(c[e]), `${at}/${e}`, `must be one of ${kinds.map((x) => `"${x}"`).join(', ')}`);
+    c = { start: c.start ?? 'flat', end: c.end ?? 'flat' };
+  } else {
+    need(CAPS.includes(c), at, `must be one of ${CAPS.map((x) => `"${x}"`).join(', ')}${domes ? ', or { "start", "end" }' : ', or { "start", "end" } of "flat" or "none"'}`);
+    c = { start: ['both', 'start'].includes(c) ? 'flat' : 'none', end: ['both', 'end'].includes(c) ? 'flat' : 'none' };
+  }
+  return c.start === 'flat' && c.end === 'flat' ? undefined : c;
+}
+const capKind = (caps, end) => caps?.[end] ?? 'flat';
+
+// Draft f16: the path as points [x, y, z], and their corner radii (D-99) when any point has one. An item is a point,
+// a point with a radius [x, y, z, { radius }], or an arc or spiral that stands for its points.
+function pathOf(items, closed, scope, at) {
+  const path = [], radius = [], from = []; // from: the item each point came from, for errors
+  list(items, at).forEach((p, i) => {
+    const pat = `${at}/${i}`;
+    if (isObj(p)) {
+      const q = curvePoints(p, scope, pat);
+      if (path.length && dist(q[0], path[path.length - 1]) <= 1e-9) q.shift(); // an arc may start on the point before it
+      for (const x of q) { path.push(x); radius.push(undefined); from.push(pat); }
+      return;
+    }
+    need(Array.isArray(p) && (p.length === 3 || p.length === 4), pat, 'must be [x, y, z], [x, y, z, { "radius": r }], an arc or a spiral');
+    let r;
+    if (p.length === 4) {
+      need(isObj(p[3]), `${pat}/3`, 'must be { "radius": r }');
+      only(p[3], ['radius'], `${pat}/3`);
+      r = num(p[3].radius, scope, `${pat}/3/radius`);
+      need(r > 0, `${pat}/3/radius`, `must be > 0, is ${r}`);
+    }
+    path.push(vec(p.slice(0, 3), 3, scope, pat)); radius.push(r); from.push(pat);
+  });
+  // A closed path may end on its first point (a whole-circle arc); that point is the first one again.
+  if (closed && path.length > 1 && dist(path[0], path[path.length - 1]) <= 1e-9) { path.pop(); radius.pop(); from.pop(); }
+  need(path.length >= (closed ? 3 : 2), at, `needs at least ${closed ? 3 : 2} points`);
+  path.forEach((p, i) => need(i === 0 || dist(p, path[i - 1]) > 1e-9, from[i], 'repeats the point before it'));
+  if (radius.every((r) => r === undefined)) return { path };
+  const n = path.length, ends = (i) => !closed && (i === 0 || i === n - 1);
+  need(!from.some((f, i) => f !== `${at}/${i}`), at, 'a path with a corner radius takes no arc or spiral (D-99)');
+  const lens = path.map((p, i) => {
+    if (ends(i)) { need(radius[i] === undefined, `${at}/${i}/3`, 'an end of an open path is no corner'); return 0; }
+    const a = norm(sub(path[(i + n - 1) % n], p)), b = norm(sub(path[(i + 1) % n], p)), c = dot(a, b);
+    need(c < 1 - 1e-9, `${at}/${i}`, 'turns straight back');
+    if (c < -1 + 1e-9) return 0; // straight on: no corner
+    need(radius[i] !== undefined, `${at}/${i}`, 'is a corner and needs a radius: a path with one is straight lines with round corners (D-99)');
+    return radius[i] * Math.sqrt((1 + c) / (1 - c)); // r / tan(half the corner angle)
+  });
+  for (let i = 0; i < (closed ? n : n - 1); i++) {
+    const j = (i + 1) % n;
+    need(lens[i] + lens[j] <= dist(path[i], path[j]) + 1e-9, `${at}/${radius[j] !== undefined ? j : i}/3/radius`, 'is too large: the round corners overlap');
+  }
+  return { path, radius: radius.map((r) => r ?? 0) };
+}
+
+// Draft f16 (D-99): an arc { center, radius, from, to, plane } or a spiral (radius [r0, r1], growing evenly with the
+// angle) as points at most 15 degrees apart, both ends included. Angles in degrees: in plane "xy" from +x toward +y,
+// "yz" from +y toward +z, "zx" from +z toward +x.
+const PLANES = { xy: [0, 1], yz: [1, 2], zx: [2, 0] };
+function curvePoints(g, scope, at) {
+  const kind = Object.keys(g).filter((k) => !k.startsWith('//'));
+  need(kind.length === 1 && (kind[0] === 'arc' || kind[0] === 'spiral'), at, 'must be { "arc": {...} } or { "spiral": {...} }');
+  const a = g[kind[0]], aat = `${at}/${kind[0]}`;
+  need(isObj(a), aat, 'must be an object');
+  only(a, ['center', 'radius', 'from', 'to', 'plane'], aat);
+  const c = vec(a.center, 3, scope, `${aat}/center`);
+  const [r0, r1] = kind[0] === 'arc' ? Array(2).fill(num(a.radius, scope, `${aat}/radius`)) : vec(a.radius, 2, scope, `${aat}/radius`);
+  need(kind[0] === 'arc' ? r0 > 0 : r0 >= 0 && r1 >= 0 && r0 + r1 > 0, `${aat}/radius`, kind[0] === 'arc' ? `must be > 0, is ${r0}` : 'must be >= 0 and not both 0');
+  const f = num(a.from, scope, `${aat}/from`), t = num(a.to, scope, `${aat}/to`);
+  need(f !== t, `${aat}/to`, 'must differ from from');
+  const plane = a.plane ?? 'xy';
+  need(PLANES[plane], `${aat}/plane`, 'must be one of "xy", "yz", "zx"');
+  const [i, j] = PLANES[plane], n = Math.ceil(Math.abs(t - f) / 15);
+  return Array.from({ length: n + 1 }, (_, k) => {
+    const g2 = (f + ((t - f) * k) / n) * (Math.PI / 180), r = r0 + ((r1 - r0) * k) / n, p = [...c];
+    p[i] += r * Math.cos(g2); p[j] += r * Math.sin(g2);
+    return p;
+  });
+}
+
+// Draft f13 (D-89): a circle or ellipse section as 4 smooth points (from +u, counter-clockwise) with the standard
+// quarter-circle handle, so it meets point k of a 4-point section.
+const KAPPA = (4 * (Math.SQRT2 - 1)) / 3;
+function roundSection(x, scope, at) {
+  only(x, ['circle', 'ellipse'], at);
+  need(Object.keys(x).filter((k) => !k.startsWith('//')).length === 1, at, 'must be { "circle": r } or { "ellipse": [rx, ry] }');
+  const [rx, ry] = x.circle !== undefined ? Array(2).fill(num(x.circle, scope, `${at}/circle`)) : vec(x.ellipse, 2, scope, `${at}/ellipse`);
+  need(rx > 0 && ry > 0, `${at}/${x.circle !== undefined ? 'circle' : 'ellipse'}`, `must be > 0, is ${x.circle !== undefined ? rx : [rx, ry]}`);
+  const kx = KAPPA * rx, ky = KAPPA * ry;
+  return [[rx, 0, 0, ky], [0, ry, -kx, 0], [-rx, 0, 0, -ky], [0, -ry, kx, 0]];
+}
+
+// Draft f17 (D-101): { flutes: { count, r, depth } }, a circle of radius r with `count` grooves, 2 points per
+// flute from +u, counter-clockwise: an arris [u, v, ou, ov, iu, iv] on the circle, then the groove's bottom, smooth,
+// depth in from it, halfway to the next arris. Each groove is the circular arc through its two arrises and its
+// bottom (as bezier quarter-arcs), so depth 0 is the circle itself and the arrises stay sharp otherwise.
+function flutes(x, scope, at) {
+  only(x, ['flutes'], at);
+  need(isObj(x.flutes), `${at}/flutes`, 'must be { "count", "r", "depth" }');
+  only(x.flutes, ['count', 'r', 'depth'], `${at}/flutes`);
+  const count = Math.round(num(x.flutes.count, scope, `${at}/flutes/count`));
+  need(count >= 3, `${at}/flutes/count`, `must be >= 3, is ${count}`);
+  const r = num(x.flutes.r, scope, `${at}/flutes/r`);
+  need(r > 0, `${at}/flutes/r`, `must be > 0, is ${r}`);
+  const depth = num(x.flutes.depth, scope, `${at}/flutes/depth`);
+  need(depth >= 0 && depth < r, `${at}/flutes/depth`, `must be in 0..r (${r}), less than r, is ${depth}`);
+  // One groove with its bottom on +x: arris A = (a, -s), bottom B = (b, 0). The arc's end tangents make equal
+  // angles with the chord A→B; handle length (2/3)·c / (1 + cos(half the turn)), cos = s / c.
+  const h = Math.PI / count, a = r * Math.cos(h), s = r * Math.sin(h), b = r - depth;
+  const c = Math.hypot(b - a, s), L = ((2 / 3) * c * c) / (c + s), ch = [(b - a) / c, s / c];
+  const tA = [2 * (s / c) * ch[0], 2 * (s / c) * ch[1] - 1]; // the tangent at B, (0, 1), mirrored in the chord
+  const rot = (th, [u, v]) => [u * Math.cos(th) - v * Math.sin(th), u * Math.sin(th) + v * Math.cos(th)];
+  return Array.from({ length: count }, (_, i) => {
+    const g = (2 * i + 1) * h, A = rot(g, [a, -s]), out = rot(g, [L * tA[0], L * tA[1]]), inn = rot(g - 2 * h, [L * tA[0], -L * tA[1]]);
+    return [[...A, ...out, ...inn], [...rot(g, [b, 0]), ...rot(g, [0, L])]];
+  }).flat();
 }
 
 // A closed outline in loft's point form (D-39): [u, v] corners, [u, v, hu, hv] smooth points and (D-83)
 // [u, v, ou, ov, iu, iv] points with free handles.
 function points(x, scope, at) {
-  const pts = list(x, at).map((p, j) => {
-    need(Array.isArray(p) && [2, 4, 6].includes(p.length), `${at}/${j}`, 'must be [u, v], [u, v, hu, hv] or [u, v, ou, ov, iu, iv]');
-    return p.map((e, k) => num(e, scope, `${at}/${j}/${k}`));
-  });
+  const pts = pointList(x, scope, at);
   need(pts.length >= 3, at, 'needs at least 3 points');
   need(Math.abs(area(outline(pts))) > 1e-12, at, 'must enclose an area');
   return pts;
+}
+
+function pointList(x, scope, at) {
+  return list(x, at).map((p, j) => {
+    need(Array.isArray(p) && [2, 4, 6].includes(p.length), `${at}/${j}`, 'must be [u, v], [u, v, hu, hv] or [u, v, ou, ov, iu, iv]');
+    return p.map((e, k) => num(e, scope, `${at}/${j}/${k}`));
+  });
 }
 
 // Draft f9: a flat outline with holes, in loft's point form, in the xy plane, pushed along z by depth, centred on
@@ -887,6 +1096,74 @@ function extrudeGeometry(m, fit = true) {
   return { positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uvs), indices: new Uint32Array(indices) };
 }
 
+// --- Lathe (draft f13, D-88) ---
+// { profile: [[r, y, ...handles], ...], sides, caps }: an open profile in loft's point form, r ≥ 0, revolved about
+// the y axis. The solid is the region between the profile and the axis; the surface faces away from it, whichever
+// way the profile runs. An end at r = 0 closes to a point; an end at r > 0 gets a flat cap unless `caps` leaves it
+// open (D-90). Laid out as a loft up +y with circle sections: point 0 of each ring at +x, then toward −z.
+
+function lathe(l, scope, at) {
+  need(isObj(l), at, 'must be an object');
+  only(l, ['profile', 'sides', 'caps'], at);
+  const profile = pointList(l.profile, scope, `${at}/profile`);
+  need(profile.length >= 2, `${at}/profile`, 'needs at least 2 points');
+  profile.forEach((p, j) => {
+    need(p[0] >= 0, `${at}/profile/${j}/0`, `must be >= 0 (a radius), is ${p[0]}`);
+    need(j === 0 || dist(p.slice(0, 2), profile[j - 1].slice(0, 2)) > 1e-9, `${at}/profile/${j}`, 'repeats the point before it');
+  });
+  const { poly } = profileLine(profile);
+  need(poly.every(([r]) => r > -1e-9), `${at}/profile`, 'crosses the axis (r < 0) between its points');
+  need(Math.abs(area(closeOnAxis(poly))) > 1e-12, `${at}/profile`, 'must enclose an area with the axis');
+  // Rounded, then clamped, as a loft's (D-37).
+  const sides = Math.min(256, Math.max(3, Math.round(l.sides === undefined ? 24 : num(l.sides, scope, `${at}/sides`))));
+  const caps = capsOf(l.caps, `${at}/caps`);
+  return { type: 'lathe', profile, sides, ...(caps && { caps }) };
+}
+
+// The open profile as a polyline (the closing edge left out), and the polyline indices of its inner corners.
+function profileLine(pts) {
+  const { poly, starts } = flatten(pts);
+  return { poly: poly.slice(0, starts[starts.length - 1] + 1), hard: starts.filter((_, k) => k > 0 && k < pts.length - 1 && pts[k].length === 2) };
+}
+const closeOnAxis = (poly) => [...poly, [0, poly[poly.length - 1][1]], [0, poly[0][1]]];
+
+// A strip of rings per run of the profile between corners (so normals split there), each ring closed by a seam
+// copy of its point 0; normals square to the profile. uv as a loft's (D-80): u round the ring, v along the profile.
+function latheGeometry(m, fit = true) {
+  const { poly, hard } = profileLine(m.profile), n = m.sides, w = n + 1;
+  const out = area(closeOnAxis(poly)) > 0; // counter-clockwise round the solid: quads as listed face out
+  const along = [0];
+  for (let i = 1; i < poly.length; i++) along.push(along[i - 1] + dist(poly[i], poly[i - 1]));
+  const L = along[along.length - 1], ang = (j) => (2 * Math.PI * j) / n;
+  const positions = [], normals = [], uvs = [], indices = [];
+  const cuts = [0, ...hard, poly.length - 1];
+  for (let c = 0; c + 1 < cuts.length; c++) {
+    const s = cuts[c], e = cuts[c + 1], first = positions.length / 3;
+    for (let i = s; i <= e; i++) {
+      const [tr, ty] = sub(poly[Math.min(i + 1, e)], poly[Math.max(i - 1, s)]), [nr, ny] = norm(out ? [ty, -tr] : [-ty, tr]);
+      for (let j = 0; j < w; j++) {
+        const [r, y] = poly[i], a = ang(j), cs = Math.cos(a), sn = Math.sin(a);
+        positions.push(r * cs, y, -r * sn); normals.push(nr * cs, ny, -nr * sn);
+        uvs.push(fit ? j / n : r * a, fit ? along[i] / L : along[i]);
+      }
+    }
+    for (let i = 0; i < e - s; i++) for (let j = 0; j < n; j++) {
+      const a = first + i * w + j, a1 = a + 1, b = a + w, b1 = a1 + w;
+      indices.push(...(out ? [a, a1, b1, a, b1, b] : [a, b1, a1, a, b, b1]));
+    }
+  }
+  // Flat caps at ends off the axis, facing away from the solid; coordinates as a loft cap's.
+  for (const [i, end, s] of [[0, 'start', out ? -1 : 1], [poly.length - 1, 'end', out ? 1 : -1]]) {
+    const [r, y] = poly[i];
+    if (r < 1e-9 || capKind(m.caps, end) !== 'flat') continue;
+    const first = positions.length / 3, ring = Array.from({ length: n }, (_, j) => [r * Math.cos(ang(j)), r * Math.sin(ang(j))]);
+    for (const [u, v] of ring) { positions.push(u, y, -v); normals.push(0, s, 0); }
+    uvs.push(...planarUv(ring.map(([u, v]) => [s * u, v]), fit).flat());
+    for (let j = 1; j + 1 < n; j++) indices.push(...(s > 0 ? [0, j, j + 1] : [0, j + 1, j]).map((k) => first + k)); // a fan faces +y
+  }
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uvs), indices: new Uint32Array(indices) };
+}
+
 // Triangles over loops[0] (counter-clockwise) minus the other loops (clockwise), as indices into all loops' points
 // in order. Each hole joins the ring by a bridge to the nearest ring point it sees, rightmost holes first.
 export function triangulate(loops) {
@@ -933,26 +1210,57 @@ const SAMPLES = 32; // curve samples per path segment
 
 // Dense samples along the curve: { t, p, x, y, z, segment }; z is the tangent, x and y the section's axes.
 // y starts as world up made square to the curve (-z when the curve starts vertical) and is carried along
-// without twist. Centripetal Catmull-Rom through the path, its ends extended by reflection.
+// without twist. Centripetal Catmull-Rom through the path, its ends extended by reflection; or round the path back
+// to its first point when closed, where y is turned evenly along the curve to meet itself (D-93). With corner radii
+// (D-99) straight lines between the points with a circular arc at each corner.
 export function loftCurve(m) {
-  const P = m.path, n = P.length;
-  const ext = [sub(scale(P[0], 2), P[1]), ...P, sub(scale(P[n - 1], 2), P[n - 2])];
-  const pts = [], seg = [];
-  for (let i = 0; i < n - 1; i++) {
-    for (let k = 0; k < SAMPLES; k++) { pts.push(catmullRom(ext[i], ext[i + 1], ext[i + 2], ext[i + 3], k / SAMPLES)); seg.push(i); }
+  const P = m.path, n = P.length, closed = !!m.closed, spans = closed ? n : n - 1;
+  const pts = [], seg = [], tan = []; // tan: the exact tangent where known (straight lines and arcs)
+  if (m.radius) {
+    P.forEach((p, i) => {
+      const r = m.radius[i], prev = P[(i + n - 1) % n], next = P[(i + 1) % n];
+      if (!r) { pts.push(p); seg.push(Math.min(i, spans - 1)); tan.push(norm(sub(i === n - 1 && !closed ? p : next, i === n - 1 && !closed ? prev : p))); return; }
+      const a = norm(sub(prev, p)), b = norm(sub(next, p)), c = dot(a, b), L = r * Math.sqrt((1 + c) / (1 - c));
+      const centre = [0, 1, 2].map((q) => p[q] + norm([a[0] + b[0], a[1] + b[1], a[2] + b[2]])[q] * Math.hypot(L, r));
+      const u = sub(sub(p, scale(a, -L)), centre), w = sub(sub(p, scale(b, -L)), centre), turn = Math.acos(Math.max(-1, Math.min(1, -c))); // u, w: centre to the arc's ends
+      for (let k = 0; k <= SAMPLES; k++) {
+        const f = (k / SAMPLES) * turn, s0 = Math.sin(turn - f) / Math.sin(turn), s1 = Math.sin(f) / Math.sin(turn); // slerp
+        const d = [0, 1, 2].map((q) => s0 * u[q] + s1 * w[q]);
+        pts.push(centre.map((q, k2) => q + d[k2])); seg.push(Math.min(i, spans - 1));
+        tan.push(norm([0, 1, 2].map((q) => (-Math.cos(turn - f) * u[q] + Math.cos(f) * w[q]) / Math.sin(turn))));
+      }
+    });
+    if (closed) { pts.push(pts[0]); seg.push(n - 1); tan.push(tan[0]); }
+  } else {
+    const ext = closed ? [P[n - 1], ...P, P[0], P[1]] : [sub(scale(P[0], 2), P[1]), ...P, sub(scale(P[n - 1], 2), P[n - 2])];
+    for (let i = 0; i < spans; i++) {
+      for (let k = 0; k < SAMPLES; k++) { pts.push(catmullRom(ext[i], ext[i + 1], ext[i + 2], ext[i + 3], k / SAMPLES)); seg.push(i); }
+    }
+    pts.push(closed ? P[0] : P[n - 1]); seg.push(spans - 1);
   }
-  pts.push(P[n - 1]); seg.push(n - 2);
-  const len = [0];
-  for (let i = 1; i < pts.length; i++) len.push(len[i - 1] + dist(pts[i], pts[i - 1]));
-  const total = len[len.length - 1];
+  const N = pts.length, len = [0];
+  for (let i = 1; i < N; i++) len.push(len[i - 1] + dist(pts[i], pts[i - 1]));
+  const total = len[N - 1];
+  // The tangent by central difference; round the seam of a closed curve, where the last sample is the first.
+  const around = (i) => (closed && (i === 0 || i === N - 1) ? [pts[1], pts[N - 2]] : [pts[Math.min(i + 1, N - 1)], pts[Math.max(i - 1, 0)]]);
   let y;
-  return pts.map((p, i) => {
-    const z = norm(sub(pts[Math.min(i + 1, pts.length - 1)], pts[Math.max(i - 1, 0)]));
+  const out = pts.map((p, i) => {
+    const z = tan[i] ?? norm(sub(...around(i)));
     if (!y) y = Math.abs(z[1]) > 0.999 ? [0, 0, -1] : [0, 1, 0];
     y = norm(sub(y, scale(z, dot(y, z))));
-    return { t: len[i] / total, p, x: cross(y, z), y, z, segment: seg[i] };
+    return { t: len[i] / total, p, y, z, segment: seg[i] };
   });
+  // Closed: the angle from where y comes round to where it started, about the tangent, spread evenly along t.
+  const z0 = out[0].z, y0 = out[0].y, yN = out[N - 1].y;
+  const phi = closed ? Math.atan2(dot(cross(yN, y0), z0), dot(yN, y0)) : 0;
+  for (const c of out) {
+    if (phi) { const g = phi * c.t, cs = Math.cos(g), sn = Math.sin(g), zy = cross(c.z, c.y); c.y = norm(c.y.map((q, k) => q * cs + zy[k] * sn)); }
+    c.x = cross(c.y, c.z);
+  }
+  return out;
 }
+
+export const curveLength = (curve) => curve.reduce((a, c, i) => (i ? a + dist(c.p, curve[i - 1].p) : 0), 0);
 
 // The curve's point and axes at t, between the dense samples.
 export function loftFrame(curve, t) {
@@ -970,43 +1278,67 @@ function loftGeometry(m, fit = true) {
   const ccw = area(outline(sorted[0].points)) > 0;
   const ts = [...new Set([...Array.from({ length: m.steps + 1 }, (_, i) => i / m.steps), ...sorted.map((s) => s.t)])].sort((a, b) => a - b);
   const shapeAt = (t) => {
-    const { points, twist } = blendAt(sorted, m.blend, t), ring = turn(resample(points, spans), twist);
+    const { points, twist } = blendAt(sorted, m.blend, t, m.closed), ring = turn(resample(points, spans), twist);
     return ccw ? ring : [ring[0], ...ring.slice(1).reverse()]; // counter-clockwise, so the surface faces out
   };
-  const length = curve.reduce((a, c, i) => (i ? a + dist(c.p, curve[i - 1].p) : 0), 0);
+  const length = curveLength(curve);
   // Each ring is closed by a copy of its point 0 (the seam), so u can run from 0 round to its whole length (D-80).
   const positions = [], uvs = [], indices = [];
   const frames = ts.map((t) => loftFrame(curve, t)), rings = ts.map(shapeAt);
-  ts.forEach((t, r) => {
-    const { p, x, y } = frames[r], ring = [...rings[r], rings[r][0]];
-    const round = [0];
-    for (let j = 1; j < w; j++) round.push(round[j - 1] + dist(ring[j], ring[j - 1]));
+  // Rows of the side: { ring (u, v), frame, along (z offset), v (by length) }. A dome (D-100) adds rows beyond an end:
+  // its ring shrunk toward the centroid by cos φ and moved out along the tangent by depth·sin φ, φ in K steps to a
+  // pole, depth = capDepth × the ring's mean radius; v runs on by the arc length at the mean radius.
+  const K = Math.max(1, Math.round(m.sides / 4));
+  const dome = (r, s) => {
+    const ring = rings[r], c = centroid(ring), R = ring.reduce((a, q) => a + Math.hypot(q[0] - c[0], q[1] - c[1]), 0) / ring.length;
+    const d = m.capDepth * R, rows = [];
+    let arc = 0;
+    for (let k = 1; k <= K; k++) {
+      const f = (k * Math.PI) / 2 / K, g = ((k - 1) * Math.PI) / 2 / K;
+      arc += Math.hypot(R * (Math.cos(f) - Math.cos(g)), d * (Math.sin(f) - Math.sin(g)));
+      rows.push({ ring: ring.map(([u, v]) => [c[0] + (u - c[0]) * Math.cos(f), c[1] + (v - c[1]) * Math.cos(f)]), round: ring, frame: frames[r], along: s * d * Math.sin(f), arc });
+    }
+    return rows;
+  };
+  const startDome = capKind(m.caps, 'start') === 'dome' ? dome(0, -1) : [], endDome = capKind(m.caps, 'end') === 'dome' ? dome(ts.length - 1, 1) : [];
+  const a0 = startDome.length ? startDome[startDome.length - 1].arc : 0, total = a0 + length + (endDome.length ? endDome[endDome.length - 1].arc : 0);
+  const rows = [
+    ...startDome.reverse().map((q) => ({ ...q, v: a0 - q.arc })),
+    ...ts.map((t, r) => ({ ring: rings[r], round: rings[r], frame: frames[r], along: 0, v: a0 + t * length, t })),
+    ...endDome.map((q) => ({ ...q, v: a0 + length + q.arc })),
+  ];
+  const r0 = startDome.length, r1 = r0 + ts.length - 1; // the rows of the curve's two ends
+  rows.forEach(({ ring: rg, round: rd, frame: { p, x, y, z }, along, v: vv, t }) => {
+    const ring = [...rg, rg[0]], ru = [...rd, rd[0]], round = [0]; // u as the end ring's, so u stays put up a dome
+    for (let j = 1; j < w; j++) round.push(round[j - 1] + dist(ru[j], ru[j - 1]));
     ring.forEach(([u, v], j) => {
-      positions.push(...[0, 1, 2].map((a) => p[a] + u * x[a] + v * y[a]));
-      uvs.push(fit ? round[j] / round[n] : round[j], fit ? t : t * length);
+      positions.push(...[0, 1, 2].map((a) => p[a] + u * x[a] + v * y[a] + along * z[a]));
+      uvs.push(fit ? round[j] / round[n] : round[j], fit ? (m.capDepth ? vv / total : t) : vv);
     });
   });
-  for (let r = 0; r < ts.length - 1; r++) for (let j = 0; j < n; j++) {
+  for (let r = 0; r < rows.length - 1; r++) for (let j = 0; j < n; j++) {
     const a = r * w + j, a1 = a + 1, b = a + w, b1 = a1 + w;
     indices.push(a, a1, b1, a, b1, b);
   }
-  // Smooth normals on the side: area-weighted face normals summed per vertex, the seam's two copies together.
-  const at = (i) => positions.slice(3 * i, 3 * i + 3);
+  // Smooth normals on the side: area-weighted face normals summed per vertex, the seam's two copies together, and
+  // a closed loft's last ring with its first (D-93).
+  const at = (i) => positions.slice(3 * i, 3 * i + 3), last = (ts.length - 1) * w;
+  const home = (i) => { const v = i % w === n ? i - n : i; return m.closed && v >= last ? v - last : v; };
   const normals = new Array(positions.length).fill(0);
   for (let k = 0; k < indices.length; k += 3) {
     const [a, b, c] = [indices[k], indices[k + 1], indices[k + 2]];
     const f = cross(sub(at(b), at(a)), sub(at(c), at(a)));
-    for (const i of [a, b, c]) for (let q = 0; q < 3; q++) normals[3 * (i % w === n ? i - n : i) + q] += f[q];
+    for (const i of [a, b, c]) for (let q = 0; q < 3; q++) normals[3 * home(i) + q] += f[q];
   }
-  for (let i = 0; i < normals.length; i += 3) {
-    const v = i / 3;
-    normals.splice(i, 3, ...norm(normals.slice(3 * (v % w === n ? v - n : v), 3 * (v % w === n ? v - n : v) + 3)));
-  }
+  for (let i = 0; i < normals.length; i += 3) normals.splice(i, 3, ...norm(normals.slice(3 * home(i / 3), 3 * home(i / 3) + 3)));
+  // A dome's pole: its copies get the tangent, not the one face each sees.
+  if (startDome.length) for (let j = 0; j < w; j++) normals.splice(3 * j, 3, ...scale(frames[0].z, -1));
+  if (endDome.length) for (let j = 0; j < w; j++) normals.splice(3 * ((rows.length - 1) * w + j), 3, ...frames[ts.length - 1].z);
   // Flat caps, triangulated in the section plane so concave sections stay right (as extrude caps), facing back
   // at the start and forward at the end; coordinates fit to the section's bounds, seen from outside.
-  for (const [r, s] of [[0, -1], [ts.length - 1, 1]]) {
-    const first = positions.length / 3, tris = triangulate([rings[r]]);
-    for (let j = 0; j < n; j++) { positions.push(...at(r * w + j)); normals.push(...scale(frames[r].z, s)); }
+  for (const [r, s] of [[0, -1], [ts.length - 1, 1]].filter(([, s]) => capKind(m.caps, s < 0 ? 'start' : 'end') === 'flat')) {
+    const first = positions.length / 3, tris = triangulate([rings[r]]), row = r ? r1 : r0;
+    for (let j = 0; j < n; j++) { positions.push(...at(row * w + j)); normals.push(...scale(frames[r].z, s)); }
     uvs.push(...planarUv(rings[r].map(([u, v]) => [s * u, v]), fit).flat());
     for (let k = 0; k < tris.length; k += 3) indices.push(...(s < 0 ? [tris[k], tris[k + 2], tris[k + 1]] : tris.slice(k, k + 3)).map((i) => first + i));
   }
@@ -1043,7 +1375,12 @@ const inHandle = (p) => (p.length === 6 ? [p[4], p[5]] : [-(p[2] ?? 0), -(p[3] ?
 // Section points as [u, v, ou, ov, iu, iv] (a corner has zero handles; a point whose handles are opposite comes back
 // as [u, v, hu, hv]), and twist, at t: held before the first and after the
 // last section; between them blended linearly or by centripetal Catmull-Rom over the sections (D-35, D-41, D-42).
-function blendAt(sorted, blend, t) {
+function blendAt(sorted, blend, t, closed) {
+  // Closed (D-93): the sections go on round the seam, two before t 0 and two after t 1, so t 0 and t 1 blend alike.
+  if (closed && sorted.length > 1) {
+    const k = sorted.length, sh = (s, d) => ({ ...s, t: s.t + d });
+    sorted = [sh(sorted[(k - 2) % k], -1), sh(sorted[k - 1], -1), ...sorted, sh(sorted[0], 1), sh(sorted[1 % k], 1)];
+  }
   const n = sorted.length, j = sorted.findIndex((s) => s.t > t);
   // The in handle is blended as its offset from the mirrored out handle, zero for symmetric points, so it leaves
   // the centripetal knots of 4-number sections as they were.
@@ -1107,7 +1444,7 @@ export function turn(pts, deg) {
 export function sectionAt(m, t) {
   const sorted = [...m.sections].sort((a, b) => a.t - b.t), j = sorted.findIndex((s) => s.t > t);
   const around = j < 0 ? [sorted[sorted.length - 1]] : j === 0 ? [sorted[0]] : [sorted[j - 1], sorted[j]];
-  const { points, twist } = blendAt(sorted, m.blend, t);
+  const { points, twist } = blendAt(sorted, m.blend, t, m.closed);
   return { points: points.map((p, k) => (around.every((s) => s.points[k].length === 2) ? p.slice(0, 2) : p)), twist };
 }
 
@@ -1123,6 +1460,10 @@ function catmullRom(p0, p1, p2, p3, u) {
 }
 
 // Signed area of a closed 2D polygon, > 0 when counter-clockwise.
+const centroid = (pts) => {
+  const A = area(pts);
+  return [0, 1].map((q) => pts.reduce((a, p, j) => { const o = pts[(j + 1) % pts.length]; return a + (p[q] + o[q]) * (p[0] * o[1] - o[0] * p[1]); }, 0) / (6 * A));
+};
 const area = (pts) => pts.reduce((a, p, j) => { const q = pts[(j + 1) % pts.length]; return a + p[0] * q[1] - q[0] * p[1]; }, 0) / 2;
 const sub = (a, b) => a.map((c, i) => c - b[i]);
 const scale = (a, s) => a.map((c) => c * s);
@@ -1139,23 +1480,49 @@ function vec(v, n, scope, at) {
 
 function list(x, at) { need(Array.isArray(x) && x.length > 0, at, 'must be a non-empty list'); return x; }
 
-// A number, or a string expression over parameters: + - * / ( ), numbers and GLSL scalar functions.
+// A number, or a string expression over parameters: + - * / ( ), numbers and GLSL functions; its value must be a number.
 function num(e, scope, at) {
   if (typeof e === 'number') return e;
   need(typeof e === 'string', at, 'must be a number or an expression string');
+  const v = value(e, scope, at);
+  need(!Array.isArray(v), at, `"${e}" is a color (vec4); a number is needed here`);
+  return v;
+}
+// An expression's value, a number or a vec4 (D-91), its errors under the JSON path.
+function value(e, scope, at) {
   try { return evaluate(e, scope); } catch (err) { throw new Error(`${at}: ${err.message}`); }
 }
+// A color slot (D-91): an expression giving a vec4, or a list of n linear channels; clamped to 0..1. n = 3 drops alpha.
+function color(c, n, scope, at) {
+  need(typeof c === 'string' || Array.isArray(c), at, `must be a color expression or a list of ${n} linear channels`);
+  const v = typeof c === 'string' ? value(c, scope, at) : vec(c, n, scope, at);
+  need(Array.isArray(v), at, `"${c}" is a number; a color (vec4) is needed here`);
+  return v.slice(0, n).map((x) => Math.min(1, Math.max(0, x)));
+}
 
+// An expression's value: a number, or a vec4 (D-91: a color, linear RGBA, GLSL's vec4) as a list of 4 numbers.
+// Operators and built-ins work per component on vec4s, a number standing for every component; each vec4 is clamped to 0..1.
 export function evaluate(src, scope) {
-  const toks = src.match(/\d+\.?\d*|\.\d+|[a-z_][a-z0-9_]*|[-+*/(),]|\S/gi) ?? [];
+  const toks = src.match(/\d+\.?\d*|\.\d+|[a-z_][a-z0-9_]*|[-+*/(),.]|\S/gi) ?? [];
   let i = 0;
   const peek = () => toks[i], take = () => toks[i++];
   const atom = () => {
+    if (peek() === '-') { take(); return each((x) => -x, [atom()]); }
+    let v = primary();
+    while (peek() === '.') { // a GLSL swizzle: one letter gives a number, four a vec4; letters rgba or xyzw, not both
+      take();
+      const s = take() ?? '', set = /^[rgba]+$/.test(s) ? 'rgba' : /^[xyzw]+$/.test(s) ? 'xyzw' : null;
+      if (!Array.isArray(v) || !set || (s.length !== 1 && s.length !== 4)) throw new Error(`"${src}": ".${s}" needs a color (vec4) and 1 or 4 of the letters rgba or xyzw`);
+      const c = [...s].map((l) => v[set.indexOf(l)]);
+      v = c.length === 1 ? c[0] : c;
+    }
+    return v;
+  };
+  const primary = () => {
     const t = take();
     if (t === undefined) throw new Error(`"${src}": ends too early`);
     if (t === '(') { const v = sum(); if (take() !== ')') throw new Error(`"${src}": missing )`); return v; }
-    if (t === '-') return -atom();
-    if (/^[\d.]/.test(t)) return Number(t);
+    if (/^\.?\d/.test(t)) return Number(t);
     if (/^[a-z_]/i.test(t)) {
       if (peek() === '(') return call(t);
       if (!(t in scope)) throw new Error(`"${src}": unknown name "${t}"`);
@@ -1170,19 +1537,26 @@ export function evaluate(src, scope) {
     const args = [];
     if (peek() !== ')') do args.push(sum()); while (peek() === ',' && take());
     if (take() !== ')') throw new Error(`"${src}": missing ) after ${name}(`);
-    const arity = name === 'atan' ? [1, 2] : [f.length];
+    const arity = name === 'atan' ? [1, 2] : name === 'hash' ? [1, 2, 3] : [f.length];
     if (!arity.includes(args.length)) throw new Error(`"${src}": ${name} takes ${arity.join(' or ')} arguments, got ${args.length}`);
-    return f(...args);
+    if (name === 'vec4' && args.some(Array.isArray)) throw new Error(`"${src}": vec4 takes 4 numbers`);
+    if (name === 'hash' && args.some(Array.isArray)) throw new Error(`"${src}": hash takes numbers, not a color (vec4)`); // D-95: scalars only
+    return name === 'vec4' || name === 'hash' ? f(...args) : each(f, args);
   };
-  const product = () => { let v = atom(); while (peek() === '*' || peek() === '/') v = take() === '*' ? v * atom() : v / atom(); return v; };
-  const sum = () => { let v = product(); while (peek() === '+' || peek() === '-') v = take() === '+' ? v + product() : v - product(); return v; };
+  const ops = { '*': (a, b) => a * b, '/': (a, b) => a / b, '+': (a, b) => a + b, '-': (a, b) => a - b };
+  const product = () => { let v = atom(); while (peek() === '*' || peek() === '/') { const op = ops[take()]; v = each(op, [v, atom()]); } return v; };
+  const sum = () => { let v = product(); while (peek() === '+' || peek() === '-') { const op = ops[take()]; v = each(op, [v, product()]); } return v; };
   const v = sum();
   if (i < toks.length) throw new Error(`"${src}": unexpected "${toks[i]}"`);
-  if (!Number.isFinite(v)) throw new Error(`"${src}": is not a finite number`);
+  if (![v].flat().every(Number.isFinite)) throw new Error(`"${src}": is not a finite number`);
   return v;
 }
+// f on numbers, or per component when any argument is a vec4, a number argument standing for every component.
+// Every vec4 made is clamped to 0..1 (D-91 amended: a color is clamped at every step).
+const each = (f, args) => (args.some(Array.isArray) ? clamp01([0, 1, 2, 3].map((k) => f(...args.map((a) => (Array.isArray(a) ? a[k] : a))))) : f(...args));
+const clamp01 = (v) => v.map((x) => (Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : x)); // not finite stays, for the error
 
-// GLSL ES built-ins on scalars, with GLSL's definitions (mod floors, step is edge <= x).
+// GLSL ES built-ins with GLSL's definitions (mod floors, step is edge <= x), per component on vec4s; and vec4.
 const FUNCS = {
   abs: Math.abs, sign: Math.sign, floor: Math.floor, ceil: Math.ceil, fract: (x) => x - Math.floor(x),
   mod: (x, y) => x - y * Math.floor(x / y), min: Math.min, max: Math.max,
@@ -1193,17 +1567,34 @@ const FUNCS = {
   sin: Math.sin, cos: Math.cos, tan: Math.tan, asin: Math.asin, acos: Math.acos,
   atan: (y, x) => (x === undefined ? Math.atan(y) : Math.atan2(y, x)),
   radians: (d) => (d * Math.PI) / 180, degrees: (r) => (r * 180) / Math.PI,
+  vec4: (r, g, b, a) => clamp01([r, g, b, a]), // D-91: a color, linear RGBA, clamped
+  hash: (x, y, z) => (y === undefined ? pcg(u32(x)) : pcg3d(u32(x), u32(y), u32(z ?? 0))) / 2 ** 32, // D-95
 };
+// D-95: PCG hashes of Jarzynski & Olano 2020, "Hash Functions for GPU Rendering" (JCGT), in exact uint32 math.
+// An argument floored, then wrapped to uint32 (two's complement): -1 is 4294967295. >>> 0 alone truncates toward 0.
+const u32 = (a) => Math.floor(a) >>> 0;
+function pcg(v) {
+  const state = (Math.imul(v, 747796405) + 2891336453) >>> 0;
+  const word = Math.imul(((state >>> ((state >>> 28) + 4)) ^ state) >>> 0, 277803737) >>> 0;
+  return ((word >>> 22) ^ word) >>> 0;
+}
+function pcg3d(x, y, z) {
+  x = (Math.imul(x, 1664525) + 1013904223) >>> 0; y = (Math.imul(y, 1664525) + 1013904223) >>> 0; z = (Math.imul(z, 1664525) + 1013904223) >>> 0;
+  x = (x + Math.imul(y, z)) >>> 0; y = (y + Math.imul(z, x)) >>> 0; z = (z + Math.imul(x, y)) >>> 0;
+  x = (x ^ (x >>> 16)) >>> 0; y = (y ^ (y >>> 16)) >>> 0; z = (z ^ (z >>> 16)) >>> 0;
+  x = (x + Math.imul(y, z)) >>> 0;
+  return x; // shortcut: only .x is used, so the last two lines of pcg3d (y, z updates after x) are left out
+}
 
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 // Material slots a recipe may set, and where glTF keeps them (D-6 amended).
-const MATERIAL_SLOTS = { baseColorFactor: 'pbr', metallicFactor: 'pbr', roughnessFactor: 'pbr', emissiveFactor: 'top', emissiveStrength: 'ext' };
+const MATERIAL_SLOTS = { baseColorFactor: 'pbr', metallicFactor: 'pbr', roughnessFactor: 'pbr', emissiveFactor: 'top', emissiveStrength: 'ext', transmissionFactor: 'ext', ior: 'ext' };
 // Write evaluated material slots into their core glTF places; returns the material.
 function slots(core, m) {
   const pbr = Object.fromEntries(Object.entries(m).filter(([k]) => MATERIAL_SLOTS[k] === 'pbr'));
   if (Object.keys(pbr).length) core.pbrMetallicRoughness = { ...pbr, ...core.pbrMetallicRoughness };
   if (m.emissiveFactor) core.emissiveFactor = m.emissiveFactor;
-  if (m.emissiveStrength !== undefined && m.emissiveStrength !== 1) core.extensions = { ...core.extensions, [KHR_ES]: { emissiveStrength: m.emissiveStrength } };
+  for (const [k, [e, def]] of Object.entries(EXT_SLOTS)) if (m[k] !== undefined && m[k] !== def) core.extensions = { ...core.extensions, [e]: { [k]: m[k] } };
   for (const [k, place] of Object.entries(TEXTURE_SLOTS)) {
     if (!m[k]) continue;
     const slot = place === 'pbr' ? core.pbrMetallicRoughness[k] : core[k];
