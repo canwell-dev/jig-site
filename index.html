@@ -260,12 +260,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=b67300a';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=5f2078a';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=b67300a', loft: 'examples/loft.gltf?v=b67300a', star: 'examples/star.gltf?v=b67300a', bench: 'examples/bench.gltf?v=b67300a', lathe: 'examples/lathe.gltf?v=b67300a', lantern: 'examples/lantern.gltf?v=b67300a', paths: 'examples/paths.gltf?v=b67300a', ends: 'examples/ends.gltf?v=b67300a', cushion: 'examples/cushion.gltf?v=b67300a',
-  finger: 'examples/finger.gltf?v=b67300a', hand: 'examples/hand.gltf?v=b67300a' };
+const examples = { box: 'examples/box.gltf?v=5f2078a', loft: 'examples/loft.gltf?v=5f2078a', star: 'examples/star.gltf?v=5f2078a', bench: 'examples/bench.gltf?v=5f2078a', lathe: 'examples/lathe.gltf?v=5f2078a', lantern: 'examples/lantern.gltf?v=5f2078a', paths: 'examples/paths.gltf?v=5f2078a', ends: 'examples/ends.gltf?v=5f2078a', cushion: 'examples/cushion.gltf?v=5f2078a',
+  finger: 'examples/finger.gltf?v=5f2078a', hand: 'examples/hand.gltf?v=5f2078a' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };

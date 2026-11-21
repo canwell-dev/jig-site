@@ -287,7 +287,7 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     const x = src[i].extensions?.[EXT], at = `/nodes/${i}`, xat = `${at}/extensions/${EXT}`;
     const rep = isObj(x) && x.repeat !== undefined ? repeat(x.repeat, s, `${xat}/repeat`) : null;
     return Array.from({ length: rep ? Math.max(1, rep.count) : 1 }, (_, k) => {
-      const sk = rep ? { ...s, [rep.index]: k, ...rep.rows?.[k] } : s, c = rep ? [...copy, k] : copy;
+      const sk = repeatVars(rep?.vars, rep ? { ...s, [rep.index]: k, ...rep.rows?.[k] } : s, `${xat}/repeat/vars`), c = rep ? [...copy, k] : copy;
       const n = nodeAt(src[i], sk, at), vis = shown && (!rep || k < rep.count);
       if (n.mesh !== undefined) n.mesh = meshAt(n.mesh, sk);
       nodes[i] ??= { ...n, repeated: repeated.has(i) };
@@ -385,24 +385,39 @@ export async function loadFiles(doc, load, files = {}) {
 // A node's `repeat` (D-44): count rounded and clamped to 0..1024; the index is a fresh lower_snake_case name.
 function repeat(r, scope, at) {
   need(isObj(r), at, 'must be an object');
-  only(r, ['count', 'index', 'each'], at);
+  only(r, ['count', 'index', 'each', 'vars'], at);
   const fresh = (name, nat) => {
     need(typeof name === 'string' && /^[a-z_][a-z0-9_]*$/.test(name), nat, 'must be a lower_snake_case name');
     need(!Object.hasOwn(scope, name) && !Object.hasOwn(FUNCS, name), nat, `"${name}" is already a parameter, variable, enclosing name or function`);
   };
   fresh(r.index, `${at}/index`);
-  if (r.each === undefined) return { count: Math.min(1024, Math.max(0, Math.round(num(r.count, scope, `${at}/count`)))), index: r.index };
+  if (r.each === undefined) return { count: Math.min(1024, Math.max(0, Math.round(num(r.count, scope, `${at}/count`)))), index: r.index, vars: r.vars };
   // Draft f10 (D-75): one row of named values per copy; a row's values do not see the rows' names.
   need(r.count === undefined, `${at}/count`, 'cannot stand next to each (the rows are the count)');
   const rows = list(r.each, `${at}/each`), keys = isObj(rows[0]) ? Object.keys(rows[0]).filter((k) => !k.startsWith('//')) : [];
   need(rows.length <= 1024, `${at}/each`, 'has more than 1024 rows');
   keys.forEach((k) => { fresh(k, `${at}/each/0/${k}`); need(k !== r.index, `${at}/each/0/${k}`, 'is the index'); });
-  return { count: rows.length, index: r.index, rows: rows.map((row, j) => {
+  return { count: rows.length, index: r.index, vars: r.vars, rows: rows.map((row, j) => {
     need(isObj(row), `${at}/each/${j}`, 'must be an object');
     const ks = Object.keys(row).filter((k) => !k.startsWith('//'));
     need(ks.length === keys.length && ks.every((k) => keys.includes(k)), `${at}/each/${j}`, `must have the keys of row 0: ${keys.join(', ')}`);
     return Object.fromEntries(ks.map((k) => [k, num(row[k], scope, `${at}/each/${j}/${k}`)]));
   }) };
+}
+
+// Draft f22 (D-109): a repeat's `vars`, in order, in each copy's scope (after its index and row); seen where the index is.
+function repeatVars(v, scope, at) {
+  if (v === undefined) return scope;
+  need(isObj(v), at, 'must be an object');
+  const s = { ...scope };
+  for (const [name, e] of Object.entries(v)) {
+    if (name.startsWith('//')) continue;
+    const nat = `${at}/${name}`;
+    need(/^[a-z_][a-z0-9_]*$/.test(name), nat, 'name must be lower_snake_case');
+    need(!Object.hasOwn(scope, name) && !Object.hasOwn(FUNCS, name), nat, `"${name}" is already a parameter, variable, enclosing name or function`);
+    s[name] = typeof e === 'number' ? e : value(e, s, nat);
+  }
+  return s;
 }
 
 // A glTF node. Its JIG_recipe may set mesh, translation, rotation and scale; the core slots with a twin there
