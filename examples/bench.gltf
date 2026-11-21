@@ -365,145 +365,88 @@
       "extensions": { "JIG_recipe": { "baked": true } }
     }
   ],
-  "bufferViews": [
+  "meshes": [
     {
-      "buffer": 0,
-      "byteOffset": 0,
-      "byteLength": 288,
-      "target": 34962,
+      "primitives": [
+        {
+          "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 },
+          "indices": 3,
+          "material": 0,
+          "extensions": {
+            "KHR_materials_variants": {
+              "mappings": [
+                { "material": 3, "variants": [0] },
+                { "material": 5, "variants": [1] },
+                { "material": 8, "variants": [2] }
+              ]
+            }
+          }
+        }
+      ],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "buffer": 0,
-      "byteOffset": 288,
-      "byteLength": 288,
-      "target": 34962,
+      "primitives": [
+        {
+          "attributes": { "POSITION": 4, "NORMAL": 5, "TEXCOORD_0": 6 },
+          "indices": 7,
+          "material": 1,
+          "extensions": {
+            "KHR_materials_variants": { "mappings": [{ "material": 6, "variants": [1] }] }
+          }
+        }
+      ],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "buffer": 0,
-      "byteOffset": 576,
-      "byteLength": 192,
-      "target": 34962,
+      "primitives": [
+        {
+          "attributes": { "POSITION": 8, "NORMAL": 9, "TEXCOORD_0": 10 },
+          "indices": 11,
+          "material": 2,
+          "extensions": {
+            "KHR_materials_variants": {
+              "mappings": [
+                { "material": 4, "variants": [0] },
+                { "material": 7, "variants": [1] },
+                { "material": 9, "variants": [2] }
+              ]
+            }
+          }
+        }
+      ],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "buffer": 0,
-      "byteOffset": 768,
-      "byteLength": 72,
-      "target": 34963,
+      "primitives": [
+        {
+          "attributes": { "POSITION": 12, "NORMAL": 13, "TEXCOORD_0": 14 },
+          "indices": 15,
+          "material": 1,
+          "extensions": {
+            "KHR_materials_variants": { "mappings": [{ "material": 6, "variants": [1] }] }
+          }
+        }
+      ],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "buffer": 0,
-      "byteOffset": 840,
-      "byteLength": 288,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 1128,
-      "byteLength": 288,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 1416,
-      "byteLength": 192,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 1608,
-      "byteLength": 72,
-      "target": 34963,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 1680,
-      "byteLength": 288,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 1968,
-      "byteLength": 288,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 2256,
-      "byteLength": 192,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 2448,
-      "byteLength": 72,
-      "target": 34963,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 2520,
-      "byteLength": 46056,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 48576,
-      "byteLength": 46056,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 94632,
-      "byteLength": 30704,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 125336,
-      "byteLength": 12120,
-      "target": 34963,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 137456,
-      "byteLength": 288,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 137744,
-      "byteLength": 288,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 138032,
-      "byteLength": 192,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 138224,
-      "byteLength": 72,
-      "target": 34963,
+      "primitives": [
+        {
+          "attributes": { "POSITION": 16, "NORMAL": 17, "TEXCOORD_0": 18 },
+          "indices": 19,
+          "material": 2,
+          "extensions": {
+            "KHR_materials_variants": {
+              "mappings": [
+                { "material": 4, "variants": [0] },
+                { "material": 7, "variants": [1] },
+                { "material": 9, "variants": [2] }
+              ]
+            }
+          }
+        }
+      ],
       "extensions": { "JIG_recipe": { "baked": true } }
     }
   ],
@@ -659,88 +602,145 @@
       "extensions": { "JIG_recipe": { "baked": true } }
     }
   ],
-  "meshes": [
+  "bufferViews": [
     {
-      "primitives": [
-        {
-          "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 },
-          "indices": 3,
-          "material": 0,
-          "extensions": {
-            "KHR_materials_variants": {
-              "mappings": [
-                { "material": 3, "variants": [0] },
-                { "material": 5, "variants": [1] },
-                { "material": 8, "variants": [2] }
-              ]
-            }
-          }
-        }
-      ],
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 288,
+      "target": 34962,
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [
-        {
-          "attributes": { "POSITION": 4, "NORMAL": 5, "TEXCOORD_0": 6 },
-          "indices": 7,
-          "material": 1,
-          "extensions": {
-            "KHR_materials_variants": { "mappings": [{ "material": 6, "variants": [1] }] }
-          }
-        }
-      ],
+      "buffer": 0,
+      "byteOffset": 288,
+      "byteLength": 288,
+      "target": 34962,
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [
-        {
-          "attributes": { "POSITION": 8, "NORMAL": 9, "TEXCOORD_0": 10 },
-          "indices": 11,
-          "material": 2,
-          "extensions": {
-            "KHR_materials_variants": {
-              "mappings": [
-                { "material": 4, "variants": [0] },
-                { "material": 7, "variants": [1] },
-                { "material": 9, "variants": [2] }
-              ]
-            }
-          }
-        }
-      ],
+      "buffer": 0,
+      "byteOffset": 576,
+      "byteLength": 192,
+      "target": 34962,
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [
-        {
-          "attributes": { "POSITION": 12, "NORMAL": 13, "TEXCOORD_0": 14 },
-          "indices": 15,
-          "material": 1,
-          "extensions": {
-            "KHR_materials_variants": { "mappings": [{ "material": 6, "variants": [1] }] }
-          }
-        }
-      ],
+      "buffer": 0,
+      "byteOffset": 768,
+      "byteLength": 72,
+      "target": 34963,
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
-      "primitives": [
-        {
-          "attributes": { "POSITION": 16, "NORMAL": 17, "TEXCOORD_0": 18 },
-          "indices": 19,
-          "material": 2,
-          "extensions": {
-            "KHR_materials_variants": {
-              "mappings": [
-                { "material": 4, "variants": [0] },
-                { "material": 7, "variants": [1] },
-                { "material": 9, "variants": [2] }
-              ]
-            }
-          }
-        }
-      ],
+      "buffer": 0,
+      "byteOffset": 840,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1128,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1416,
+      "byteLength": 192,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1608,
+      "byteLength": 72,
+      "target": 34963,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1680,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1968,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2256,
+      "byteLength": 192,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2448,
+      "byteLength": 72,
+      "target": 34963,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2520,
+      "byteLength": 46056,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 48576,
+      "byteLength": 46056,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 94632,
+      "byteLength": 30704,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 125336,
+      "byteLength": 12120,
+      "target": 34963,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 137456,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 137744,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 138032,
+      "byteLength": 192,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 138224,
+      "byteLength": 72,
+      "target": 34963,
       "extensions": { "JIG_recipe": { "baked": true } }
     }
   ],

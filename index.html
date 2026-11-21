@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>JIG editor</title>
 <style>
-/* Layout: four-area workbench (outliner | viewport | properties, parameters/source under the viewport, status line). Accent = selection; violet = expression (locked to the gizmo). */
+/* Layout: four-area workbench (outliner | viewport | properties, parameters/source under the viewport, status line). Accent = selection; violet = expression (a drag rewrites one number in it). */
 :root {
   --bg: #f4f2ee; --panel: #ffffff; --chip: #ece8e1; --fg: #222; --mute: #6e6862; --line: #ddd8d0;
   --accent: #d9480f; --expr: #7646c9; --err: #b00020; --vp: #e9e6e0; --helper: #2f6fdf;
@@ -89,6 +89,8 @@ kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); bor
 .vrow { display: grid; grid-template-columns: 64px repeat(3, minmax(0, 1fr)); gap: 4px; align-items: center; }
 .vrow.q { grid-template-columns: 64px repeat(4, minmax(0, 1fr)); }
 .vrow.two { grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1fr); }
+.vrow.crow { grid-template-columns: 64px 28px minmax(0, 1fr) minmax(0, 72px); }
+.vrow.crow input[type=color] { width: 28px; height: 24px; padding: 0; border: 1px solid var(--line); border-radius: 4px; background: none; }
 .vrow.one { grid-template-columns: 64px minmax(0, 1fr); }
 .vrow label, .vrow .lbl { color: var(--mute); font-size: 12px; }
 .prow { display: grid; grid-template-columns: 28px repeat(3, minmax(0, 1fr)) 22px; gap: 4px; align-items: center; }
@@ -112,18 +114,12 @@ input.f.expr { color: var(--expr); border-color: color-mix(in srgb, var(--expr) 
 #sketch .axis { stroke: var(--line); }
 #sketch .pt { fill: var(--accent); cursor: grab; }
 #sketch .pt.first { fill: var(--fg); }
-#sketch .pt.locked { fill: var(--expr); cursor: not-allowed; }
+#sketch .pt.expr { fill: var(--expr); }
 #sketch .pt.on { stroke: var(--fg); }
-#sketch .pt.half { stroke: var(--expr); }
-#sketch .pt.half.on { stroke: var(--fg); }
-#sketch .pt.half.u { cursor: ew-resize; }
-#sketch .pt.half.v { cursor: ns-resize; }
-#sketch .track { stroke: var(--expr); stroke-opacity: .7; }
-#sketch .tiph { fill: var(--expr); }
 #sketch .mid { fill: var(--panel); stroke: var(--accent); cursor: copy; }
 #sketch .hline { stroke: var(--accent); }
 #sketch .hdl { fill: var(--panel); stroke: var(--accent); cursor: grab; }
-#sketch .hdl.locked { stroke: var(--expr); cursor: not-allowed; }
+#sketch .hdl.expr { stroke: var(--expr); }
 .setbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px 12px 0; }
 .setbar label { font: 10.5px var(--mono); color: var(--mute); text-transform: uppercase; letter-spacing: .05em; }
 .setbar .f { width: auto; min-width: 90px; }
@@ -189,6 +185,7 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
       <button type="button" role="menuitem" data-add="box"><span class="ic box"></span>Box<small>size x y z</small></button>
       <button type="button" role="menuitem" data-add="loft"><span class="ic loft"></span>Loft<small>path + sections</small></button>
       <button type="button" role="menuitem" data-add="extrude"><span class="ic extrude"></span>Extrude<small>outline + holes</small></button>
+      <button type="button" role="menuitem" data-add="lathe"><span class="ic lathe"></span>Lathe<small>profile turned round y</small></button>
     </div>
     <span class="seg" role="group" aria-label="Mode">
       <button class="btn" id="mObject" type="button" aria-pressed="true">Object</button>
@@ -260,12 +257,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=e3066a1';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION } from './jig.js?v=7daa316';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=e3066a1', loft: 'examples/loft.gltf?v=e3066a1', star: 'examples/star.gltf?v=e3066a1', bench: 'examples/bench.gltf?v=e3066a1', lathe: 'examples/lathe.gltf?v=e3066a1', lantern: 'examples/lantern.gltf?v=e3066a1', paths: 'examples/paths.gltf?v=e3066a1', ends: 'examples/ends.gltf?v=e3066a1', cushion: 'examples/cushion.gltf?v=e3066a1',
-  finger: 'examples/finger.gltf?v=e3066a1', hand: 'examples/hand.gltf?v=e3066a1' };
+const examples = { box: 'examples/box.gltf?v=7daa316', loft: 'examples/loft.gltf?v=7daa316', star: 'examples/star.gltf?v=7daa316', bench: 'examples/bench.gltf?v=7daa316', lathe: 'examples/lathe.gltf?v=7daa316', lantern: 'examples/lantern.gltf?v=7daa316', paths: 'examples/paths.gltf?v=7daa316', ends: 'examples/ends.gltf?v=7daa316', cushion: 'examples/cushion.gltf?v=7daa316',
+  finger: 'examples/finger.gltf?v=7daa316', hand: 'examples/hand.gltf?v=7daa316' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -286,6 +283,10 @@ const R = () => doc.extensions[EXT];
 const meshOf = (i) => doc.nodes?.[i]?.extensions?.[EXT]?.mesh;
 const shapeKind = (m) => (m?.loft ? 'loft' : m?.extrude ? 'extrude' : m?.lathe ? 'lathe' : 'box');
 const loftOf = (i) => R().meshes?.[meshOf(i)]?.loft;
+const latheOf = (i) => R().meshes?.[meshOf(i)]?.lathe;
+const extrudeOf = (i) => R().meshes?.[meshOf(i)]?.extrude;
+// Edit mode: every shape (a lathe's or extrude's round forms and arc items are edited in the JSON).
+const editable = (i) => meshOf(i) !== undefined && !!R().meshes?.[meshOf(i)];
 // shortcut: a path with a corner radius, an arc or a spiral (D-99) has no point editor; edit its JSON
 const plainPath = (l) => l?.path.every((p) => Array.isArray(p) && p.length === 3);
 const X = (i) => ((doc.nodes[i].extensions ??= {})[EXT] ??= {});
@@ -365,7 +366,7 @@ new MutationObserver(theme).observe(document.documentElement, { attributes: true
 const tc = new TransformControls(camera, canvas);
 tc.setSize(0.85);
 scene.add(tc.getHelper());
-tc.addEventListener('dragging-changed', (e) => { orbit.enabled = !e.value; dragging = e.value; if (!e.value) commit(); });
+tc.addEventListener('dragging-changed', (e) => { orbit.enabled = !e.value; dragging = e.value; if (e.value) moved.clear(); else commit(); });
 tc.addEventListener('objectChange', onGizmo);
 
 new ResizeObserver(() => {
@@ -470,6 +471,20 @@ function draw() {
     m.matrixAutoUpdate = false; m.matrix.fromArray(inst.matrix); m.userData.node = inst.node;
     meshLayer.add(m);
   }
+  // Draft f23 (D-113): the KHR_lights_punctual lights of shown nodes, as GLTFLoader makes them (shining along -z).
+  const lit = (recs) => recs.forEach((rec) => {
+    if (!rec.shown) return;
+    const l = out.lights[rec.light];
+    if (l) {
+      const c = new THREE.Color().setRGB(...(l.color ?? [1, 1, 1])), I = l.intensity ?? 1, holder = new THREE.Object3D();
+      const t = l.type === 'point' ? new THREE.PointLight(c, I, l.range ?? 0, 2) : l.type === 'spot' ? new THREE.SpotLight(c, I, l.range ?? 0, l.spot?.outerConeAngle ?? Math.PI / 4,
+        1 - (l.spot?.innerConeAngle ?? 0) / (l.spot?.outerConeAngle ?? Math.PI / 4), 2) : new THREE.DirectionalLight(c, I);
+      if (t.target) { t.target.position.set(0, 0, -1); t.add(t.target); }
+      holder.matrixAutoUpdate = false; holder.matrix.fromArray(rec.world); holder.add(t); meshLayer.add(holder);
+    }
+    lit(rec.kids);
+  });
+  lit(out.tree);
   if (!dragging && !sketchDrag) model.position.y = -out.floor; // hold still while dragging, so the handle stays under the pointer
   const inst = sel && out.instances.find((i) => i.node === sel.node && !i.model);
   if (mode === 'edit' && inst && out.meshes[inst.mesh].type === 'loft') {
@@ -492,10 +507,111 @@ function draw() {
       group.add(line(ring, sel.section === j ? hot : blue, true));
       return { ring, centre: v3(f.p) };
     });
+    // The selected section's plane (its twist turned in) and, when the shape editor can edit it, its points and handles.
+    let frame = null, dots = [];
+    const sj = editTool === 'sections' ? m.sections[sel.section] : null;
+    if (sj) {
+      const f = loftFrame(curve, sj.t), c = Math.cos((sj.twist * Math.PI) / 180), sn = Math.sin((sj.twist * Math.PI) / 180);
+      frame = new THREE.Matrix4().makeBasis(v3(f.x.map((q, a) => c * q + sn * f.y[a])), v3(f.y.map((q, a) => -sn * f.x[a] + c * q)), v3(f.z)).setPosition(v3(f.p));
+      if (shapeSel()) dots = sectionDots(sj.points, (p, on, size) => {
+        const d = new THREE.Points(new THREE.BufferGeometry().setFromPoints([p.clone().applyMatrix4(frame)]),
+          new THREE.PointsMaterial({ color: on ? hot : blue, size: on ? size + 4 : size, sizeAttenuation: false, depthTest: false }));
+        d.renderOrder = 11; group.add(d);
+      }, (a, b) => group.add(line([a.clone().applyMatrix4(frame), b.clone().applyMatrix4(frame)], blue)));
+    }
     helperLayer.add(group);
-    edit = { curve, group, mesh: m, rings };
+    edit = { curve, group, mesh: m, rings, frame, dots };
+  } else if (mode === 'edit' && inst && ['lathe', 'box', 'extrude'].includes(out.meshes[inst.mesh].type)) {
+    // A lathe: its profile on its plane (r along x, z = 0), points and handles. A box: a grip on each face (size) and
+    // one on the top front edge where the rounding starts (radius). An extrude: the selected loop's points on the
+    // front cap, a depth grip on the cap, a bevel grip on the side where the rounding starts.
+    const m = out.meshes[inst.mesh], group = new THREE.Group(), blue = new THREE.Color(css('--helper')), hot = new THREE.Color(css('--accent'));
+    group.matrixAutoUpdate = false; group.matrix.fromArray(inst.matrix);
+    const at = ([r, y]) => v3([r, y, 0]);
+    const line = (pts) => { const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: blue, depthTest: false, transparent: true })); l.renderOrder = 10; group.add(l); };
+    const dot = (p, on, size) => { const d = new THREE.Points(new THREE.BufferGeometry().setFromPoints([p]), new THREE.PointsMaterial({ color: on ? hot : blue, size: on ? size + 4 : size, sizeAttenuation: false, depthTest: false })); d.renderOrder = 11; group.add(d); };
+    let dots = [], poly = null;
+    const grips = [];
+    if (m.type === 'lathe') {
+      poly = profileLine(m.profile).poly.map(at);
+      line(poly);
+      if (shapeSel()) dots = sectionDots(m.profile, dot, (a, b) => line([a, b]));
+    } else if (m.type === 'box') {
+      const half = m.size.map((c) => c / 2);
+      for (const a of [0, 1, 2]) for (const sg of [1, -1]) grips.push({ grip: `${'xyz'[a]}${sg > 0 ? '+' : '-'}`, p: v3([0, 1, 2].map((b) => (b === a ? sg * half[a] : 0))), axis: a });
+      grips.push({ grip: 'radius', p: v3([half[0] - (m.radius ?? 0), half[1], half[2]]), axis: 0 });
+    } else {
+      const h = m.depth / 2, k = Math.min(sel.loop ?? 0, (m.holes ?? []).length), o = m.outline, n = o.length;
+      if (shapeSel()) dots = sectionDots(k ? m.holes[k - 1] : o, dot, (a, b) => line([a, b]), h);
+      grips.push({ grip: 'depth', p: v3([o.reduce((a, q) => a + q[0], 0) / n, o.reduce((a, q) => a + q[1], 0) / n, h]), axis: 2 },
+        { grip: 'bevel', p: v3([(o[0][0] + o[1][0]) / 2, (o[0][1] + o[1][1]) / 2, h - (m.bevel ?? 0)]), axis: 2 });
+    }
+    for (const g of grips) dot(g.p, sel.grip === g.grip, 11);
+    helperLayer.add(group);
+    edit = { flat: true, lathe: m.type === 'lathe', group, mesh: m, poly, dots, grips };
   }
   model.updateMatrixWorld(true);
+}
+
+// A box or extrude grip dragged to p (in the shape's axes): the box symmetric about its centre.
+function dragGrip(m, grip, p) {
+  const om = edit.mesh;
+  if (m.box && grip === 'radius') {
+    m.box.radius = dragTo(m.box.radius ?? 0, Math.min(Math.max(0, om.size[0] / 2 - p.x), ...om.size.map((c) => c / 2)), 'radius');
+    if (m.box.radius === 0) delete m.box.radius;
+  } else if (m.box && Array.isArray(m.box.size)) {
+    const a = 'xyz'.indexOf(grip[0]), sg = grip[1] === '+' ? 1 : -1;
+    m.box.size[a] = dragTo(m.box.size[a], Math.max(0.001, 2 * sg * p.getComponent(a)), `size ${grip[0]}`);
+  } else if (m.extrude && grip === 'depth') m.extrude.depth = dragTo(m.extrude.depth, Math.max(0.001, 2 * p.z, 2 * (om.bevel ?? 0)), 'depth');
+  else if (m.extrude && grip === 'bevel') {
+    m.extrude.bevel = dragTo(m.extrude.bevel ?? 0, Math.min(Math.max(0, om.depth / 2 - p.z), om.depth / 2), 'bevel');
+    if (m.extrude.bevel === 0) delete m.extrude.bevel;
+  }
+}
+
+// A section dragged by the gizmo (secDrag: its frame, values and source when the drag began). Slide: the curve
+// sample nearest where the gizmo went gives t, or d along the curve (from the end when d was negative).
+// Twist: the turn about the tangent added. Scale: radii, or every point and handle, times the gizmo's scale.
+let secDrag = null;
+function dragSection(s, how) {
+  const scope = out.nodes[sel.node]?.scope ?? {}, val = (v) => (isStr(v) ? +evalExpr(v, scope) : v), j = sel.section;
+  if (how === 'translate') {
+    const to = proxy.position.clone().applyMatrix4(secDrag.frame), curve = edit.curve;
+    let best = { d: Infinity, t: 0 };
+    for (let k = 0; k + 1 < curve.length; k++) {
+      const seg = new THREE.Line3(v3(curve[k].p), v3(curve[k + 1].p)), f = seg.closestPointToPointParameter(to, true), d = seg.at(f, new THREE.Vector3()).distanceTo(to);
+      if (d < best.d) best = { d, t: curve[k].t + (curve[k + 1].t - curve[k].t) * f };
+    }
+    const t = r4(best.t), L = curveLength(curve);
+    if (s.d === undefined) s.t = dragTo(s.t, t, `section ${j} t`);
+    else s.d = dragTo(s.d, val(secDrag.src.d) < 0 ? -(1 - t) * L : t * L, `section ${j} d`);
+  } else if (how === 'rotate') {
+    const q = proxy.quaternion, turned = secDrag.twist + (2 * Math.atan2(q.z, q.w) * 180) / Math.PI;
+    s.twist = dragTo(s.twist ?? 0, turned, `section ${j} twist`);
+    if (s.twist === 0) delete s.twist;
+  } else {
+    const k = [proxy.scale.x, proxy.scale.y], src = secDrag.src.points, both = k[0] !== 1 ? k[0] : k[1];
+    if (src.circle !== undefined) s.points.circle = dragTo(s.points.circle, val(src.circle) * both, `section ${j} circle`);
+    else if (src.flutes) s.points.flutes.r = dragTo(s.points.flutes.r, val(src.flutes.r) * both, `section ${j} r`);
+    else if (src.ellipse || src.squircle) {
+      const key = src.ellipse ? 'ellipse' : 'squircle';
+      for (const a of [0, 1]) s.points[key][a] = dragTo(s.points[key][a], val(src[key][a]) * k[a], `section ${j} r${'xy'[a]}`);
+    } else if (Array.isArray(src)) s.points.forEach((p, n) => p.forEach((c, a) => { p[a] = dragTo(c, secDrag.points[n][a] * k[a % 2], `point ${n} ${a < 2 ? '' : 'h'}${'uv'[a % 2]}`); }));
+  }
+}
+
+// Dots for a shape's points and the handles of its smooth points, in its plane (z = 0): dot(position, selected, size)
+// and handleLine(a, b) draw; returns [{ j, dir, p }] to pick from (dir 0 the point, 1 its out handle, -1 its in one).
+function sectionDots(pts, dot, handleLine, z = 0) {
+  const dots = [], at = ([u, v]) => v3([u, v, z]);
+  pts.forEach((p, j) => {
+    dot(at(p), sel.point === j && !sel.dir, 9); dots.push({ j, dir: 0, p: at(p) });
+    if (p.length < 4) return;
+    const [iu, iv] = inH(p), o = at([p[0] + p[2], p[1] + p[3]]), i = at([p[0] + iu, p[1] + iv]);
+    handleLine(i, at(p)); handleLine(at(p), o);
+    for (const [dir, h] of [[1, o], [-1, i]]) { dot(h, sel.point === j && sel.dir === dir, 6); dots.push({ j, dir, p: h }); }
+  });
+  return dots;
 }
 
 // World matrix of node i's parent (identity for a scene root).
@@ -504,9 +620,9 @@ function parentWorld(i) {
   const p = doc.nodes.findIndex((n) => n.children?.includes(i));
   return p < 0 || !out.nodes[p] ? IDENT : mul(parentWorld(p), out.nodes[p].matrix);
 }
-let locked = []; // axes the gizmo leaves alone, because they hold expressions
+let locked = []; // why the gizmo is off: 'matrix', 'on' or 'rotation' (a quaternion holding expressions)
 function placeGizmo() {
-  tc.detach(); locked = [];
+  tc.detach(); locked = []; tc.showX = tc.showY = tc.showZ = true; tc.setSpace('world'); secDrag = null;
   if (!out || !sel || !out.nodes[sel.node]) return;
   const n = out.nodes[sel.node];
   if (mode === 'object') {
@@ -515,33 +631,72 @@ function placeGizmo() {
     pivot.matrix.fromArray(parentWorld(sel.node));
     proxy.position.fromArray(n.translation); proxy.quaternion.fromArray(n.rotation); proxy.scale.fromArray(n.scale);
     const src = (gizmo === 'rotate' && eulerSrc(sel.node)) || nodeSrc(sel.node, SLOT[gizmo]);
-    if (gizmo === 'rotate') { if (src.some(isStr)) { locked = ['rotation']; return; } }
-    else locked = src.map((v, k) => (isStr(v) ? 'xyz'[k] : null)).filter(Boolean);
+    if (gizmo === 'rotate' && !eulerSrc(sel.node) && src.some(isStr)) { locked = ['rotation']; return; }
     tc.setMode(gizmo);
-    tc.showX = !isStr(src[0]) || gizmo === 'rotate'; tc.showY = !isStr(src[1]) || gizmo === 'rotate'; tc.showZ = !isStr(src[2]) || gizmo === 'rotate';
-    if (locked.length === 3) return;
+  } else if (sel.section !== undefined && edit?.frame) {
+    // A section: G slides it along the path, R twists it, S scales its radius or points; a point of it moves in its plane.
+    const inst = out.instances.find((i) => i.node === sel.node && !i.model), om = edit.mesh.sections[sel.section];
+    pivot.matrix.fromArray(inst.matrix).multiply(edit.frame);
+    proxy.position.set(0, 0, 0); proxy.quaternion.identity(); proxy.scale.set(1, 1, 1);
+    if (sel.point !== undefined) {
+      const d = edit.dots.find((o) => o.j === sel.point && o.dir === (sel.dir ?? 0));
+      if (!d) return;
+      proxy.position.copy(d.p); tc.setMode('translate'); tc.showZ = false;
+    } else {
+      tc.setMode(gizmo); tc.setSpace('local');
+      if (gizmo === 'translate') tc.showX = tc.showY = false;
+      if (gizmo === 'rotate') tc.showX = tc.showY = false;
+      if (gizmo === 'scale') tc.showZ = false;
+      secDrag = { frame: edit.frame.clone(), twist: om.twist, points: structuredClone(om.points), src: structuredClone(loftOf(sel.node).sections[sel.section]) };
+    }
+  } else if ((sel.point !== undefined || sel.grip) && edit?.flat) {
+    // In the shape's own axes: a point moves in its plane, a grip along its axis.
+    const o = sel.grip ? edit.grips.find((g) => g.grip === sel.grip) : edit.dots.find((d) => d.j === sel.point && d.dir === (sel.dir ?? 0));
+    if (!o) return;
+    pivot.matrix.copy(edit.group.matrix);
+    proxy.position.copy(o.p); proxy.quaternion.identity(); proxy.scale.set(1, 1, 1);
+    tc.setMode('translate'); tc.setSpace('local');
+    if (sel.grip) { tc.showX = o.axis === 0; tc.showY = o.axis === 1; tc.showZ = o.axis === 2; } else tc.showZ = false;
   } else if (sel.point !== undefined && edit) {
     const inst = out.instances.find((i) => i.node === sel.node && !i.model);
     pivot.matrix.fromArray(inst.matrix);
     proxy.position.fromArray(edit.mesh.path[sel.point]); proxy.quaternion.identity(); proxy.scale.set(1, 1, 1);
-    const src = loftOf(sel.node).path[sel.point];
-    locked = src.map((v, k) => (isStr(v) ? 'xyz'[k] : null)).filter(Boolean);
-    tc.setMode('translate'); tc.showX = !isStr(src[0]); tc.showY = !isStr(src[1]); tc.showZ = !isStr(src[2]);
-    if (locked.length === 3) return;
+    tc.setMode('translate');
   } else return;
   pivot.updateMatrixWorld(true);
   tc.attach(proxy);
 }
+// GAPS editor 1: a dragged value that holds an expression keeps it, with one number in it solved for the new value
+// (in the first copy's scope); `moved` remembers each rewritten expression since the drag began, for the status line.
+const moved = new Map();
+function dragTo(src, v, what) {
+  if (!isStr(src)) return r4(v);
+  const e = solveFor(src, out.nodes[sel.node]?.scope ?? {}, v) ?? src;
+  if (e !== src) { moved.set(what, [moved.get(what)?.[0] ?? src, e]); note = [...moved].map(([w, [a, b]]) => `${w}: ${a} → ${b}`).join(' · ').replace(/[<>&]/g, (c) => `&#${c.charCodeAt(0)};`); } // the hint is HTML
+  return e;
+}
+const keep = (src, now, what) => now.map((c, k) => dragTo(src[k], c, `${what} ${'xyz'[k]}`));
 function onGizmo() {
   if (!sel) return;
-  const keep = (src, now) => now.map((c, k) => (isStr(src[k]) ? src[k] : r4(c)));
   if (mode === 'object') {
-    const slot = SLOT[tc.mode], src = nodeSrc(sel.node, slot);
-    if (slot === 'rotation') setEuler(sel.node, toDeg(proxy.quaternion.toArray()));
-    else setNodeSlot(sel.node, slot, keep(src, slot === 'translation' ? proxy.position.toArray() : proxy.scale.toArray()));
+    const slot = SLOT[tc.mode], src = nodeSrc(sel.node, slot), scope = out.nodes[sel.node]?.scope ?? {};
+    if (slot === 'rotation') {
+      // Each angle taken nearest its value now, so 190° dragged stays near 190 rather than jumping to -170.
+      const eu = eulerSrc(sel.node), was = eu ? eu.map((c) => (isStr(c) ? evalExpr(c, scope) : c)) : toDeg(nodeSrc(sel.node, 'rotation'));
+      const deg = toDeg(proxy.quaternion.toArray()).map((d, k) => d + 360 * Math.round((was[k] - d) / 360));
+      setEuler(sel.node, eu ? keep(eu, deg, 'rotation') : deg.map(r4));
+    } else setNodeSlot(sel.node, slot, keep(src, slot === 'translation' ? proxy.position.toArray() : proxy.scale.toArray(), slot === 'translation' ? 'location' : 'scale'));
+  } else if (sel.section !== undefined && sel.point !== undefined) {
+    dragPoint(shapeSel(), sel.point, sel.dir ?? 0, [proxy.position.x, proxy.position.y]);
+  } else if (sel.section !== undefined && secDrag) {
+    dragSection(loftOf(sel.node).sections[sel.section], tc.mode);
+  } else if (sel.grip) {
+    dragGrip(R().meshes[meshOf(sel.node)], sel.grip, proxy.position);
+  } else if (sel.point !== undefined && (latheOf(sel.node) || extrudeOf(sel.node))) {
+    dragPoint(shapeSel(), sel.point, sel.dir ?? 0, [proxy.position.x, proxy.position.y]);
   } else if (sel.point !== undefined) {
     const l = loftOf(sel.node);
-    l.path[sel.point] = keep(l.path[sel.point], proxy.position.toArray());
+    l.path[sel.point] = keep(l.path[sel.point], proxy.position.toArray(), `point ${sel.point}`);
   }
   evaluate(); draw(); props(); status(); // no outliner/params rebuild mid-drag
 }
@@ -562,40 +717,57 @@ function pick(e) {
   const rect = canvas.getBoundingClientRect(), q = [e.clientX - rect.left, e.clientY - rect.top];
   if (mode === 'edit' && edit) {
     const scr = (v) => { const p = v.clone().applyMatrix4(edit.group.matrixWorld).project(camera); return [(p.x + 1) / 2 * rect.width, (1 - p.y) / 2 * rect.height]; };
-    const l = loftOf(sel.node);
-    if (editTool === 'path') {
-      if (!plainPath(l)) return;
+    if (edit.flat) {
       let best = null;
-      edit.mesh.path.forEach((p, j) => { const s = scr(v3(p)), d = Math.hypot(s[0] - q[0], s[1] - q[1]); if (d < 14 && (!best || d < best.d)) best = { j, d }; });
-      if (best) { sel = { node: sel.node, point: best.j }; return update(); }
-    } else {
-      let best = null;
-      edit.rings.forEach(({ ring, centre }, j) => {
-        const s = ring.map(scr), c = scr(centre);
-        let d = Math.hypot(c[0] - q[0], c[1] - q[1]);
-        s.forEach((a, k) => { d = Math.min(d, segDist(q, a, s[(k + 1) % s.length]).d); });
-        if (d < 9 && (!best || d < best.d)) best = { j, d };
-      });
-      if (best) { sel = { node: sel.node, section: best.j }; return update(); }
-    }
-    // A click on the curve adds a path point or a section there.
-    const s = edit.curve.map((c) => scr(v3(c.p)));
-    let best = null;
-    for (let k = 0; k < s.length - 1; k++) { const r = segDist(q, s[k], s[k + 1]); if (r.d < 8 && (!best || r.d < best.d)) best = { k, ...r }; }
-    if (best) {
-      const a = edit.curve[best.k], b = edit.curve[best.k + 1];
-      if (editTool === 'path') {
-        const at = a.segment + 1;
-        l.path.splice(at, 0, a.p.map((c, i) => r4(c + (b.p[i] - c) * best.f)));
-        sel = { node: sel.node, point: at };
-        note = `Added path point ${at}.`;
-      } else {
-        const t = r4(a.t + (b.t - a.t) * best.f), s2 = sectionAt(edit.mesh, t);
-        l.sections.push({ t, points: s2.points.map((p) => p.map(r4)), ...(s2.twist ? { twist: r4(s2.twist) } : {}) });
-        sel = { node: sel.node, section: l.sections.length - 1 };
-        note = `Added a section at t ${t}.`;
+      [...edit.grips, ...edit.dots].forEach((o) => { const s = scr(o.p), d = Math.hypot(s[0] - q[0], s[1] - q[1]); if (d < 12 && (!best || d < best.d)) best = { ...o, d }; });
+      if (best?.grip) { sel = { node: sel.node, ...(sel.loop !== undefined && { loop: sel.loop }), grip: best.grip }; return update(); }
+      if (best) { sel = { node: sel.node, ...(sel.loop !== undefined && { loop: sel.loop }), point: best.j, ...(best.dir && { dir: best.dir }) }; shapePoint = best.j; return update(); }
+      // A click on a lathe's profile adds a point half way along that piece of it.
+      const s = edit.lathe && shapeSel() ? edit.poly.map(scr) : [], starts = edit.lathe && profileLine(edit.mesh.profile).starts;
+      for (let k = 0; k < s.length - 1; k++) if (segDist(q, s[k], s[k + 1]).d < 8) {
+        const edge = starts.findLastIndex((st) => st <= k);
+        insertPoint(edge); shapePoint = edge + 1; sel = { node: sel.node, point: edge + 1 };
+        note = `Added profile point ${edge + 1}.`;
+        return commit();
       }
-      return commit();
+    } else {
+      const l = loftOf(sel.node);
+      if (editTool === 'path') {
+        if (!plainPath(l)) return;
+        let best = null;
+        edit.mesh.path.forEach((p, j) => { const s = scr(v3(p)), d = Math.hypot(s[0] - q[0], s[1] - q[1]); if (d < 14 && (!best || d < best.d)) best = { j, d }; });
+        if (best) { sel = { node: sel.node, point: best.j }; return update(); }
+      } else {
+        let best = null;
+        edit.dots.forEach((o) => { const s = scr(o.p.clone().applyMatrix4(edit.frame)), d = Math.hypot(s[0] - q[0], s[1] - q[1]); if (d < 12 && (!best || d < best.d)) best = { ...o, d }; });
+        if (best) { sel = { node: sel.node, section: sel.section, point: best.j, ...(best.dir && { dir: best.dir }) }; shapePoint = best.j; return update(); }
+        edit.rings.forEach(({ ring, centre }, j) => {
+          const s = ring.map(scr), c = scr(centre);
+          let d = Math.hypot(c[0] - q[0], c[1] - q[1]);
+          s.forEach((a, k) => { d = Math.min(d, segDist(q, a, s[(k + 1) % s.length]).d); });
+          if (d < 9 && (!best || d < best.d)) best = { j, d };
+        });
+        if (best) { sel = { node: sel.node, section: best.j }; return update(); }
+      }
+      // A click on the curve adds a path point or a section there.
+      const s = edit.curve.map((c) => scr(v3(c.p)));
+      let best = null;
+      for (let k = 0; k < s.length - 1; k++) { const r = segDist(q, s[k], s[k + 1]); if (r.d < 8 && (!best || r.d < best.d)) best = { k, ...r }; }
+      if (best) {
+        const a = edit.curve[best.k], b = edit.curve[best.k + 1];
+        if (editTool === 'path') {
+          const at = a.segment + 1;
+          l.path.splice(at, 0, a.p.map((c, i) => r4(c + (b.p[i] - c) * best.f)));
+          sel = { node: sel.node, point: at };
+          note = `Added path point ${at}.`;
+        } else {
+          const t = r4(a.t + (b.t - a.t) * best.f), s2 = sectionAt(edit.mesh, t);
+          l.sections.push({ t, points: s2.points.map((p) => p.map(r4)), ...(s2.twist ? { twist: r4(s2.twist) } : {}) });
+          sel = { node: sel.node, section: l.sections.length - 1 };
+          note = `Added a section at t ${t}.`;
+        }
+        return commit();
+      }
     }
   }
   const ray = new THREE.Raycaster();
@@ -606,7 +778,7 @@ function pick(e) {
 }
 function select(s) {
   sel = s;
-  if (mode === 'edit' && (!sel || !loftOf(sel.node))) mode = 'object';
+  if (mode === 'edit' && (!sel || !editable(sel.node))) mode = 'object';
   update();
 }
 
@@ -633,7 +805,7 @@ function outliner() {
 function field(id, value, evaluated, set, label, axis) {
   const expr = isStr(value);
   const input = el('input', { id, className: `f${axis !== undefined ? ` ax${axis}` : ''}${expr ? ' expr' : ''}`, value: expr ? `ƒ ${value}` : String(value ?? ''),
-    title: expr ? `${value} = ${fmt(evaluated)}  (gizmo leaves this axis alone)` : '', spellcheck: false, autocomplete: 'off' });
+    title: expr ? `${value} = ${fmt(evaluated)}  (a drag rewrites a number in it)` : '', spellcheck: false, autocomplete: 'off' });
   input.setAttribute('aria-label', label);
   input.onfocus = () => { if (expr) input.value = value; input.select(); };
   input.onblur = () => { if (expr && input.value === value) input.value = `ƒ ${value}`; };
@@ -711,9 +883,10 @@ function props() {
     if (m.box) ms.append(vecRow('Size', 'size', m.box.size, om?.size, (a) => { m.box.size = a; }),
       el('div', { className: 'vrow one' }, el('label', { htmlFor: 'radius', textContent: 'Radius' }), // D-98
         field('radius', m.box.radius ?? 0, om?.radius ?? 0, (v) => { if (v === 0) delete m.box.radius; else m.box.radius = v; }, 'Radius')));
-    kids.push(ms);
+    kids.push(ms, materialSec(m));
     if (m.loft) kids.push(...loftProps(m.loft, om));
     if (m.extrude) kids.push(...extrudeProps(m.extrude, om));
+    if (m.lathe) kids.push(...latheProps(m.lathe, om));
   }
   kids.push(sec(el('div', { className: 'acts' },
     btn('Duplicate', () => duplicate(false), 'Shift D'), btn('Linked duplicate', () => duplicate(true), 'Alt D'), btn('Delete', () => removeNode(i), 'Del'))));
@@ -750,9 +923,27 @@ function loftProps(l, om) {
       editTool = 'sections'; mode = 'edit'; sel = { node: i, section: l.sections.length - 1 }; commit();
     }));
   const res = [settings, path, sections];
-  // shortcut: a loft with a circle, ellipse or flutes section (D-89, D-101) has no shape editor; edit its JSON
-  if (sel.section !== undefined && l.sections[sel.section] && l.sections.every((x) => plainPoints(x.points))) res.push(...shapePanel(`Section ${sel.section}`, 'Adding or removing a point does it in every section.'));
+  const s = l.sections[sel.section];
+  if (s && l.sections.every((x) => plainPoints(x.points))) res.push(...shapePanel(`Section ${sel.section}`, 'Adding or removing a point does it in every section.'));
+  else if (s) res.push(roundPanel(l, s, om));
   return res;
+}
+
+// A loft whose sections are not all points: the selected section's round form as fields (D-89, D-101, D-105),
+// and Convert to points, which turns every round section into the points it stands for, for the shape editor.
+function roundPanel(l, s, om) {
+  const j = sel.section, x = s.points, kind = plainPoints(x) ? null : Object.keys(x).find((k) => !k.startsWith('//') && k !== 'center');
+  const fieldsOf = { circle: [['r', null]], ellipse: [['rx', 0], ['ry', 1]], squircle: [['rx', 0], ['ry', 1], ['n', 2]], flutes: [['count', 'count'], ['r', 'r'], ['depth', 'depth']] }[kind] ?? [];
+  const holder = kind === 'circle' ? x : x[kind];
+  const row = fieldsOf.length && el('div', { className: `vrow${['', ' one', ' two', ''][fieldsOf.length]}` }, el('span', { className: 'lbl', textContent: fieldsOf.map(([n]) => n).join(', ') }),
+    ...fieldsOf.map(([n, k]) => field(`round-${n}`, kind === 'circle' ? x.circle : holder[k], undefined, (v) => { if (kind === 'circle') x.circle = v; else holder[k] = v; }, `Section ${j} ${n}`)));
+  const convert = btn('Convert to points', () => {
+    l.sections.forEach((sec, k) => { if (!plainPoints(sec.points)) sec.points = om.sections[k].points.map((p) => p.map(r4)); });
+    note = 'Every round section is points now, so the shape editor can change them (Undo brings the round forms back).';
+    commit();
+  }, 'Every round section of this loft becomes the points it stands for');
+  return sec(h3(`Section ${j} shape · ${kind ?? 'points'}`), row || el('p', {}, kind ? 'Edit this form in the JSON.' : 'Other sections are round forms; convert them to edit this shape.'),
+    el('div', { className: 'acts' }, om ? convert : ''), el('p', {}, 'In the 3D view: S scales the radius, R twists the section, G slides it along the path.'));
 }
 
 // Extrude (D-64): depth, bevel, and the outline or a hole in the shape editor.
@@ -771,6 +962,80 @@ function extrudeProps(e, om) {
     k > 0 && btn(`Remove hole ${k}`, () => { e.holes.splice(k - 1, 1); if (!e.holes.length) delete e.holes; sel = { node: sel.node }; commit(); })));
   const pts = k ? e.holes[k - 1] : e.outline;
   return [settings, loops, ...(plainPoints(pts) ? shapePanel(loopName(k), '') : [sec(h3(`${loopName(k)} shape`), el('p', {}, 'A round form or an arc item: edit it in the JSON.'))])];
+}
+
+// The mesh's glTF material: pick one, add one, and its recipe slots (draft f6, D-82, D-102), each a number, a color
+// or an expression. A slot shows the recipe's value, else the core one, else glTF's default; edits go to the recipe
+// (the bake rewrites the core slots from it).
+function materialSec(m) {
+  const mats = doc.materials ?? [], k = m.material, users = R().meshes.filter((x) => x.material === k).length;
+  const pick = el('select', { id: 'matPick', className: 'f', onchange: (e) => {
+    const v = e.target.value;
+    if (v === 'new') { (doc.materials ??= []).push({ name: `material ${mats.length}`, pbrMetallicRoughness: { baseColorFactor: [0.8, 0.8, 0.8, 1], metallicFactor: 0, roughnessFactor: 0.5 } }); m.material = doc.materials.length - 1; }
+    else if (v === '') delete m.material; else m.material = +v;
+    commit();
+  } }, el('option', { value: '', textContent: 'none (glTF default)', selected: k === undefined }),
+    ...mats.map((x, j) => el('option', { value: j, textContent: x?.name ?? `material ${j}`, selected: j === k })), el('option', { value: 'new', textContent: '+ New material' }));
+  pick.setAttribute('aria-label', 'Material');
+  const res = sec(h3('Material'), el('div', { className: 'vrow one' }, el('label', { htmlFor: 'matPick', textContent: 'Uses' }), pick));
+  const mat = mats[k];
+  if (!isObj(mat)) return res;
+  const x = () => ((mat.extensions ??= {})[EXT] ??= {}), ev = out?.materials?.[k] ?? {}, pbr = mat.pbrMetallicRoughness ?? {}, ext = mat.extensions ?? {};
+  const now = { // recipe, else core, else glTF's default
+    baseColorFactor: pbr.baseColorFactor ?? [1, 1, 1, 1], metallicFactor: pbr.metallicFactor ?? 1, roughnessFactor: pbr.roughnessFactor ?? 1,
+    emissiveFactor: mat.emissiveFactor ?? [0, 0, 0], emissiveStrength: ext.KHR_materials_emissive_strength?.emissiveStrength ?? 1,
+    transmissionFactor: ext.KHR_materials_transmission?.transmissionFactor ?? 0, ior: ext.KHR_materials_ior?.ior ?? 1.5, ...ext[EXT],
+  };
+  const val = (slot) => ev[slot] ?? now[slot];
+  const num = (slot, label) => el('div', { className: 'vrow one' }, el('label', { htmlFor: `mat-${slot}`, textContent: label }),
+    field(`mat-${slot}`, now[slot], val(slot), (v) => { x()[slot] = v; }, label));
+  const name = el('input', { id: 'matName', className: 'f', value: mat.name ?? '', placeholder: `material ${k}`, autocomplete: 'off',
+    onchange: (e) => { const v = e.target.value.trim(); if (v) mat.name = v; else delete mat.name; commit(); } });
+  name.setAttribute('aria-label', 'Material name');
+  res.append(el('div', { className: 'vrow one' }, el('label', { htmlFor: 'matName', textContent: 'Name' }), name),
+    ...(users > 1 ? [el('p', {}, `Used by ${users} meshes: a change here changes all of them.`)] : []),
+    colorRow('baseColorFactor', 'Color', 4, now.baseColorFactor, val('baseColorFactor'), (v) => { x().baseColorFactor = v; }),
+    num('metallicFactor', 'Metallic'), num('roughnessFactor', 'Roughness'),
+    colorRow('emissiveFactor', 'Emission', 3, now.emissiveFactor, val('emissiveFactor'), (v) => { x().emissiveFactor = v; }),
+    num('emissiveStrength', 'Strength'), num('transmissionFactor', 'Glass'), num('ior', 'IOR'),
+    el('p', {}, 'Glass is transmission (0..1), light passing through; IOR bends it (1.5 is glass, 1.33 water).'));
+  return res;
+}
+// A color slot: a picker (sRGB, as the parameter pickers), the value as linear channels or an expression, and a
+// list that links a color parameter in one click (D-91: the slot holds the parameter's name).
+function colorRow(slot, label, n, src, value, set) {
+  const c = [...(Array.isArray(value) ? value : [1, 1, 1]).slice(0, 3), Array.isArray(value) ? value[3] ?? 1 : 1];
+  const picker = el('input', { id: `mat-${slot}-pick`, type: 'color', value: hexOf(c),
+    onchange: (e) => { set([...COLOR_FORMS.hex.parse(e.target.value).slice(0, 3), c[3]].slice(0, n)); commit(); } });
+  picker.setAttribute('aria-label', `${label} picker`);
+  const expr = isStr(src), text = el('input', { id: `mat-${slot}`, className: `f${expr ? ' expr' : ''}`, value: expr ? `ƒ ${src}` : src.join(', '), spellcheck: false, autocomplete: 'off',
+    title: expr ? `${src} = ${fmt(value)}` : `linear r, g, b${n === 4 ? ', a' : ''} 0..1, or an expression`,
+    onchange: (e) => {
+      const t = e.target.value.replace(/^ƒ\s*/, '').trim(), a = t.split(/[\s,]+/).map(Number);
+      if (!t) return;
+      set(a.length === n && a.every((v) => Number.isFinite(v) && v >= 0 && v <= 1) ? a : t); commit();
+    } });
+  text.setAttribute('aria-label', label);
+  const colors = Object.entries(R().params ?? {}).filter(([, p]) => p?.type === 'color').map(([name]) => name);
+  const link = colors.length > 0 && el('select', { id: `mat-${slot}-link`, className: 'f', title: 'Link a color parameter',
+    onchange: (e) => { if (e.target.value) { set(e.target.value); commit(); } } },
+    el('option', { value: '', textContent: 'link…' }), ...colors.map((name) => el('option', { value: name, textContent: name, selected: src === name })));
+  link && link.setAttribute('aria-label', `${label}: link a color parameter`);
+  return el('div', { className: 'vrow crow' }, el('label', { htmlFor: `mat-${slot}`, textContent: label }), picker, text, link || el('span'));
+}
+
+// Lathe (D-88): sides, caps, and the profile in the shape editor (also in the 3D view in Edit mode).
+function latheProps(l, om) {
+  const capSel = el('select', { id: 'caps', className: 'f', disabled: l.caps !== undefined && !isStr(l.caps), title: isStr(l.caps ?? '') ? '' : 'Per-end caps: edit them in the JSON',
+    onchange: (e) => { if (e.target.value === 'both') delete l.caps; else l.caps = e.target.value; commit(); } },
+    ...['both', 'start', 'end', 'none'].map((c) => el('option', { value: c, textContent: c, selected: (l.caps ?? 'both') === c })));
+  capSel.setAttribute('aria-label', 'Caps');
+  const settings = sec(h3('Lathe'),
+    el('div', { className: 'vrow one' }, el('label', { htmlFor: 'sides', textContent: 'Sides' }), field('sides', l.sides ?? 24, om?.sides, (v) => { l.sides = v; }, 'Sides')),
+    el('div', { className: 'vrow one' }, el('label', { htmlFor: 'caps', textContent: 'Caps' }), capSel),
+    el('p', {}, 'Caps close the ends off the axis; an end on the axis closes to a point.'));
+  return [settings, ...(plainPoints(l.profile) ? shapePanel('Profile', 'r is the distance from the y axis (≥ 0); press Tab to drag the profile in the 3D view.')
+    : [sec(h3('Profile shape'), el('p', {}, 'A round form or an arc item: edit it in the JSON.'))])];
 }
 
 // A small square hole: the first spot of a grid over the outline's bounds where the document still reads (inside
@@ -798,6 +1063,11 @@ function shapeSel() {
     return { pts: m.loft.sections[sel.section].points, ev: om?.sections?.[sel.section]?.points, key: `s${sel.section}`,
       all: m.loft.sections.map((x, si) => [x.points, om?.sections?.[si]?.points]) };
   }
+  if (m?.lathe) {
+    if (!plainPoints(m.lathe.profile)) return;
+    const ev = om?.type === 'lathe' ? om.profile : undefined;
+    return { pts: m.lathe.profile, ev, key: 'p', all: [[m.lathe.profile, ev]], open: true, axes: ['r', 'y'] };
+  }
   if (m?.extrude) {
     const k = Math.min(sel.loop ?? 0, (m.extrude.holes ?? []).length), pts = k ? m.extrude.holes[k - 1] : m.extrude.outline;
     if (!plainPoints(pts)) return;
@@ -814,7 +1084,7 @@ function shapePanel(title, more) {
   svg.addEventListener('pointermove', sketchMove);
   svg.addEventListener('pointerup', sketchUp); svg.addEventListener('pointercancel', sketchUp);
   res.push(sec(h3(`${title} shape`), svg, el('div', { className: 'acts', id: 'shapeBar' }),
-    el('p', {}, 'Drag a point or a handle (Shift-drag a handle to move it alone). Drag a + to add a point (to every section). Double-click a point to switch corner / smooth. Violet means an expression: a violet ring with arrows moves only along the arrows, a filled violet point not at all. "Make numbers" frees it.')));
+    el('p', {}, 'Drag a point or a handle (Shift-drag a handle to move it alone). Drag a + to add a point (to every section). Double-click a point to switch corner / smooth. Violet means an expression: dragging rewrites one number in it (the status line says which). "Make numbers" replaces it with its value.')));
   // Point table: every coordinate is a field that takes a number or an expression. hu, hv empty = corner;
   // typing a handle makes the point smooth, clearing both makes it a corner again.
   const sh = shapeSel(), s = { points: sh.pts }, ev = sh.ev;
@@ -836,7 +1106,7 @@ function shapePanel(title, more) {
   };
   res.push(sec(h3(`${title} points · ${s.points.length}`),
     el('div', { className: 'stab', id: 'ptTable' },
-      el('span'), ...['u', 'v', 'hu', 'hv'].map((t) => el('small', { textContent: t })), el('span'),
+      el('span'), ...((ax) => [...ax, ...ax.map((a) => `h${a}`)])(sh.axes ?? ['u', 'v']).map((t) => el('small', { textContent: t })), el('span'),
       ...s.points.flatMap((p, j) => [
         el('button', { type: 'button', className: `idx${j === shapePoint ? ' on' : ''}`, textContent: j, title: 'Select this point',
           onclick: () => { shapePoint = j; update(); } }),
@@ -852,8 +1122,8 @@ function shapePanel(title, more) {
 }
 
 // 2D shape of the selected section, in its (u, v) plane, v up. A point is [u, v] (corner), [u, v, hu, hv]
-// (smooth, bezier handles at (u, v) ± (hu, hv)) or [u, v, ou, ov, iu, iv] (free handles, D-83). Writes skip slots
-// that hold expressions.
+// (smooth, bezier handles at (u, v) ± (hu, hv)) or [u, v, ou, ov, iu, iv] (free handles, D-83). A drag rewrites
+// an expression (dragTo).
 const inH = (p) => (p.length === 6 ? [p[4], p[5]] : [-(p[2] ?? 0), -(p[3] ?? 0)]);
 let sketchR = 1, sketchFor = '', shapePoint = 0, lastTap = {};
 const evPts = () => shapeSel()?.ev;
@@ -871,7 +1141,8 @@ function insertPoint(edge) {
 }
 function removePoint(j) {
   const sh = shapeSel();
-  if (sh.pts.length <= 3) { note = 'A shape needs at least 3 points.'; return status(); }
+  if (!sh) return;
+  if (sh.pts.length <= (sh.open ? 2 : 3)) { note = `A ${sh.open ? 'profile' : 'shape'} needs at least ${sh.open ? 2 : 3} points.`; return status(); }
   sh.all.forEach(([p]) => p.splice(j, 1));
   shapePoint = Math.max(0, j - 1); commit();
 }
@@ -894,30 +1165,29 @@ function drawSketch(svg) {
   const mk = (t, a) => { const e = document.createElementNS(NS, t); for (const x in a) e.setAttribute(x, a[x]); return e; };
   svg.setAttribute('viewBox', `${-k} ${-k} ${2 * k} ${2 * k}`);
   const g = mk('g', { transform: 'scale(1,-1)' });
-  g.append(mk('line', { class: 'axis', x1: -k, y1: 0, x2: k, y2: 0, 'stroke-width': thin }), mk('line', { class: 'axis', x1: 0, y1: -k, x2: 0, y2: k, 'stroke-width': thin }),
-    mk('polygon', { class: 'ol', points: outline(pts).map((p) => p.join(',')).join(' '), 'stroke-width': k / 100 }));
-  pts.forEach((_, i) => { const [u, v] = midpoint(pts, i); g.append(mk('circle', { class: 'mid', cx: u, cy: v, r: r * 0.7, 'stroke-width': thin, 'data-mid': i })); });
+  g.append(mk('line', { class: 'axis', x1: -k, y1: 0, x2: k, y2: 0, 'stroke-width': thin }), mk('line', { class: 'axis', x1: 0, y1: -k, x2: 0, y2: k, 'stroke-width': thin }));
+  const join = (ps) => ps.map((p) => p.join(',')).join(' ');
+  if (sh.open) { // a lathe profile: the region it turns, between the profile and the axis, filled; the profile stroked
+    const line = profileLine(pts).poly;
+    g.append(mk('polygon', { class: 'ol', points: join([...line, [0, line.at(-1)[1]], [0, line[0][1]]]), style: 'stroke:none' }),
+      mk('polyline', { class: 'ol', points: join(line), style: 'fill:none', 'stroke-width': k / 100 }));
+  } else g.append(mk('polygon', { class: 'ol', points: join(outline(pts)), 'stroke-width': k / 100 }));
+  pts.forEach((_, i) => {
+    if (sh.open && i === pts.length - 1) return; // no closing edge
+    const [u, v] = midpoint(pts, i); g.append(mk('circle', { class: 'mid', cx: u, cy: v, r: r * 0.7, 'stroke-width': thin, 'data-mid': i })); });
   pts.forEach((pt, i) => {
     const [u, v, hu, hv] = pt;
     if (hu === undefined) return;
     const [iu, iv] = inH(pt);
-    const lockedH = isStr(s.points[i][2]) && isStr(s.points[i][3]) ? ' locked' : '';
+    const exprH = s.points[i].slice(2).some(isStr) ? ' expr' : '';
     g.append(mk('line', { class: 'hline', x1: u + iu, y1: v + iv, x2: u + hu, y2: v + hv, 'stroke-width': thin }),
-      mk('rect', { class: `hdl${lockedH}`, x: u + iu - r * 0.6, y: v + iv - r * 0.6, width: r * 1.2, height: r * 1.2, 'stroke-width': thin * 1.5, 'data-h': i, 'data-dir': -1 }),
-      mk('rect', { class: `hdl${lockedH}`, x: u + hu - r * 0.6, y: v + hv - r * 0.6, width: r * 1.2, height: r * 1.2, 'stroke-width': thin * 1.5, 'data-h': i, 'data-dir': 1 }));
+      mk('rect', { class: `hdl${exprH}`, x: u + iu - r * 0.6, y: v + iv - r * 0.6, width: r * 1.2, height: r * 1.2, 'stroke-width': thin * 1.5, 'data-h': i, 'data-dir': -1 }),
+      mk('rect', { class: `hdl${exprH}`, x: u + hu - r * 0.6, y: v + hv - r * 0.6, width: r * 1.2, height: r * 1.2, 'stroke-width': thin * 1.5, 'data-h': i, 'data-dir': 1 }));
   });
   pts.forEach(([u, v], j) => {
-    const [lu, lv] = [isStr(s.points[j][0]), isStr(s.points[j][1])], lockedPt = lu && lv, half = lu !== lv;
-    // Half locked: a violet track along the one axis the point can still move on.
-    if (half) {
-      const a = r * 3.2, [dx, dy] = lu ? [0, a] : [a, 0];
-      g.append(mk('line', { class: 'track', x1: u - dx, y1: v - dy, x2: u + dx, y2: v + dy, 'stroke-width': thin * 2.5, 'marker-start': 'url(#tip)', 'marker-end': 'url(#tip)' }));
-    }
-    g.append(mk('circle', { class: `pt${j === 0 ? ' first' : ''}${lockedPt ? ' locked' : ''}${half ? ` half ${lu ? 'v' : 'u'}` : ''}${j === shapePoint ? ' on' : ''}`, cx: u, cy: v, r, 'stroke-width': thin * 2, 'data-j': j }));
+    const expr = isStr(s.points[j][0]) || isStr(s.points[j][1]);
+    g.append(mk('circle', { class: `pt${j === 0 ? ' first' : ''}${expr ? ' expr' : ''}${j === shapePoint ? ' on' : ''}`, cx: u, cy: v, r, 'stroke-width': thin * 2, 'data-j': j }));
   });
-  const defs = mk('defs', {}), tip = mk('marker', { id: 'tip', viewBox: '0 0 10 10', refX: 5, refY: 5, markerWidth: 4, markerHeight: 4, orient: 'auto-start-reverse' });
-  tip.append(mk('path', { d: 'M0 0 L10 5 L0 10 Z', class: 'tiph' }));
-  defs.append(tip); g.prepend(defs);
   svg.replaceChildren(g);
   document.querySelectorAll('#ptTable .idx').forEach((b, j) => b.classList.toggle('on', j === shapePoint));
   const bar = document.getElementById('shapeBar');
@@ -946,29 +1216,33 @@ function sketchDown(e) {
   lastTap = { j: d.j, time: e.timeStamp };
   if (d.j !== undefined) {
     shapePoint = +d.j; drawSketch(svg);
-    if (e.target.classList.contains('locked')) return;
     sketchDrag = { j: +d.j };
   } else if (d.h !== undefined) {
-    if (e.target.classList.contains('locked')) return;
     sketchDrag = { j: +d.h, dir: +d.dir };
   } else if (d.mid !== undefined) {
     insertPoint(+d.mid);
     shapePoint = +d.mid + 1; sketchDrag = { j: shapePoint };
     evaluate(); draw(); drawSketch(svg);
   } else return;
+  moved.clear();
   svg.setPointerCapture(e.pointerId);
 }
 function sketchMove(e) {
   if (!sketchDrag) return;
-  const svg = e.currentTarget, q = sketchPoint(e, svg), p = shapeSel().pts[sketchDrag.j];
-  if (sketchDrag.dir) {
-    const [u, v] = evPts()[sketchDrag.j];
-    // Shift breaks the handles apart (free, D-83); a free point's handles always move alone.
-    if (e.shiftKey && p.length === 4 && !isStr(p[2]) && !isStr(p[3])) p.push(-p[2], -p[3]);
-    const free = p.length === 6, at = free && sketchDrag.dir < 0 ? 4 : 2, sgn = free ? 1 : sketchDrag.dir;
-    [(q[0] - u) * sgn, (q[1] - v) * sgn].forEach((c, k) => { if (!isStr(p[at + k])) p[at + k] = r4(c); });
-  } else q.forEach((c, k) => { if (!isStr(p[k])) p[k] = r4(c); });
+  const svg = e.currentTarget, sh = shapeSel(), p = sh.pts[sketchDrag.j];
+  // Shift breaks the handles apart (free, D-83); a free point's handles always move alone.
+  if (sketchDrag.dir && e.shiftKey && p.length === 4 && !isStr(p[2]) && !isStr(p[3])) p.push(-p[2], -p[3]);
+  dragPoint(sh, sketchDrag.j, sketchDrag.dir, sketchPoint(e, svg));
   evaluate(); draw(); drawSketch(svg); status();
+}
+// Point j of the shape, or its handle (dir 1 out, -1 in), dragged to q in the shape's plane.
+function dragPoint(sh, j, dir, q) {
+  const p = sh.pts[j], [u, v] = sh.ev[j], [a0, a1] = sh.axes ?? ['u', 'v'];
+  if (dir) {
+    const free = p.length === 6, at = free && dir < 0 ? 4 : 2, sgn = free ? 1 : dir;
+    const pre = at === 4 ? 'i' : free ? 'o' : 'h';
+    [(q[0] - u) * sgn, (q[1] - v) * sgn].forEach((c, k) => { p[at + k] = dragTo(p[at + k], c, `point ${j} ${pre}${[a0, a1][k]}`); });
+  } else [sh.open ? Math.max(0, q[0]) : q[0], q[1]].forEach((c, k) => { p[k] = dragTo(p[k], c, `point ${j} ${[a0, a1][k]}`); }); // a lathe's r stays ≥ 0
 }
 function sketchUp() { if (sketchDrag) { sketchDrag = null; commit(); } }
 
@@ -1099,10 +1373,11 @@ function addShape(kind) {
   const r = R();
   r.meshes = [...(r.meshes ?? []), kind === 'box' ? { box: { size: [0.4, 0.4, 0.4] } }
     : kind === 'extrude' ? { extrude: { outline: [[-0.2, -0.2], [0.2, -0.2], [0.2, 0.2], [-0.2, 0.2]], holes: [circle(0.1)], depth: 0.05 } }
+    : kind === 'lathe' ? { lathe: { profile: [[0, 0], [0.15, 0], [0.1, 0.25, 0, 0.08], [0.12, 0.4]] } }
     : { loft: { path: [[0, 0, 0], [0, 0.4, 0], [0.2, 0.7, 0]], sections: [{ t: 0, points: circle(0.1) }, { t: 1, points: circle(0.04) }] } }];
   const mesh = r.meshes.length - 1, at = out ? -out.floor : 0;
   doc.nodes = doc.nodes ?? [];
-  doc.nodes.push({ name: `${kind} ${mesh}`, extensions: { [EXT]: { mesh, translation: [0.9, r4(kind === 'loft' ? at : at + 0.2), 0.4] } } });
+  doc.nodes.push({ name: `${kind} ${mesh}`, extensions: { [EXT]: { mesh, translation: [0.9, r4(kind === 'loft' || kind === 'lathe' ? at : at + 0.2), 0.4] } } });
   doc.scenes ??= [{ nodes: [] }]; doc.scene ??= 0;
   (doc.scenes[doc.scene].nodes ??= []).push(doc.nodes.length - 1);
   sel = { node: doc.nodes.length - 1 }; mode = 'object'; gizmo = 'translate';
@@ -1153,7 +1428,8 @@ function delSection(j) {
 }
 function del() {
   if (!sel) return;
-  if (mode === 'edit' && sel.point !== undefined) return delPoint(sel.point);
+  if (mode === 'edit' && sel.grip) return;
+  if (mode === 'edit' && sel.point !== undefined) return loftOf(sel.node) && sel.section === undefined ? delPoint(sel.point) : removePoint(sel.point);
   if (mode === 'edit' && sel.section !== undefined) return delSection(sel.section);
   removeNode(sel.node);
 }
@@ -1163,27 +1439,33 @@ function toolbar() {
   $('#undo').disabled = past.length < 2; $('#redo').disabled = !future.length;
   $('#mObject').setAttribute('aria-pressed', String(mode === 'object'));
   $('#mEdit').setAttribute('aria-pressed', String(mode === 'edit'));
-  $('#mEdit').disabled = !(sel && loftOf(sel.node));
+  $('#mEdit').disabled = !(sel && editable(sel.node));
   const tb = (id, text, key, on, click) => { const b = el('button', { type: 'button', className: 'btn', id, onclick: click }, text, el('kbd', { textContent: key })); b.setAttribute('aria-pressed', String(on)); return b; };
   $('#tools').replaceChildren(...(mode === 'object'
     ? [tb('gT', 'Move', 'G', gizmo === 'translate', () => setGizmo('translate')), tb('gR', 'Rotate', 'R', gizmo === 'rotate', () => setGizmo('rotate')), tb('gS', 'Scale', 'S', gizmo === 'scale', () => setGizmo('scale'))]
-    : [tb('ePath', 'Path', '', editTool === 'path', () => { editTool = 'path'; sel = { node: sel.node }; update(); }), tb('eSec', 'Sections', '', editTool === 'sections', () => { editTool = 'sections'; sel = { node: sel.node }; update(); })]));
+    : !loftOf(sel.node) ? [] : [tb('ePath', 'Path', '', editTool === 'path', () => { editTool = 'path'; sel = { node: sel.node }; update(); }), tb('eSec', 'Sections', '', editTool === 'sections', () => { editTool = 'sections'; sel = { node: sel.node }; update(); })]));
+  if (secGizmo()) $('#tools').append(tb('gT', 'Slide', 'G', gizmo === 'translate', () => setGizmo('translate')), tb('gR', 'Twist', 'R', gizmo === 'rotate', () => setGizmo('rotate')), tb('gS', 'Scale', 'S', gizmo === 'scale', () => setGizmo('scale')));
   $('#tools').querySelectorAll('kbd:empty').forEach((k) => k.remove());
-  $('#vpMode').textContent = mode === 'object' ? 'Object mode' : `Edit mode · ${editTool === 'path' ? 'Path' : 'Sections'}`;
+  $('#vpMode').textContent = mode === 'object' ? 'Object mode' : `Edit mode · ${loftOf(sel.node) ? (editTool === 'path' ? 'Path' : 'Sections') : latheOf(sel.node) ? 'Profile' : extrudeOf(sel.node) ? 'Extrude' : 'Box'}`;
   $('#vpSel').textContent = sel ? `${doc.nodes[sel.node]?.extensions?.[EXT]?.name ?? doc.nodes[sel.node]?.name ?? `node ${sel.node}`}${sel.point !== undefined ? ` · point ${sel.point}` : ''}${sel.section !== undefined ? ` · section ${sel.section}` : ''}` : 'nothing selected';
 }
 function setGizmo(g) { gizmo = g; update(); }
+// Edit mode, Sections tool, a whole section selected: G R S slide, twist and scale it.
+const secGizmo = () => mode === 'edit' && editTool === 'sections' && !!loftOf(sel?.node) && sel.section !== undefined && sel.point === undefined;
 function hint() {
   if (note) return note;
-  const lockMsg = locked[0] === 'rotation' ? 'Rotation holds expressions, so the gizmo is off. Edit it in Properties.'
+  const lockMsg = locked[0] === 'rotation' ? 'Rotation is a quaternion holding expressions, so the gizmo is off. Edit it in Properties.'
     : locked[0] === 'matrix' ? 'This node uses a matrix. Edit it in Source.'
-    : locked[0] === 'on' ? 'This node is placed on a loft (on). Edit t and u in Source.'
-      : locked.length ? `${locked.join(', ')} ${locked.length > 1 ? 'are expressions' : 'is an expression'}: the gizmo leaves ${locked.length > 1 ? 'them' : 'it'} alone. Edit in Properties.` : '';
-  if (mode === 'edit') return lockMsg || (editTool === 'path'
+    : locked[0] === 'on' ? 'This node is placed on a loft (on). Edit t and u in Source.' : '';
+  if (mode === 'edit') return lockMsg || (!loftOf(sel.node) && !latheOf(sel.node)
+    ? `<b>Click</b> a grip${extrudeOf(sel.node) ? ' or a point of the loop' : ''} to select it · drag the arrow · <b>Tab</b> back`
+    : latheOf(sel.node)
+    ? '<b>Click</b> a point or handle to select it · drag the arrows to move it in the profile plane · click the profile to add a point · <b>Del</b> removes it · <b>Tab</b> back'
+    : editTool === 'path'
     ? '<b>Click</b> a point to select it · drag the arrows to move it · click the curve to add a point · <b>Del</b> removes it · <b>Tab</b> back'
-    : '<b>Click</b> a ring to select a section · click the curve to add one · drag points in the shape panel · <b>Tab</b> back');
+    : '<b>Click</b> a ring to select a section · <b>G R S</b> slide, twist, scale it · click one of its points to move it in its plane · click the curve to add a section · <b>Tab</b> back');
   if (!sel) return '<b>Click</b> an object to select it · <b>Shift A</b> add · drag to orbit, right-drag to pan';
-  return lockMsg || `<b>G R S</b> move, rotate, scale${loftOf(sel.node) ? ' · <b>Tab</b> edit the loft' : ''} · <b>Shift D</b> duplicate · <b>Del</b> delete`;
+  return lockMsg || `<b>G R S</b> move, rotate, scale${editable(sel.node) ? ` · <b>Tab</b> edit the ${shapeKind(R().meshes[meshOf(sel.node)])}` : ''} · <b>Shift D</b> duplicate · <b>Del</b> delete`;
 }
 function status() {
   const h = $('#hint'); h.innerHTML = hint(); h.title = h.textContent;
@@ -1196,9 +1478,14 @@ $('#err').onclick = () => { const m = /^\/nodes\/(\d+)/.exec(err); if (m) select
 
 function update() {
   if (sel && !doc.nodes?.[sel.node]) sel = null;
-  if (sel?.point !== undefined && !(sel.point < (loftOf(sel.node)?.path.length ?? 0))) sel = { node: sel.node };
   if (sel?.section !== undefined && !(sel.section < (loftOf(sel.node)?.sections.length ?? 0))) sel = { node: sel.node };
-  if (mode === 'edit' && !(sel && loftOf(sel.node))) mode = 'object';
+  // A point is a section's (in the Sections tool), a path point, or a lathe profile point; dir picks one of its handles.
+  const ex = extrudeOf(sel?.node), loop = ex && (Math.min(sel.loop ?? 0, (ex.holes ?? []).length) ? ex.holes[Math.min(sel.loop ?? 0, ex.holes.length) - 1] : ex.outline);
+  const ptsOf = () => (sel.section !== undefined ? loftOf(sel.node).sections[sel.section].points : loftOf(sel.node)?.path ?? latheOf(sel.node)?.profile ?? loop);
+  if (sel?.grip && !(mode === 'edit' && (R().meshes[meshOf(sel.node)]?.box || ex))) { const { grip, ...rest } = sel; sel = rest; }
+  if (sel?.point !== undefined && !(Array.isArray(ptsOf()) && sel.point < ptsOf().length)) { const { point, dir, ...rest } = sel; sel = rest; }
+  if (sel?.dir && !(ptsOf()[sel.point]?.length >= 4)) { const { dir, ...rest } = sel; sel = rest; }
+  if (mode === 'edit' && !(sel && editable(sel.node))) mode = 'object';
   const focus = document.activeElement?.id;
   evaluate(); draw(); if (!dragging) placeGizmo();
   outliner(); props(); params(); toolbar(); status();
@@ -1297,7 +1584,7 @@ $('#open').onchange = async (e) => { const f = e.target.files[0]; e.target.value
 
 $('#undo').onclick = undo; $('#redo').onclick = redo;
 $('#mObject').onclick = () => { mode = 'object'; if (sel) sel = { node: sel.node }; update(); };
-$('#mEdit').onclick = () => { if (sel && loftOf(sel.node)) { mode = 'edit'; update(); } };
+$('#mEdit').onclick = () => { if (sel && editable(sel.node)) { mode = 'edit'; update(); } };
 
 function view(dir) {
   const d = camera.position.distanceTo(orbit.target);
@@ -1326,13 +1613,13 @@ addEventListener('keydown', (e) => {
   if (mod && k === 'y') { e.preventDefault(); return redo(); }
   if (mod) return;
   if (anyMenu()) return; // menu keys are handled by the menu
-  if (e.key === 'Escape') { return select(mode === 'edit' && (sel.point !== undefined || sel.section !== undefined) ? { node: sel.node } : null); }
+  if (e.key === 'Escape') { return select(mode === 'edit' && (sel.point !== undefined || sel.section !== undefined || sel.grip) ? { node: sel.node } : null); }
   if (e.shiftKey && k === 'a') { e.preventDefault(); return openMenu('add', true); }
-  if (e.key === 'Tab' && sel && loftOf(sel.node)) { e.preventDefault(); mode = mode === 'edit' ? 'object' : 'edit'; sel = { node: sel.node }; return update(); }
+  if (e.key === 'Tab' && sel && editable(sel.node)) { e.preventDefault(); mode = mode === 'edit' ? 'object' : 'edit'; sel = { node: sel.node }; return update(); }
   if (e.shiftKey && k === 'd') { e.preventDefault(); return duplicate(false); }
   if (e.altKey && k === 'd') { e.preventDefault(); return duplicate(true); }
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); return del(); }
-  if (mode === 'object' && sel && !e.shiftKey && !e.altKey) {
+  if (sel && !e.shiftKey && !e.altKey && (mode === 'object' || secGizmo())) {
     if (k === 'g') return setGizmo('translate');
     if (k === 'r') return setGizmo('rotate');
     if (k === 's') return setGizmo('scale');

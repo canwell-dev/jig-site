@@ -104,7 +104,7 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     need(/^[a-z_][a-z0-9_]*$/.test(name), at, 'name must be lower_snake_case');
     need(!(name in params), at, 'name is already a parameter');
     need(!Object.hasOwn(FUNCS, name), at, 'name is a built-in function');
-    vars[name] = scope[name] = typeof e === 'number' ? e : value(e, scope, at);
+    vars[name] = scope[name] = typeof e === 'number' ? e : Array.isArray(e) ? color(e, 4, scope, at) : value(e, scope, at); // a list: linear channels, as a color slot
   }
 
   // Draft f6: a core glTF material's JIG_recipe sets its color and factor slots; the core slots are the bake's
@@ -112,6 +112,10 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
   need(doc.materials === undefined || Array.isArray(doc.materials), '/materials', 'must be a list');
   const materialAt = (m, i, scope) => {
     const x = m?.extensions?.[EXT], at = `/materials/${i}/extensions/${EXT}`;
+    for (const [k, place] of Object.entries(MATERIAL_SLOTS)) { // an expression in a core slot would pass through unbaked
+      const [v, kat] = place === 'pbr' ? [m?.pbrMetallicRoughness?.[k], 'pbrMetallicRoughness/'] : place === 'top' ? [m?.[k], ''] : [m?.extensions?.[EXT_SLOTS[k][0]]?.[k], `extensions/${EXT_SLOTS[k][0]}/`];
+      need(typeof v !== 'string', `/materials/${i}/${kat}${k}`, `is an expression; it goes in extensions.${EXT}.${k}`);
+    }
     if (x === undefined || isBaked(m)) return null;
     need(isObj(x), at, 'must be an object');
     only(x, [...Object.keys(MATERIAL_SLOTS), ...Object.keys(TEXTURE_SLOTS)], at);
@@ -196,6 +200,19 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     if (!placedKey.has(key)) placedKey.set(key, placed.push(mat) - 1);
     return placedKey.get(key);
   };
+  // Draft f23 (D-113): the document's own KHR_lights_punctual lights (static glTF values), then those of placed
+  // documents, equal ones shared. A node's recipe `light` picks one of its own.
+  const lx = doc.extensions?.[KHR_LIGHTS], lat = `/extensions/${KHR_LIGHTS}`;
+  need(lx === undefined || (isObj(lx) && Array.isArray(lx.lights)), lat, 'must be { "lights": [...] }');
+  const lights = (lx?.lights ?? []).filter((l, k) => {
+    need(isObj(l) && ['point', 'spot', 'directional'].includes(l.type), `${lat}/lights/${k}`, 'must be a light with type "point", "spot" or "directional"');
+    return !isBaked(l);
+  }), ownLights = lights.length, lightKey = new Map();
+  const addLight = (l) => {
+    const key = JSON.stringify(l);
+    if (!lightKey.has(key)) lightKey.set(key, lights.push(l) - 1);
+    return lightKey.get(key);
+  };
   const models = (r.models ?? []).map((m, k) => {
     const at = `${rat}/models/${k}`;
     need(isObj(m), at, 'must be an object');
@@ -265,6 +282,8 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
   // transform applies after the placement.
   const nodeAt = (raw, s, at) => {
     const n = node(raw, recipeMeshes.length, s, at), on = n.jig.on, oat = `${at}/extensions/${EXT}/on`;
+    need(n.jig.light === undefined || (Number.isInteger(n.jig.light) && n.jig.light >= 0 && n.jig.light < ownLights), `${at}/extensions/${EXT}/light`,
+      ownLights ? `must be a light index 0..${ownLights - 1}` : `must be a light index, and the document has no ${KHR_LIGHTS} lights`);
     if (on === undefined) return n;
     need(isObj(on), oat, 'must be { "mesh", "t" or "d", "u" }');
     only(on, ['mesh', 't', 'd', 'u'], oat);
@@ -290,9 +309,9 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
       const sk = repeatVars(rep?.vars, rep ? { ...s, [rep.index]: k, ...rep.rows?.[k] } : s, `${xat}/repeat/vars`), c = rep ? [...copy, k] : copy;
       const n = nodeAt(src[i], sk, at), vis = shown && (!rep || k < rep.count);
       if (n.mesh !== undefined) n.mesh = meshAt(n.mesh, sk);
-      nodes[i] ??= { ...n, repeated: repeated.has(i) };
+      nodes[i] ??= { ...n, repeated: repeated.has(i), scope: sk }; // scope: the first copy's, for editor drags
       const world = mul(parent, n.matrix);
-      const rec = { i, node: n, rep: !!rep, shown: vis, kids: [], world, name: n.name, mesh: n.mesh };
+      const rec = { i, node: n, rep: !!rep, shown: vis, kids: [], world, name: n.name, mesh: n.mesh, light: n.jig.light };
       let b = bone;
       if (jointOf.has(i)) { b = { rec, skin: jointOf.get(i) }; if (vis) skins[b.skin].push(rec); }
       if (n.mesh !== undefined && b) rec.bound = b;
@@ -317,6 +336,10 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
       if (ps[k]?.type === 'color') { vals[k] = color(e, 4, s, kat); continue; } // a color expression or linear channels (D-78, D-91)
       const opts = ps[k]?.type === 'choice' && Array.isArray(ps[k].options) ? ps[k].options : null;
       if (opts?.includes(e)) { vals[k] = e; continue; } // draft f21: an option by name, or an expression giving its index
+      if (typeof s[e] === 'string') { // draft f23 (D-112): a row's text names the option
+        need(opts?.includes(s[e]), kat, `"${e}" is text ("${s[e]}"); ${opts ? `must be one of ${JSON.stringify(opts)}` : 'only a choice parameter takes text'}`);
+        vals[k] = s[e]; continue;
+      }
       const v = num(e, s, kat);
       if (opts) need(Number.isInteger(v) && v >= 0 && v < opts.length, kat, `must be one of ${JSON.stringify(opts)} or an index 0..${opts.length - 1}, is ${v}`);
       vals[k] = ps[k]?.type === 'bool' ? v !== 0 : opts ? opts[v] : v;
@@ -338,10 +361,12 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
       return intern(mesh, `placed ${JSON.stringify(mesh)}`);
     });
     const skinAt = sub.skins.map(() => (bone ? bone.skin : skins.push([]) - 1));
+    const lightAt = sub.lights.map(addLight);
     if (vis) sub.skins.forEach((js, k) => skins[skinAt[k]].push(...js));
     const relink = (r) => {
       r.foreign = true; r.world = mul(rec.world, r.world);
       if (rec.name !== undefined && r.name !== undefined) r.name = `${rec.name}/${r.name}`; // D-79: the placing copy's name first
+      if (r.light !== undefined) r.light = lightAt[r.light];
       if (r.mesh !== undefined) { r.mesh = remap[r.mesh]; r.bound = r.bound ? { rec: r.bound.rec, skin: skinAt[r.bound.skin] } : bone ?? undefined; }
       r.kids.forEach(relink);
     };
@@ -359,7 +384,7 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
   // y of the floor in model space; hosts stand the model there. Default: the lowest point on the vertical line
   // through the origin, or 0 when no shape crosses that line.
   const floor = r.floor === undefined ? lowestOnAxis(meshes, instances) : num(r.floor, scope, `${rat}/floor`);
-  return { params, sets, vars, floor, materials, meshes, nodes, instances, tree, skins, placed, placedTextures };
+  return { params, sets, vars, floor, materials, meshes, nodes, instances, tree, skins, placed, placedTextures, lights };
 }
 
 // A texture of a stripped document as { texture, image, sampler }, for `lift`.
@@ -401,7 +426,11 @@ function repeat(r, scope, at) {
     need(isObj(row), `${at}/each/${j}`, 'must be an object');
     const ks = Object.keys(row).filter((k) => !k.startsWith('//'));
     need(ks.length === keys.length && ks.every((k) => keys.includes(k)), `${at}/each/${j}`, `must have the keys of row 0: ${keys.join(', ')}`);
-    return Object.fromEntries(ks.map((k) => [k, num(row[k], scope, `${at}/each/${j}/${k}`)]));
+    return Object.fromEntries(ks.map((k) => {
+      const kat = `${at}/each/${j}/${k}`;
+      if (typeof row[k] !== 'string') return [k, num(row[k], scope, kat)];
+      try { return [k, num(row[k], scope, kat)]; } catch { return [k, row[k]]; } // draft f23 (D-112): not an expression, so text
+    }));
   }) };
 }
 
@@ -415,7 +444,7 @@ function repeatVars(v, scope, at) {
     const nat = `${at}/${name}`;
     need(/^[a-z_][a-z0-9_]*$/.test(name), nat, 'name must be lower_snake_case');
     need(!Object.hasOwn(scope, name) && !Object.hasOwn(FUNCS, name), nat, `"${name}" is already a parameter, variable, enclosing name or function`);
-    s[name] = typeof e === 'number' ? e : value(e, s, nat);
+    s[name] = typeof e === 'number' ? e : Array.isArray(e) ? color(e, 4, s, nat) : value(e, s, nat);
   }
   return s;
 }
@@ -427,7 +456,7 @@ function node(n, meshCount, scope, at) {
   const xat = `${at}/extensions/${EXT}`;
   const x = n.extensions?.[EXT] ?? {};
   need(isObj(x), xat, 'must be an object');
-  only(x, ['name', 'mesh', 'translation', 'rotation', 'euler', 'scale', 'repeat', 'model', 'values', 'on'], xat);
+  only(x, ['name', 'mesh', 'translation', 'rotation', 'euler', 'scale', 'repeat', 'model', 'values', 'on', 'light'], xat);
   need(x.values === undefined || x.model !== undefined, `${xat}/values`, 'needs model');
   need(x.rotation === undefined || x.euler === undefined, `${xat}/euler`, 'cannot stand next to rotation');
   if (x.mesh !== undefined) {
@@ -505,6 +534,7 @@ function mesh(m, scope, at, materialCount) {
 const OWNED = ['meshes', 'accessors', 'bufferViews', 'buffers', 'nodes', 'materials', 'skins', 'images', 'samplers', 'textures'];
 const KHR_TT = 'KHR_texture_transform';
 const KHR_VARIANTS = 'KHR_materials_variants';
+const KHR_LIGHTS = 'KHR_lights_punctual';
 const KHR_ES = 'KHR_materials_emissive_strength';
 // Recipe slots kept in a material extension: [extension, default]; the bake writes the extension only off the default.
 const EXT_SLOTS = { emissiveStrength: [KHR_ES, 1], transmissionFactor: ['KHR_materials_transmission', 0], ior: ['KHR_materials_ior', 1.5] };
@@ -558,6 +588,46 @@ export function strip(doc) {
     }
     const x = n?.extensions?.[EXT];
     if (isObj(x)) for (const k of ['name', 'mesh', 'translation', 'rotation', 'scale']) if (twin(x, k) !== undefined) delete n[k];
+    if (x?.light !== undefined && isObj(n.extensions)) delete n.extensions[KHR_LIGHTS]; // its twin (D-113)
+  }
+  const lx = d.extensions?.[KHR_LIGHTS];
+  if (Array.isArray(lx?.lights)) { // the lights of placed documents (D-113)
+    lx.lights = lx.lights.filter((l) => !isBaked(l));
+    if (!lx.lights.length) {
+      delete d.extensions[KHR_LIGHTS];
+      if (Array.isArray(d.extensionsUsed)) d.extensionsUsed = d.extensionsUsed.filter((e) => e !== KHR_LIGHTS);
+    }
+  }
+  return d;
+}
+
+// Draft f23 (D-111): nodes and materials added after a baked file's cache move in front of it, their references
+// renumbered, so strip and bake take them. The reader still asks baked items to come last (D-17).
+// shortcut: nodes and materials only (the items added by hand); other arrays keep D-17's error.
+export function hoist(doc) {
+  const d = structuredClone(doc), r = d.extensions?.[EXT];
+  const order = (k) => {
+    if (!Array.isArray(d[k])) return null;
+    const idx = d[k].map((_, i) => i), keep = idx.filter((i) => !isBaked(d[k][i])), baked = idx.filter((i) => isBaked(d[k][i]));
+    const now = [...keep, ...baked];
+    if (now.every((i, j) => i === j)) return null;
+    const map = new Map(now.map((i, j) => [i, j]));
+    d[k] = now.map((i) => d[k][i]);
+    return (i) => (Number.isInteger(i) && map.has(i) ? map.get(i) : i);
+  };
+  const n = order('nodes');
+  if (n) {
+    for (const sc of Array.isArray(d.scenes) ? d.scenes : []) if (Array.isArray(sc?.nodes)) sc.nodes = sc.nodes.map(n);
+    for (const x of d.nodes) if (Array.isArray(x?.children)) x.children = x.children.map(n);
+    for (const s of [...(Array.isArray(d.skins) ? d.skins : []), ...(Array.isArray(r?.skins) ? r.skins : [])]) {
+      if (Array.isArray(s?.joints)) s.joints = s.joints.map(n);
+      if (s?.skeleton !== undefined) s.skeleton = n(s.skeleton);
+    }
+  }
+  const m = order('materials');
+  if (m) {
+    for (const x of Array.isArray(r?.meshes) ? r.meshes : []) if (x?.material !== undefined) x.material = m(x.material);
+    for (const x of Array.isArray(d.meshes) ? d.meshes : []) for (const p of x?.primitives ?? []) if (p.material !== undefined) p.material = m(p.material);
   }
   return d;
 }
@@ -568,7 +638,7 @@ export function strip(doc) {
 // `set` names a set to bake with (its values under `values`) and records it as baked_set; null drops baked_set;
 // left out, baked_set stays as it is.
 export function bake(doc, values = {}, { uri, set, files } = {}) {
-  const d = strip(doc);
+  const d = strip(hoist(doc));
   const r = d.extensions?.[EXT];
   if (typeof set === 'string') {
     need(isObj(r?.sets?.[set]), `/extensions/${EXT}/sets`, `has no set named "${set}"`);
@@ -653,6 +723,7 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
     const kids = rec.kids.filter((r) => r.shown).map(copyOf), n = rec.node, b = {};
     if (rec.name !== undefined) b.name = rec.name;
     if (rec.mesh !== undefined && !rec.bound) b.mesh = meshAt[rec.mesh];
+    if (rec.light !== undefined) b.extensions = { [KHR_LIGHTS]: { light: rec.light } };
     for (const [k, id] of [['translation', '0,0,0'], ['rotation', '0,0,0,1'], ['scale', '1,1,1']]) if (String(n[k]) !== id) b[k] = n[k];
     if (kids.length) b.children = kids;
     const i = add('nodes', b);
@@ -664,6 +735,13 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
     if (!n || n.repeated) continue;
     if (n.mesh !== undefined && !bound.has(i)) d.nodes[i].mesh = meshAt[n.mesh];
     for (const k of ['name', 'translation', 'rotation', 'scale']) if (twin(n.jig, k) !== undefined) d.nodes[i][k] = n[k];
+    if (n.jig.light !== undefined) d.nodes[i].extensions[KHR_LIGHTS] = { light: n.jig.light };
+  }
+  // Draft f23 (D-113): placed documents' lights join the document's own, marked baked.
+  if (out.lights.length) {
+    const own = d.extensions[KHR_LIGHTS]?.lights ?? [];
+    d.extensions[KHR_LIGHTS] = { ...d.extensions[KHR_LIGHTS], lights: [...own, ...out.lights.slice(own.length).map((l) => ({ ...l, extensions: { ...l.extensions, [EXT]: { baked: true } } }))] };
+    if (!d.extensionsUsed.includes(KHR_LIGHTS)) d.extensionsUsed.push(KHR_LIGHTS);
   }
   const place = (recs) => recs.forEach((rec) => {
     if (!rec.rep && !rec.foreign) { nodeOf.set(rec, rec.i); return place(rec.kids); }
@@ -719,7 +797,10 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
   let at = 0;
   for (const c of chunks) { bin.set(c, at); at += c.byteLength; }
   add('buffers', { byteLength: bin.byteLength, uri: uri ?? `data:application/octet-stream;base64,${base64(bin)}` });
-  return { gltf: d, bin };
+  // Draft f23 (D-110): the cache-only arrays go last in the file, so the recipe reads first.
+  const last = ['meshes', 'accessors', 'bufferViews', 'buffers'];
+  const gltf = Object.fromEntries([...Object.entries(d).filter(([k]) => !last.includes(k)), ...last.filter((k) => d[k]).map((k) => [k, d[k]])]);
+  return { gltf, bin };
 }
 
 // Triangles of a recipe mesh: { positions, normals, uvs, indices } (Float32Array x 3, Uint32Array). uvs are
@@ -1087,7 +1168,7 @@ function flutes(x, scope, at) {
 function points(x, scope, at) {
   if (isObj(x)) return x.flutes !== undefined ? flutes(x, scope, at) : roundSection(x, scope, at);
   const pts = pointList(x, scope, at, true);
-  need(pts.length >= 3, at, 'needs at least 3 points');
+  need(pts.length >= 2, at, 'needs at least 2 points'); // 2 with a curved edge (an arc piece) can enclose a D shape
   need(Math.abs(area(outline(pts))) > 1e-12, at, 'must enclose an area');
   return pts;
 }
@@ -1283,10 +1364,11 @@ function lathe(l, scope, at) {
   return { type: 'lathe', profile, sides, ...(caps && { caps }) };
 }
 
-// The open profile as a polyline (the closing edge left out), and the polyline indices of its inner corners.
-function profileLine(pts) {
+// The open profile as a polyline (the closing edge left out), the polyline indices of its inner corners, and
+// where each point's piece starts in it.
+export function profileLine(pts) {
   const { poly, starts } = flatten(pts);
-  return { poly: poly.slice(0, starts[starts.length - 1] + 1), hard: starts.filter((_, k) => k > 0 && k < pts.length - 1 && corner(pts[k])) };
+  return { poly: poly.slice(0, starts[starts.length - 1] + 1), hard: starts.filter((_, k) => k > 0 && k < pts.length - 1 && corner(pts[k])), starts };
 }
 const closeOnAxis = (poly) => [...poly, [0, poly[poly.length - 1][1]], [0, poly[0][1]]];
 
@@ -1728,6 +1810,7 @@ export function evaluate(src, scope) {
     if (/^[a-z_]/i.test(t)) {
       if (peek() === '(') return call(t);
       if (!(t in scope)) throw new Error(`"${src}": unknown name "${t}"`);
+      if (typeof scope[t] === 'string') throw new Error(`"${src}": "${t}" is text ("${scope[t]}"), only a placed model's choice value can take it`); // draft f23 (D-112)
       return scope[t];
     }
     throw new Error(`"${src}": unexpected "${t}"`);
@@ -1761,6 +1844,41 @@ export function evaluate(src, scope) {
   if (i < toks.length) throw new Error(`"${src}": unexpected "${toks[i]}"`);
   if (![v].flat().every(Number.isFinite)) throw new Error(`"${src}": is not a finite number`);
   return v;
+}
+// Editor drags (GAPS editor 1): `src` rewritten so it gives `target` in `scope`. The first number literal, left to
+// right, that the value depends on is solved for (secant steps: exact when linear); with none, `+ c` is appended.
+// Returns the new expression, or null when src is not a number expression in scope.
+export function solveFor(src, scope, target, eps = 1e-6) {
+  const at = (s) => { try { const v = evaluate(s, scope); return typeof v === 'number' ? v : NaN; } catch { return NaN; } };
+  const now = at(src);
+  if (!Number.isFinite(now) || !Number.isFinite(target)) return null;
+  if (Math.abs(now - target) <= eps) return src;
+  const lits = [...src.matchAll(/[a-z_][a-z0-9_]*|\d+\.?\d*|\.\d+/gi)].filter((m) => /^\.?\d/.test(m[0]));
+  for (const m of lits) {
+    const put = (c) => withLiteral(src, m.index, m[0].length, c), f = (c) => at(put(c)) - target;
+    const c0 = Number(m[0]), h = 1e-3 * Math.max(1, Math.abs(c0));
+    let a = c0, fa = f(a), b = c0 + h, fb = f(b);
+    if (!Number.isFinite(fb) || Math.abs(fb - fa) < 1e-12) continue; // the value does not follow this number
+    for (let k = 0; k < 12 && Math.abs(fb) > eps; k++) {
+      if (!(Math.abs(fb - fa) > 1e-15)) break;
+      [a, fa, b] = [b, fb, b - (fb * (b - a)) / (fb - fa)];
+      fb = f(b);
+      if (!Number.isFinite(fb)) break;
+    }
+    if (Math.abs(fb) > 1e-4 * Math.max(1, Math.abs(target))) continue;
+    return put(+b.toPrecision(6));
+  }
+  const c = +(target - now).toPrecision(6), base = /[<>=!]/.test(src) ? `(${src})` : src;
+  return `${base} ${c < 0 ? '-' : '+'} ${Math.abs(c)}`;
+}
+// src with the literal at [i, i + n) replaced by c; a negative c flips a + or - in front, else goes in parentheses.
+function withLiteral(src, i, n, c) {
+  const after = src.slice(i + n);
+  if (c >= 0) return src.slice(0, i) + c + after;
+  const pre = src.slice(0, i).trimEnd(), op = pre.at(-1), before = pre.slice(0, -1).trimEnd();
+  if (op === '+') return `${before} - ${-c}${after}`;
+  if (op === '-') return /^$|[-+*/(,<>=]$/.test(before) ? `${before}${-c}${after}` : `${before} + ${-c}${after}`;
+  return `${src.slice(0, i)}(${c})${after}`;
 }
 // f on numbers, or per component when any argument is a vec4, a number argument standing for every component.
 // Every vec4 made is clamped to 0..1 (D-91 amended: a color is clamped at every step).

@@ -29,33 +29,9 @@
   "scene": 0,
   "scenes": [{ "nodes": [0] }],
   "nodes": [{ "extensions": { "JIG_recipe": { "mesh": 0 } }, "mesh": 0 }],
-  "bufferViews": [
+  "meshes": [
     {
-      "buffer": 0,
-      "byteOffset": 0,
-      "byteLength": 15276,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 15276,
-      "byteLength": 15276,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 30552,
-      "byteLength": 10184,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 40736,
-      "byteLength": 14088,
-      "target": 34963,
+      "primitives": [{ "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 3 }],
       "extensions": { "JIG_recipe": { "baked": true } }
     }
   ],
@@ -91,9 +67,33 @@
       "extensions": { "JIG_recipe": { "baked": true } }
     }
   ],
-  "meshes": [
+  "bufferViews": [
     {
-      "primitives": [{ "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 3 }],
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 15276,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 15276,
+      "byteLength": 15276,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 30552,
+      "byteLength": 10184,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 40736,
+      "byteLength": 14088,
+      "target": 34963,
       "extensions": { "JIG_recipe": { "baked": true } }
     }
   ],
