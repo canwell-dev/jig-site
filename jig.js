@@ -33,7 +33,18 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     const at = `${rat}/params/${name}`;
     need(/^[a-z_][a-z0-9_]*$/.test(name), at, 'name must be lower_snake_case');
     need(isObj(p), at, 'must be an object');
-    need(p.type === undefined || p.type === 'bool' || p.type === 'color', `${at}/type`, 'must be "bool" or "color" (leave it out for a number)');
+    need(p.type === undefined || p.type === 'bool' || p.type === 'color' || p.type === 'choice', `${at}/type`, 'must be "bool", "color" or "choice" (leave it out for a number)');
+    if (p.type === 'choice') { // draft f21: one of named options, its index 0, 1, ... in expressions
+      only(p, ['type', 'options', 'default'], at);
+      need(Array.isArray(p.options) && p.options.length >= 2 && p.options.every((o) => typeof o === 'string' && o !== ''), `${at}/options`, 'must be a list of at least 2 non-empty strings');
+      need(new Set(p.options).size === p.options.length, `${at}/options`, 'must not repeat an option');
+      need(p.options.includes(p.default), `${at}/default`, `must be one of ${JSON.stringify(p.options)}`);
+      if (baked) need(p.options.includes(baked[name]), `${rat}/baked_values/${name}`, `must be one of ${JSON.stringify(p.options)} (baked_values holds every parameter)`);
+      const v = values[name] ?? baked?.[name] ?? p.default;
+      need(p.options.includes(v), `${rat}/params/${name}`, `value must be one of ${JSON.stringify(p.options)}, is ${JSON.stringify(v)}`);
+      params[name] = { ...p, value: v };
+      continue;
+    }
     if (p.type === 'color') { // draft f6: linear [r, g, b, a] in 0..1, as glTF's baseColorFactor; a vec4 in expressions (D-91)
       only(p, ['type', 'default'], at);
       need(isColor(p.default), `${at}/default`, 'must be a color: linear [r, g, b, a], numbers 0..1');
@@ -75,13 +86,13 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     for (const [k, v] of Object.entries(set)) {
       const p = params[k];
       need(p !== undefined, `${at}/${k}`, 'is not a parameter');
-      need(p.type === 'bool' ? typeof v === 'boolean' : p.type === 'color' ? isColor(v) : typeof v === 'number', `${at}/${k}`,
-        p.type === 'bool' ? 'must be true or false' : p.type === 'color' ? 'must be a color: linear [r, g, b, a], numbers 0..1' : 'must be a number');
+      need(p.type === 'bool' ? typeof v === 'boolean' : p.type === 'color' ? isColor(v) : p.type === 'choice' ? p.options.includes(v) : typeof v === 'number', `${at}/${k}`,
+        p.type === 'bool' ? 'must be true or false' : p.type === 'color' ? 'must be a color: linear [r, g, b, a], numbers 0..1' : p.type === 'choice' ? `must be one of ${JSON.stringify(p.options)}` : 'must be a number');
     }
     sets[name] = set;
   }
   need(r.baked_set === undefined || Object.hasOwn(sets, r.baked_set), `${rat}/baked_set`, 'must name a set');
-  const scope = Object.fromEntries(Object.entries(params).map(([k, p]) => [k, p.type === 'color' ? [...p.value] : +p.value]));
+  const scope = Object.fromEntries(Object.entries(params).map(([k, p]) => [k, p.type === 'color' ? [...p.value] : p.type === 'choice' ? p.options.indexOf(p.value) : +p.value]));
 
   // Sketch (draft f2): named expressions, in order; each sees the params and the vars before it. A var may hold a
   // color (vec4, D-91).
@@ -304,8 +315,11 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
       const kat = `${xat}/values/${k}`;
       need(isObj(ps) && Object.hasOwn(ps, k), kat, `is not a parameter of ${m.label}`);
       if (ps[k]?.type === 'color') { vals[k] = color(e, 4, s, kat); continue; } // a color expression or linear channels (D-78, D-91)
+      const opts = ps[k]?.type === 'choice' && Array.isArray(ps[k].options) ? ps[k].options : null;
+      if (opts?.includes(e)) { vals[k] = e; continue; } // draft f21: an option by name, or an expression giving its index
       const v = num(e, s, kat);
-      vals[k] = ps[k]?.type === 'bool' ? v !== 0 : v;
+      if (opts) need(Number.isInteger(v) && v >= 0 && v < opts.length, kat, `must be one of ${JSON.stringify(opts)} or an index 0..${opts.length - 1}, is ${v}`);
+      vals[k] = ps[k]?.type === 'bool' ? v !== 0 : opts ? opts[v] : v;
     }
     let sub;
     try { sub = read(m.doc, vals, { files, stack: [...stack, doc] }); } catch (e) { need(false, `${xat}/model`, `in ${m.label}: ${e.message}`); }
@@ -886,7 +900,7 @@ function loft(l, scope, at) {
       const d = num(s.d, scope, `${sat}/d`);
       t = Math.min(1, Math.max(0, (d < 0 ? length + d : d) / length));
     }
-    const pts = isObj(s.points) ? (s.points.flutes !== undefined ? flutes(s.points, scope, `${sat}/points`) : roundSection(s.points, scope, `${sat}/points`)) : points(s.points, scope, `${sat}/points`);
+    const pts = points(s.points, scope, `${sat}/points`);
     return { t, points: pts, twist: s.twist === undefined ? 0 : num(s.twist, scope, `${sat}/twist`) };
   });
   sections.forEach((s, i) => {
@@ -1011,8 +1025,8 @@ const KAPPA = (4 * (Math.SQRT2 - 1)) / 3;
 // midpoint on the superellipse |u/rx|^n + |v/ry|^n = 1: k = (8·2^(−1/n) − 4) / 3, so n 2 gives KAPPA and n 1 a
 // diamond (k 0); k stops at 1 (n ≈ 5.2) so the curve stays inside its box.
 function roundSection(x, scope, at) {
-  only(x, ['circle', 'ellipse', 'squircle'], at);
-  const keys = Object.keys(x).filter((k) => !k.startsWith('//'));
+  only(x, ['circle', 'ellipse', 'squircle', 'center'], at);
+  const keys = Object.keys(x).filter((k) => !k.startsWith('//') && k !== 'center');
   need(keys.length === 1, at, 'must be { "circle": r }, { "ellipse": [rx, ry] } or { "squircle": [rx, ry, n] }');
   let k = KAPPA, rx, ry;
   if (x.squircle !== undefined) {
@@ -1022,8 +1036,8 @@ function roundSection(x, scope, at) {
     k = Math.min(1, (8 * 2 ** (-1 / n) - 4) / 3);
   } else [rx, ry] = x.circle !== undefined ? Array(2).fill(num(x.circle, scope, `${at}/circle`)) : vec(x.ellipse, 2, scope, `${at}/ellipse`);
   need(rx > 0 && ry > 0, `${at}/${keys[0]}`, `must be > 0, is ${x.circle !== undefined ? rx : [rx, ry]}`);
-  const kx = k * rx, ky = k * ry;
-  return [[rx, 0, 0, ky], [0, ry, -kx, 0], [-rx, 0, 0, -ky], [0, -ry, kx, 0]];
+  const kx = k * rx, ky = k * ry, [cu, cv] = x.center === undefined ? [0, 0] : vec(x.center, 2, scope, `${at}/center`); // draft f21
+  return [[cu + rx, cv, 0, ky], [cu, cv + ry, -kx, 0], [cu - rx, cv, 0, -ky], [cu, cv - ry, kx, 0]];
 }
 
 // Draft f17 (D-101): { flutes: { count, r, depth } }, a circle of radius r with `count` grooves, 2 points per
@@ -1054,17 +1068,55 @@ function flutes(x, scope, at) {
 
 // A closed outline in loft's point form (D-39): [u, v] corners, [u, v, hu, hv] smooth points and (D-83)
 // [u, v, ou, ov, iu, iv] points with free handles.
+// Or a round form (D-89, D-101, D-105) standing for its points.
 function points(x, scope, at) {
-  const pts = pointList(x, scope, at);
+  if (isObj(x)) return x.flutes !== undefined ? flutes(x, scope, at) : roundSection(x, scope, at);
+  const pts = pointList(x, scope, at, true);
   need(pts.length >= 3, at, 'needs at least 3 points');
   need(Math.abs(area(outline(pts))) > 1e-12, at, 'must enclose an area');
   return pts;
 }
 
-function pointList(x, scope, at) {
-  return list(x, at).map((p, j) => {
-    need(Array.isArray(p) && [2, 4, 6].includes(p.length), `${at}/${j}`, 'must be [u, v], [u, v, hu, hv] or [u, v, ou, ov, iu, iv]');
-    return p.map((e, k) => num(e, scope, `${at}/${j}/${k}`));
+// Points, or (draft f21) an arc item that stands for its points. An arc's end that lands on the point next to it
+// (or, closed, on the first or last point round the seam) is one point: the in handle of the earlier, the out
+// handle of the later.
+// shortcut: errors found later (crossings) name points by their place after arcs are expanded; map back when it confuses.
+function pointList(x, scope, at, closed = false) {
+  const pts = [], arc = [];
+  list(x, at).forEach((p, j) => {
+    if (isObj(p)) { const q = arcPoints(p, scope, `${at}/${j}`); pts.push(...q); arc.push(...q.map((_, k) => k === 0 || k === q.length - 1)); return; }
+    need(Array.isArray(p) && [2, 4, 6].includes(p.length), `${at}/${j}`, 'must be [u, v], [u, v, hu, hv] or [u, v, ou, ov, iu, iv], or an arc');
+    pts.push(p.map((e, k) => num(e, scope, `${at}/${j}/${k}`))); arc.push(false);
+  });
+  const join = (a, b) => { // a before b, at the same place
+    const [ou, ov] = b.length >= 4 ? [b[2], b[3]] : [0, 0], [iu, iv] = inHandle(a);
+    return !ou && !ov && !iu && !iv ? a.slice(0, 2) : ou === -iu && ov === -iv ? [a[0], a[1], ou, ov] : [a[0], a[1], ou, ov, iu, iv];
+  };
+  const same = (a, b) => Math.abs(a[0] - b[0]) <= 1e-9 && Math.abs(a[1] - b[1]) <= 1e-9;
+  for (let k = pts.length - 1; k > 0; k--) if ((arc[k] || arc[k - 1]) && same(pts[k - 1], pts[k])) { pts.splice(k - 1, 2, join(pts[k - 1], pts[k])); arc.splice(k, 1); }
+  if (closed && pts.length > 1 && (arc[0] || arc[pts.length - 1]) && same(pts[pts.length - 1], pts[0])) pts[0] = join(pts.pop(), pts[0]);
+  return pts;
+}
+
+// Draft f21: { "arc": { center, radius, from, to } } in an outline: the elliptical arc (u, v) = center +
+// (rx cos a, ry sin a) from angle `from` to `to` (degrees, from +u toward +v; to < from runs clockwise), as
+// ceil(|to − from| / 90) bezier pieces with handles (4/3)·tan(θ/4) of the tangent: free-handle ends (no handle
+// outside the arc), smooth points between.
+function arcPoints(p, scope, at) {
+  only(p, ['arc'], at);
+  const a = p.arc, aat = `${at}/arc`;
+  need(isObj(a), aat, 'must be { "center", "radius", "from", "to" }');
+  only(a, ['center', 'radius', 'from', 'to'], aat);
+  const [cu, cv] = vec(a.center, 2, scope, `${aat}/center`);
+  const [rx, ry] = Array.isArray(a.radius) ? vec(a.radius, 2, scope, `${aat}/radius`) : Array(2).fill(num(a.radius, scope, `${aat}/radius`));
+  need(rx > 0 && ry > 0, `${aat}/radius`, `must be > 0, is ${Array.isArray(a.radius) ? [rx, ry] : rx}`);
+  const f = num(a.from, scope, `${aat}/from`), t = num(a.to, scope, `${aat}/to`);
+  need(f !== t && Math.abs(t - f) <= 360, `${aat}/to`, `must differ from from by at most 360, is ${t} (from ${f})`);
+  const n = Math.ceil(Math.abs(t - f) / 90 - 1e-9), step = ((t - f) / n) * (Math.PI / 180), k = (4 / 3) * Math.tan(step / 4);
+  return Array.from({ length: n + 1 }, (_, i) => {
+    const d = f + ((t - f) * i) / n, [c, s] = d % 90 === 0 ? [[1, 0], [0, 1], [-1, 0], [0, -1]][((d / 90) % 4 + 4) % 4] : [Math.cos(d * (Math.PI / 180)), Math.sin(d * (Math.PI / 180))]; // exact on the axes
+    const P = [cu + rx * c, cv + ry * s], h = [-k * rx * s || 0, k * ry * c || 0]; // || 0: no -0
+    return i === 0 ? [...P, ...h, 0, 0] : i === n ? [...P, 0, 0, -h[0] || 0, -h[1] || 0] : [...P, ...h];
   });
 }
 
@@ -1138,7 +1190,7 @@ const BEVEL_STEPS = 4;
 function extrudeGeometry(m, fit = true) {
   const loops = [m.outline, ...m.holes].map((pts, i) => {
     const { poly, starts } = flatten(pts);
-    const hard = new Set(starts.filter((_, k) => pts[k].length === 2));
+    const hard = new Set(starts.filter((_, k) => corner(pts[k])));
     const keep = (area(poly) > 0) === (i === 0); // outline counter-clockwise, holes clockwise
     const order = keep ? poly.map((_, k) => k) : poly.map((_, k) => (poly.length - k) % poly.length);
     return { poly: order.map((k) => poly[k]), hard: order.map((k) => hard.has(k)) };
@@ -1219,7 +1271,7 @@ function lathe(l, scope, at) {
 // The open profile as a polyline (the closing edge left out), and the polyline indices of its inner corners.
 function profileLine(pts) {
   const { poly, starts } = flatten(pts);
-  return { poly: poly.slice(0, starts[starts.length - 1] + 1), hard: starts.filter((_, k) => k > 0 && k < pts.length - 1 && pts[k].length === 2) };
+  return { poly: poly.slice(0, starts[starts.length - 1] + 1), hard: starts.filter((_, k) => k > 0 && k < pts.length - 1 && corner(pts[k])) };
 }
 const closeOnAxis = (poly) => [...poly, [0, poly[poly.length - 1][1]], [0, poly[0][1]]];
 
@@ -1501,6 +1553,8 @@ function flatten(pts) {
   return { poly: out, starts };
 }
 
+// Where walls split their normals: a corner, or (draft f21) a free-handle point with no handle on one side, as an arc's end.
+const corner = (p) => p.length === 2 || (p.length === 6 && ((!p[2] && !p[3]) || (!p[4] && !p[5])));
 // A point's in handle, relative to the point (zero for a corner).
 const inHandle = (p) => (p.length === 6 ? [p[4], p[5]] : [-(p[2] ?? 0), -(p[3] ?? 0)]);
 
@@ -1635,7 +1689,7 @@ function color(c, n, scope, at) {
 // An expression's value: a number, or a vec4 (D-91: a color, linear RGBA, GLSL's vec4) as a list of 4 numbers.
 // Operators and built-ins work per component on vec4s, a number standing for every component; each vec4 is clamped to 0..1.
 export function evaluate(src, scope) {
-  const toks = src.match(/\d+\.?\d*|\.\d+|[a-z_][a-z0-9_]*|[-+*/(),.]|\S/gi) ?? [];
+  const toks = src.match(/\d+\.?\d*|\.\d+|[a-z_][a-z0-9_]*|[<>=!]=|[-+*/(),.<>]|\S/gi) ?? [];
   let i = 0;
   const peek = () => toks[i], take = () => toks[i++];
   const atom = () => {
@@ -1653,7 +1707,7 @@ export function evaluate(src, scope) {
   const primary = () => {
     const t = take();
     if (t === undefined) throw new Error(`"${src}": ends too early`);
-    if (t === '(') { const v = sum(); if (take() !== ')') throw new Error(`"${src}": missing )`); return v; }
+    if (t === '(') { const v = compare(); if (take() !== ')') throw new Error(`"${src}": missing )`); return v; }
     if (/^\.?\d/.test(t)) return Number(t);
     if (/^[a-z_]/i.test(t)) {
       if (peek() === '(') return call(t);
@@ -1667,7 +1721,7 @@ export function evaluate(src, scope) {
     if (!f) throw new Error(`"${src}": unknown function "${name}"`);
     take(); // (
     const args = [];
-    if (peek() !== ')') do args.push(sum()); while (peek() === ',' && take());
+    if (peek() !== ')') do args.push(compare()); while (peek() === ',' && take());
     if (take() !== ')') throw new Error(`"${src}": missing ) after ${name}(`);
     const arity = name === 'atan' ? [1, 2] : name === 'hash' ? [1, 2, 3] : [f.length];
     if (!arity.includes(args.length)) throw new Error(`"${src}": ${name} takes ${arity.join(' or ')} arguments, got ${args.length}`);
@@ -1678,7 +1732,16 @@ export function evaluate(src, scope) {
   const ops = { '*': (a, b) => a * b, '/': (a, b) => a / b, '+': (a, b) => a + b, '-': (a, b) => a - b };
   const product = () => { let v = atom(); while (peek() === '*' || peek() === '/') { const op = ops[take()]; v = each(op, [v, atom()]); } return v; };
   const sum = () => { let v = product(); while (peek() === '+' || peek() === '-') { const op = ops[take()]; v = each(op, [v, product()]); } return v; };
-  const v = sum();
+  // Draft f21: a comparison of two numbers is 1 or 0, as a bool parameter (D-47); one per level, as in GLSL.
+  const compare = () => {
+    const a = sum();
+    if (!(peek() in CMP)) return a;
+    const op = take(), b = sum();
+    if (Array.isArray(a) || Array.isArray(b)) throw new Error(`"${src}": ${op} compares numbers, not a color (vec4)`);
+    if (peek() in CMP) throw new Error(`"${src}": a comparison of a comparison needs parentheses`);
+    return CMP[op](a, b) ? 1 : 0;
+  };
+  const v = compare();
   if (i < toks.length) throw new Error(`"${src}": unexpected "${toks[i]}"`);
   if (![v].flat().every(Number.isFinite)) throw new Error(`"${src}": is not a finite number`);
   return v;
@@ -1688,6 +1751,7 @@ export function evaluate(src, scope) {
 const each = (f, args) => (args.some(Array.isArray) ? clamp01([0, 1, 2, 3].map((k) => f(...args.map((a) => (Array.isArray(a) ? a[k] : a))))) : f(...args));
 const clamp01 = (v) => v.map((x) => (Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : x)); // not finite stays, for the error
 
+const CMP = { '==': (a, b) => a === b, '!=': (a, b) => a !== b, '<': (a, b) => a < b, '<=': (a, b) => a <= b, '>': (a, b) => a > b, '>=': (a, b) => a >= b };
 // GLSL ES built-ins with GLSL's definitions (mod floors, step is edge <= x), per component on vec4s; and vec4.
 const FUNCS = {
   abs: Math.abs, sign: Math.sign, floor: Math.floor, ceil: Math.ceil, fract: (x) => x - Math.floor(x),

@@ -260,12 +260,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=b832cf5';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=b67300a';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=b832cf5', loft: 'examples/loft.gltf?v=b832cf5', star: 'examples/star.gltf?v=b832cf5', bench: 'examples/bench.gltf?v=b832cf5', lathe: 'examples/lathe.gltf?v=b832cf5', lantern: 'examples/lantern.gltf?v=b832cf5', paths: 'examples/paths.gltf?v=b832cf5', ends: 'examples/ends.gltf?v=b832cf5', cushion: 'examples/cushion.gltf?v=b832cf5',
-  finger: 'examples/finger.gltf?v=b832cf5', hand: 'examples/hand.gltf?v=b832cf5' };
+const examples = { box: 'examples/box.gltf?v=b67300a', loft: 'examples/loft.gltf?v=b67300a', star: 'examples/star.gltf?v=b67300a', bench: 'examples/bench.gltf?v=b67300a', lathe: 'examples/lathe.gltf?v=b67300a', lantern: 'examples/lantern.gltf?v=b67300a', paths: 'examples/paths.gltf?v=b67300a', ends: 'examples/ends.gltf?v=b67300a', cushion: 'examples/cushion.gltf?v=b67300a',
+  finger: 'examples/finger.gltf?v=b67300a', hand: 'examples/hand.gltf?v=b67300a' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -750,7 +750,7 @@ function loftProps(l, om) {
     }));
   const res = [settings, path, sections];
   // shortcut: a loft with a circle, ellipse or flutes section (D-89, D-101) has no shape editor; edit its JSON
-  if (sel.section !== undefined && l.sections[sel.section] && l.sections.every((x) => Array.isArray(x.points))) res.push(...shapePanel(`Section ${sel.section}`, 'Adding or removing a point does it in every section.'));
+  if (sel.section !== undefined && l.sections[sel.section] && l.sections.every((x) => plainPoints(x.points))) res.push(...shapePanel(`Section ${sel.section}`, 'Adding or removing a point does it in every section.'));
   return res;
 }
 
@@ -768,7 +768,8 @@ function extrudeProps(e, om) {
     }),
     btn('+ Hole', () => { if (!om) return; newHole(e, om); sel = { node: sel.node, loop: e.holes.length }; commit(); }, 'A small square hole inside the outline'),
     k > 0 && btn(`Remove hole ${k}`, () => { e.holes.splice(k - 1, 1); if (!e.holes.length) delete e.holes; sel = { node: sel.node }; commit(); })));
-  return [settings, loops, ...shapePanel(loopName(k), '')];
+  const pts = k ? e.holes[k - 1] : e.outline;
+  return [settings, loops, ...(plainPoints(pts) ? shapePanel(loopName(k), '') : [sec(h3(`${loopName(k)} shape`), el('p', {}, 'A round form or an arc item: edit it in the JSON.'))])];
 }
 
 // A small square hole: the first spot of a grid over the outline's bounds where the document still reads (inside
@@ -787,15 +788,18 @@ function newHole(e, om) {
 
 // The shape being edited: a loft section's points (a point added or removed in every section) or an extrude loop.
 // { pts: source points, ev: their values, all: [[source, values], ...] that change together }.
+// Points the shape editor can drag: a list of points, no round form or arc item (draft f21).
+const plainPoints = (pts) => Array.isArray(pts) && pts.every(Array.isArray);
 function shapeSel() {
   const mi = meshOf(sel?.node), m = R().meshes?.[mi], om = out?.meshes?.[mi];
   if (m?.loft && sel.section !== undefined && m.loft.sections[sel.section]) {
-    if (!m.loft.sections.every((x) => Array.isArray(x.points))) return;
+    if (!m.loft.sections.every((x) => plainPoints(x.points))) return;
     return { pts: m.loft.sections[sel.section].points, ev: om?.sections?.[sel.section]?.points, key: `s${sel.section}`,
       all: m.loft.sections.map((x, si) => [x.points, om?.sections?.[si]?.points]) };
   }
   if (m?.extrude) {
     const k = Math.min(sel.loop ?? 0, (m.extrude.holes ?? []).length), pts = k ? m.extrude.holes[k - 1] : m.extrude.outline;
+    if (!plainPoints(pts)) return;
     const ev = om?.type === 'extrude' ? (k ? om.holes[k - 1] : om.outline) : undefined;
     return { pts, ev, key: `l${k}`, all: [[pts, ev]] };
   }
@@ -1027,6 +1031,12 @@ function params() {
         sliderOut[k] = el('output', { textContent: String(now) });
         return [nameIn('params', k), box(`p-val-${k}`, `${k} value`, now, (v) => { values[k] = v; live(); }), sliderOut[k],
           box(`p-default-${k}`, `${k} default`, p.default, (v) => { p.default = v; commit(); }), el('span', { className: 'wide' }), el('span', { className: 'wide' }), del('params', k)];
+      }
+      if (p.type === 'choice' && Array.isArray(p.options)) { // draft f21: a list to try, a list for the default; options edited in the JSON
+        const pick = (id, label, v, on) => { const e = el('select', { id, className: 'f', onchange: (ev) => on(ev.target.value) }, ...p.options.map((o) => el('option', { value: o, textContent: o, selected: o === v }))); e.setAttribute('aria-label', label); return e; };
+        sliderOut[k] = el('output', { textContent: String(now) });
+        return [nameIn('params', k), pick(`p-val-${k}`, `${k} value`, now, (v) => { values[k] = v; live(); }), sliderOut[k],
+          pick(`p-default-${k}`, `${k} default`, p.default, (v) => { p.default = v; commit(); }), el('span', { className: 'wide' }), el('span', { className: 'wide' }), del('params', k)];
       }
       if (p.type === 'color') { // a picker to try; the default as a picker or typed in any form, saved as linear RGBA
         const pick = (id, label, c, on, when) => { // a picker is sRGB with no alpha: keep the alpha
