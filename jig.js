@@ -106,6 +106,8 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     if (x.baseColorFactor !== undefined) o.baseColorFactor = color(x.baseColorFactor, 4, `${at}/baseColorFactor`);
     for (const k of ['metallicFactor', 'roughnessFactor']) if (x[k] !== undefined) o[k] = unit(num(x[k], scope, `${at}/${k}`));
     if (x.emissiveFactor !== undefined) o.emissiveFactor = color(x.emissiveFactor, 3, `${at}/emissiveFactor`);
+    // Draft f12 (D-82): KHR_materials_emissive_strength's twin, clamped to >= 0.
+    if (x.emissiveStrength !== undefined) o.emissiveStrength = Math.max(0, num(x.emissiveStrength, scope, `${at}/emissiveStrength`));
     // Draft f11 (D-81): a texture slot's KHR_texture_transform, its values numbers or expressions.
     for (const [k, place] of Object.entries(TEXTURE_SLOTS)) {
       const t = x[k], tat = `${at}/${k}`;
@@ -407,6 +409,7 @@ function mesh(m, scope, at, materialCount) {
 const OWNED = ['meshes', 'accessors', 'bufferViews', 'buffers', 'nodes', 'materials', 'skins', 'images', 'samplers', 'textures'];
 const KHR_TT = 'KHR_texture_transform';
 const KHR_VARIANTS = 'KHR_materials_variants';
+const KHR_ES = 'KHR_materials_emissive_strength';
 const isBaked = (o) => o?.extensions?.[EXT]?.baked === true;
 
 // Remove the bake's cache: every item marked baked, and the core node slots that have a twin in JIG_recipe.
@@ -432,6 +435,7 @@ export function strip(doc) {
     for (const [k, place] of Object.entries(MATERIAL_SLOTS)) {
       if (x[k] === undefined) continue;
       if (place === 'top') delete m[k];
+      else if (place === 'ext') { if (isObj(m.extensions)) { delete m.extensions[KHR_ES]; if (!Object.keys(m.extensions).length) delete m.extensions; } }
       else if (isObj(m.pbrMetallicRoughness)) delete m.pbrMetallicRoughness[k];
     }
     for (const [k, place] of Object.entries(TEXTURE_SLOTS)) { // the cache of a texture transform twin (draft f11)
@@ -442,8 +446,8 @@ export function strip(doc) {
     }
     if (isObj(m.pbrMetallicRoughness) && !Object.keys(m.pbrMetallicRoughness).length) delete m.pbrMetallicRoughness;
   }
-  if (Array.isArray(d.extensionsUsed) && !JSON.stringify(d.materials ?? []).includes(`"${KHR_TT}"`)) {
-    d.extensionsUsed = d.extensionsUsed.filter((e) => e !== KHR_TT);
+  for (const e of [KHR_TT, KHR_ES]) if (Array.isArray(d.extensionsUsed) && !JSON.stringify(d.materials ?? []).includes(`"${e}"`)) {
+    d.extensionsUsed = d.extensionsUsed.filter((u) => u !== e);
   }
   for (const sc of Array.isArray(d.scenes) ? d.scenes : []) { // drop baked skinned-mesh roots (draft f10)
     if (Array.isArray(sc?.nodes)) sc.nodes = sc.nodes.filter((c) => c < (d.nodes?.length ?? 0));
@@ -540,7 +544,7 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
       ...(mapping[m.material] && { extensions: { [KHR_VARIANTS]: { mappings: mapping[m.material] } } }) }] });
   }
   out.materials.forEach((m, i) => { if (m) slots(d.materials[i], m); }); // the material cache (D-57)
-  if (JSON.stringify(d.materials ?? []).includes(`"${KHR_TT}"`) && !d.extensionsUsed.includes(KHR_TT)) d.extensionsUsed.push(KHR_TT);
+  for (const e of [KHR_TT, KHR_ES]) if (JSON.stringify(d.materials ?? []).includes(`"${e}"`) && !d.extensionsUsed.includes(e)) d.extensionsUsed.push(e);
 
   // Nodes outside any repeat get their cache in place; each shown copy of a repeated node becomes a baked node,
   // with baked copies of its subtree, appended to the repeated node's children (D-45); so does each shown node of
@@ -786,10 +790,11 @@ function loft(l, scope, at) {
   return { type: 'loft', path, sections, sides: int('sides', 24, 3, 256), steps: int('steps', 48, 1, 1024), blend };
 }
 
-// A closed outline in loft's point form (D-39): [u, v] corners and [u, v, hu, hv] smooth points.
+// A closed outline in loft's point form (D-39): [u, v] corners, [u, v, hu, hv] smooth points and (D-83)
+// [u, v, ou, ov, iu, iv] points with free handles.
 function points(x, scope, at) {
   const pts = list(x, at).map((p, j) => {
-    need(Array.isArray(p) && (p.length === 2 || p.length === 4), `${at}/${j}`, 'must be [u, v] or [u, v, hu, hv]');
+    need(Array.isArray(p) && [2, 4, 6].includes(p.length), `${at}/${j}`, 'must be [u, v], [u, v, hu, hv] or [u, v, ou, ov, iu, iv]');
     return p.map((e, k) => num(e, scope, `${at}/${j}/${k}`));
   });
   need(pts.length >= 3, at, 'needs at least 3 points');
@@ -801,7 +806,7 @@ function points(x, scope, at) {
 // the origin like a box.
 function extrude(e, scope, at) {
   need(isObj(e), at, 'must be an object');
-  only(e, ['outline', 'holes', 'depth'], at);
+  only(e, ['outline', 'holes', 'depth', 'bevel'], at);
   const out = points(e.outline, scope, `${at}/outline`);
   const holes = e.holes === undefined ? [] : list(e.holes, `${at}/holes`).map((h, i) => points(h, scope, `${at}/holes/${i}`));
   const poly = outline(out);
@@ -810,7 +815,12 @@ function extrude(e, scope, at) {
   holes.forEach((h, i) => need(inside(h[0], poly), `${at}/holes/${i}`, 'must lie inside the outline'));
   const depth = num(e.depth, scope, `${at}/depth`);
   need(depth > 0, `${at}/depth`, `must be > 0, is ${depth}`);
-  return { type: 'extrude', outline: out, holes, depth };
+  // Draft f12 (D-86): a round edge on both rims, its radius at most half the depth.
+  const bevel = e.bevel === undefined ? 0 : num(e.bevel, scope, `${at}/bevel`);
+  need(bevel >= 0 && bevel <= depth / 2, `${at}/bevel`, `must be in 0..depth / 2 (${depth / 2}), is ${bevel}`);
+  const m = { type: 'extrude', outline: out, holes, depth, ...(bevel > 0 && { bevel }) };
+  try { extrudeGeometry(m); } catch (err) { need(false, at, err.message.replace(/^\/: /, '')); } // caps that cannot be triangulated (D-66)
+  return m;
 }
 const inside = ([x, y], poly) => poly.reduce((c, p, i) => {
   const q = poly[(i + 1) % poly.length];
@@ -818,7 +828,9 @@ const inside = ([x, y], poly) => poly.reduce((c, p, i) => {
 }, false);
 
 // Caps: ear clipping, holes first bridged to the outline. Walls: a quad per outline edge, smooth normals across
-// curve samples and smooth points, split at corners.
+// curve samples and smooth points, split at corners. A bevel (D-86) insets the caps by its radius and joins them to
+// the walls by a quarter circle of BEVEL_STEPS rings.
+const BEVEL_STEPS = 4;
 function extrudeGeometry(m, fit = true) {
   const loops = [m.outline, ...m.holes].map((pts, i) => {
     const { poly, starts } = flatten(pts);
@@ -827,9 +839,19 @@ function extrudeGeometry(m, fit = true) {
     const order = keep ? poly.map((_, k) => k) : poly.map((_, k) => (poly.length - k) % poly.length);
     return { poly: order.map((k) => poly[k]), hard: order.map((k) => hard.has(k)) };
   });
-  const positions = [], normals = [], uvs = [], indices = [], h = m.depth / 2;
-  const flat = loops.flatMap((l) => l.poly);
-  const tris = triangulate(loops.map((l) => l.poly));
+  const positions = [], normals = [], uvs = [], indices = [], h = m.depth / 2, r = m.bevel ?? 0;
+  // Each loop's outward edge normals and, per point, the miter: the offset that moves both edges by 1.
+  for (const l of loops) {
+    const L = l.poly.length;
+    l.edge = l.poly.map((a, k) => { const b = l.poly[(k + 1) % L]; return norm([b[1] - a[1], a[0] - b[0], 0]); });
+    l.miter = l.poly.map((_, k) => {
+      const e0 = l.edge[(k + L - 1) % L], e1 = l.edge[k], bis = norm(e0.map((c, q) => c + e1[q]));
+      return scale(bis, 1 / Math.max(0.2, dot(bis, e1))); // shortcut: miters capped at 5x; insets of sharp spikes overlap
+    });
+    l.inset = (d) => (d === 0 ? l.poly : l.poly.map((p, k) => [p[0] - d * l.miter[k][0], p[1] - d * l.miter[k][1]]));
+  }
+  const flat = loops.flatMap((l) => l.inset(r));
+  const tris = triangulate(loops.map((l) => l.inset(r)));
   for (const [z, s] of [[h, 1], [-h, -1]]) {
     const first = positions.length / 3;
     for (const [x, y] of flat) { positions.push(x, y, z); normals.push(0, 0, s); }
@@ -839,18 +861,27 @@ function extrudeGeometry(m, fit = true) {
       indices.push(...t.map((i) => first + i));
     }
   }
-  for (const { poly, hard } of loops) {
-    const L = poly.length, along = [0];
+  // Rings up the side, bottom to top: { z, d: inset, s, c: the normal's share across and along z }.
+  const rings = r === 0 ? [{ z: -h, d: 0, s: 1, c: 0 }, { z: h, d: 0, s: 1, c: 0 }] : [-1, 1].flatMap((side) =>
+    Array.from({ length: BEVEL_STEPS + 1 }, (_, j) => {
+      const th = ((side < 0 ? j : BEVEL_STEPS - j) / BEVEL_STEPS) * (Math.PI / 2); // 0 at the cap's edge
+      return { z: side * (h - r * (1 - Math.cos(th))), d: r * (1 - Math.sin(th)), s: Math.sin(th), c: side * Math.cos(th) };
+    }));
+  for (const l of loops) {
+    const { poly, hard, edge, miter } = l, L = poly.length, along = [0];
     for (let k = 0; k < L; k++) along.push(along[k] + dist(poly[k], poly[(k + 1) % L]));
     const U = (k) => (fit ? along[k] / along[L] : along[k]), V = (z) => (fit ? (h - z) / m.depth : h - z);
-    const edge = (k) => { const a = poly[k % L], b = poly[(k + 1) % L]; return norm([b[1] - a[1], a[0] - b[0], 0]); };
-    const at = (k, e) => (hard[k % L] ? edge(e) : norm(edge((k + L - 1) % L).map((c, q) => c + edge(k)[q])));
+    const at = (k, e) => (hard[k % L] ? edge[e % L] : norm(edge[(k + L - 1) % L].map((c, q) => c + edge[k % L][q])));
+    const tilt = (n, g) => (g.c === 0 ? n : norm([n[0] * g.s, n[1] * g.s, g.c]));
     for (let k = 0; k < L; k++) {
-      const a = poly[k], b = poly[(k + 1) % L], na = at(k, k), nb = at(k + 1, k), first = positions.length / 3;
-      for (const [p, nn, z, e] of [[a, na, -h, k], [b, nb, -h, k + 1], [b, nb, h, k + 1], [a, na, h, k]]) {
-        positions.push(p[0], p[1], z); normals.push(...nn); uvs.push(U(e), V(z));
+      const na = at(k, k), nb = at(k + 1, k);
+      for (let j = 0; j + 1 < rings.length; j++) {
+        const lo = rings[j], hi = rings[j + 1], first = positions.length / 3;
+        for (const [i, nn, g, e] of [[k, na, lo, k], [(k + 1) % L, nb, lo, k + 1], [(k + 1) % L, nb, hi, k + 1], [k, na, hi, k]]) {
+          positions.push(poly[i][0] - g.d * miter[i][0], poly[i][1] - g.d * miter[i][1], g.z); normals.push(...tilt(nn, g)); uvs.push(U(e), V(g.z));
+        }
+        indices.push(first, first + 1, first + 2, first, first + 2, first + 3);
       }
-      indices.push(first, first + 1, first + 2, first, first + 2, first + 3);
     }
   }
   return { positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uvs), indices: new Uint32Array(indices) };
@@ -985,7 +1016,8 @@ function loftGeometry(m, fit = true) {
 const CURVE_STEPS = 16; // polygon edges per bezier edge
 
 // A section's closed outline as a polygon, starting at its point 0. A point [u, v] is a corner; [u, v, hu, hv]
-// is smooth, with bezier handles at (u, v) ± (hu, hv). An edge with a smooth end is a cubic bezier.
+// is smooth, with bezier handles at (u, v) ± (hu, hv); [u, v, ou, ov, iu, iv] has its out handle at (u, v) + (ou, ov)
+// and its in handle at (u, v) + (iu, iv). An edge with a handle at either end is a cubic bezier.
 export const outline = (pts) => flatten(pts).poly;
 
 // The outline, and where each point starts in it.
@@ -996,7 +1028,7 @@ function flatten(pts) {
     starts.push(out.length);
     out.push([a[0], a[1]]);
     if (a.length < 4 && b.length < 4) return;
-    const c1 = [a[0] + (a[2] ?? 0), a[1] + (a[3] ?? 0)], c2 = [b[0] - (b[2] ?? 0), b[1] - (b[3] ?? 0)];
+    const c1 = [a[0] + (a[2] ?? 0), a[1] + (a[3] ?? 0)], [iu, iv] = inHandle(b), c2 = [b[0] + iu, b[1] + iv];
     for (let k = 1; k < CURVE_STEPS; k++) {
       const t = k / CURVE_STEPS, s = 1 - t;
       out.push([0, 1].map((q) => s * s * s * a[q] + 3 * s * s * t * c1[q] + 3 * s * t * t * c2[q] + t * t * t * b[q]));
@@ -1005,12 +1037,19 @@ function flatten(pts) {
   return { poly: out, starts };
 }
 
-// Section points as [u, v, hu, hv] (a corner has zero handles), and twist, at t: held before the first and after the
+// A point's in handle, relative to the point (zero for a corner).
+const inHandle = (p) => (p.length === 6 ? [p[4], p[5]] : [-(p[2] ?? 0), -(p[3] ?? 0)]);
+
+// Section points as [u, v, ou, ov, iu, iv] (a corner has zero handles; a point whose handles are opposite comes back
+// as [u, v, hu, hv]), and twist, at t: held before the first and after the
 // last section; between them blended linearly or by centripetal Catmull-Rom over the sections (D-35, D-41, D-42).
 function blendAt(sorted, blend, t) {
   const n = sorted.length, j = sorted.findIndex((s) => s.t > t);
-  const full = (s) => s.points.flatMap((p) => [p[0], p[1], p[2] ?? 0, p[3] ?? 0]).concat([s.twist]);
-  const out = (v) => ({ points: Array.from({ length: (v.length - 1) / 4 }, (_, k) => v.slice(4 * k, 4 * k + 4)), twist: v[v.length - 1] });
+  // The in handle is blended as its offset from the mirrored out handle, zero for symmetric points, so it leaves
+  // the centripetal knots of 4-number sections as they were.
+  const full = (s) => s.points.flatMap((p) => { const [iu, iv] = inHandle(p); return [p[0], p[1], p[2] ?? 0, p[3] ?? 0, iu + (p[2] ?? 0), iv + (p[3] ?? 0)]; }).concat([s.twist]);
+  const pt = (p) => (Math.abs(p[4]) + Math.abs(p[5]) < 1e-12 ? p.slice(0, 4) : [...p.slice(0, 4), p[4] - p[2], p[5] - p[3]]);
+  const out = (v) => ({ points: Array.from({ length: (v.length - 1) / 6 }, (_, k) => pt(v.slice(6 * k, 6 * k + 6))), twist: v[v.length - 1] });
   if (j <= 0) return out(full(sorted[j < 0 ? n - 1 : 0]));
   const f = (t - sorted[j - 1].t) / (sorted[j].t - sorted[j - 1].t);
   // Shape and twist in separate curves: their units differ, and each gets its own centripetal knots.
@@ -1158,12 +1197,13 @@ const FUNCS = {
 
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 // Material slots a recipe may set, and where glTF keeps them (D-6 amended).
-const MATERIAL_SLOTS = { baseColorFactor: 'pbr', metallicFactor: 'pbr', roughnessFactor: 'pbr', emissiveFactor: 'top' };
+const MATERIAL_SLOTS = { baseColorFactor: 'pbr', metallicFactor: 'pbr', roughnessFactor: 'pbr', emissiveFactor: 'top', emissiveStrength: 'ext' };
 // Write evaluated material slots into their core glTF places; returns the material.
 function slots(core, m) {
   const pbr = Object.fromEntries(Object.entries(m).filter(([k]) => MATERIAL_SLOTS[k] === 'pbr'));
   if (Object.keys(pbr).length) core.pbrMetallicRoughness = { ...pbr, ...core.pbrMetallicRoughness };
   if (m.emissiveFactor) core.emissiveFactor = m.emissiveFactor;
+  if (m.emissiveStrength !== undefined && m.emissiveStrength !== 1) core.extensions = { ...core.extensions, [KHR_ES]: { emissiveStrength: m.emissiveStrength } };
   for (const [k, place] of Object.entries(TEXTURE_SLOTS)) {
     if (!m[k]) continue;
     const slot = place === 'pbr' ? core.pbrMetallicRoughness[k] : core[k];

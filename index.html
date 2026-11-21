@@ -258,12 +258,13 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=91c13b2';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=b88d045';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=91c13b2', loft: 'examples/loft.gltf?v=91c13b2', star: 'examples/star.gltf?v=91c13b2', bench: 'examples/bench.gltf?v=91c13b2',
-  finger: 'examples/finger.gltf?v=91c13b2', hand: 'examples/hand.gltf?v=91c13b2' };
+const examples = { box: 'examples/box.gltf?v=b88d045', loft: 'examples/loft.gltf?v=b88d045', star: 'examples/star.gltf?v=b88d045', bench: 'examples/bench.gltf?v=b88d045',
+  finger: 'examples/finger.gltf?v=b88d045', hand: 'examples/hand.gltf?v=b88d045' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -319,7 +320,10 @@ function redo() { if (future.length) { past.push(future.pop()); doc = JSON.parse
 // ---------- three.js ----------
 const vp = $('#vp');
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(devicePixelRatio);
+// Sharper than 2 costs fill rate on phones; a software renderer (no GPU, headless checks) draws at 1.
+const gl = renderer.getContext(), gpu = gl.getExtension('WEBGL_debug_renderer_info');
+const software = /swiftshader|llvmpipe|software/i.test(gpu ? gl.getParameter(gpu.UNMASKED_RENDERER_WEBGL) : '');
+renderer.setPixelRatio(software ? 1 : Math.min(devicePixelRatio, 2));
 vp.prepend(renderer.domElement);
 const canvas = renderer.domElement;
 const scene = new THREE.Scene();
@@ -328,7 +332,10 @@ camera.position.set(1.7, 1.25, 2.2);
 const orbit = new OrbitControls(camera, canvas);
 orbit.target.set(0, 0.1, -0.2);
 orbit.update();
-scene.add(new THREE.HemisphereLight(0xffffff, 0x666655, 2));
+// Reflections, so metal (glTF's default material too) is not black; a small map keeps software rendering fast.
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04, 0.1, 100, { size: 64 }).texture;
+scene.environmentIntensity = 0.5;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x666655, 1));
 const sun = new THREE.DirectionalLight(0xffffff, 1.4); sun.position.set(2, 4, 3); scene.add(sun);
 let grid = null;
 const model = new THREE.Group(), meshLayer = new THREE.Group(), helperLayer = new THREE.Group(), pivot = new THREE.Group();
@@ -337,8 +344,8 @@ const proxy = new THREE.Object3D();
 pivot.add(proxy);
 model.add(meshLayer, helperLayer, pivot);
 scene.add(model);
-const matBase = new THREE.MeshStandardMaterial({ color: 0xc9c4bc, roughness: 0.75 });
-const matSel = new THREE.MeshStandardMaterial({ color: 0xc9c4bc, roughness: 0.75, emissiveIntensity: 0.3 });
+const matBase = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 1, roughness: 1 }); // glTF's default material (D-84)
+const matSel = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 1, roughness: 1, emissiveIntensity: 0.3 });
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 function theme() {
   scene.background = new THREE.Color(css('--vp'));
@@ -430,7 +437,7 @@ function draw() {
   const matOf = (mesh, on) => { // glTF's material, its recipe slots over its core ones, glTF defaults otherwise
     const mi = mesh.material, pm = mesh.placed; // pm: a placed document's material, finished (draft f10)
     const core = pm !== undefined ? out.placed[pm] : mi === undefined ? null : doc.materials?.[mi];
-    if (!isObj(core)) return on ? matSel : matBase;
+    if (!isObj(core)) return on ? matSel : matBase; // glTF's default material (D-84)
     const key = `${pm !== undefined ? `p${pm}` : mi} ${on}`;
     if (!tinted.has(key)) {
       const x = (pm === undefined && out.materials[mi]) || {}, pbr = core.pbrMetallicRoughness ?? {}, t = (on ? matSel : matBase).clone();
@@ -439,6 +446,7 @@ function draw() {
       if (core.alphaMode === 'BLEND') { t.transparent = true; t.opacity = f[3]; }
       t.metalness = x.metallicFactor ?? pbr.metallicFactor ?? 1; t.roughness = x.roughnessFactor ?? pbr.roughnessFactor ?? 1;
       if (e && !on) t.emissive.setRGB(...e);
+      if (!on) t.emissiveIntensity = x.emissiveStrength ?? core.extensions?.KHR_materials_emissive_strength?.emissiveStrength ?? 1; // D-82
       // Draft f11: texture slots, with the recipe's KHR_texture_transform over the core one.
       const map = (slot, k, srgb) => textureOf(slot, pm !== undefined, x[k] ?? slot?.extensions?.KHR_texture_transform, srgb);
       t.map = map(pbr.baseColorTexture, 'baseColorTexture', true);
@@ -695,6 +703,7 @@ function props() {
     if (m.box) ms.append(vecRow('Size', 'size', m.box.size, om?.size, (a) => { m.box.size = a; }));
     kids.push(ms);
     if (m.loft) kids.push(...loftProps(m.loft, om));
+    if (m.extrude) kids.push(...extrudeProps(m.extrude, om));
   }
   kids.push(sec(el('div', { className: 'acts' },
     btn('Duplicate', () => duplicate(false), 'Shift D'), btn('Linked duplicate', () => duplicate(true), 'Alt D'), btn('Delete', () => removeNode(i), 'Del'))));
@@ -731,84 +740,136 @@ function loftProps(l, om) {
       editTool = 'sections'; mode = 'edit'; sel = { node: i, section: l.sections.length - 1 }; commit();
     }));
   const res = [settings, path, sections];
-  if (sel.section !== undefined && l.sections[sel.section]) {
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.id = 'sketch'; svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', `Shape of section ${sel.section}`);
-    svg.addEventListener('pointerdown', sketchDown);
-    svg.addEventListener('pointermove', sketchMove);
-    svg.addEventListener('pointerup', sketchUp); svg.addEventListener('pointercancel', sketchUp);
-    res.push(sec(h3(`Section ${sel.section} shape`), svg, el('div', { className: 'acts', id: 'shapeBar' }),
-      el('p', {}, 'Drag a point or a handle. Drag a + to add a point (to every section). Double-click a point to switch corner / smooth. Violet means an expression: a violet ring with arrows moves only along the arrows, a filled violet point not at all. "Make numbers" frees it.')));
-    // Point table: every coordinate is a field that takes a number or an expression. hu, hv empty = corner;
-    // typing a handle makes the point smooth, clearing both makes it a corner again.
-    const s = l.sections[sel.section], ev = om?.sections?.[sel.section]?.points;
-    const setHandle = (p, k, x) => {
-      if (p.length < 4) p.push(0, 0);
-      p[k] = x;
-    };
-    const handleField = (p, j, k) => {
-      const f = field(`sp${j}-${k}`, p[k], ev?.[j]?.[k], (x) => setHandle(p, k, x), `Point ${j} ${k === 2 ? 'hu' : 'hv'}`);
-      if (p.length < 4) f.placeholder = 'corner';
-      // field() ignores an empty entry; here clearing both handles turns the point back into a corner.
-      f.addEventListener('change', () => {
-        if (f.value.trim() !== '' || p.length < 4) return;
-        p[k] = 0;
-        if (p[2] === 0 && p[3] === 0) p.splice(2, 2);
-        commit();
-      });
-      return f;
-    };
-    res.push(sec(h3(`Section ${sel.section} points · ${s.points.length}`),
-      el('div', { className: 'stab', id: 'ptTable' },
-        el('span'), ...['u', 'v', 'hu', 'hv'].map((t) => el('small', { textContent: t })), el('span'),
-        ...s.points.flatMap((p, j) => [
-          el('button', { type: 'button', className: `idx${j === shapePoint ? ' on' : ''}`, textContent: j, title: 'Select this point',
-            onclick: () => { shapePoint = j; update(); } }),
-          field(`sp${j}-0`, p[0], ev?.[j]?.[0], (x) => { p[0] = x; }, `Point ${j} u`, 0),
-          field(`sp${j}-1`, p[1], ev?.[j]?.[1], (x) => { p[1] = x; }, `Point ${j} v`, 1),
-          handleField(p, j, 2), handleField(p, j, 3),
-          el('button', { type: 'button', className: 'x', textContent: '×', title: 'Remove from every section', ariaLabel: `Remove point ${j}`,
-            onclick: () => removePoint(j) }),
-        ])),
-      el('p', {}, 'Type a number or an expression in any cell, e.g. thickness * 0.8. Fill hu, hv to make a point smooth; clear both for a corner. Adding or removing a point does it in every section.')));
-    queueMicrotask(() => drawSketch(svg));
-  }
+  if (sel.section !== undefined && l.sections[sel.section]) res.push(...shapePanel(`Section ${sel.section}`, 'Adding or removing a point does it in every section.'));
   return res;
 }
 
-// 2D shape of the selected section, in its (u, v) plane, v up. A point is [u, v] (corner) or [u, v, hu, hv]
-// (smooth, bezier handles at (u, v) ± (hu, hv)). Writes skip slots that hold expressions.
+// Extrude (D-64): depth, bevel, and the outline or a hole in the shape editor.
+function extrudeProps(e, om) {
+  const k = Math.min(sel.loop ?? 0, (e.holes ?? []).length), loopName = (j) => (j ? `Hole ${j}` : 'Outline');
+  const settings = sec(h3('Extrude'),
+    el('div', { className: 'vrow two' }, el('span', { className: 'lbl', textContent: 'Depth, bevel' }),
+      field('depth', e.depth, om?.depth, (v) => { e.depth = v; }, 'Depth'),
+      field('bevel', e.bevel ?? 0, om?.bevel ?? 0, (v) => { if (v === 0) delete e.bevel; else e.bevel = v; }, 'Bevel')));
+  const loops = sec(h3(`Loops · ${1 + (e.holes ?? []).length}`),
+    el('div', { className: 'acts' }, ...[0, ...(e.holes ?? []).map((_, j) => j + 1)].map((j) => {
+      const b = btn(loopName(j), () => { sel = { node: sel.node, loop: j }; update(); }, `Edit the ${loopName(j).toLowerCase()}`);
+      b.setAttribute('aria-pressed', String(j === k)); return b;
+    }),
+    btn('+ Hole', () => { if (!om) return; newHole(e, om); sel = { node: sel.node, loop: e.holes.length }; commit(); }, 'A small square hole inside the outline'),
+    k > 0 && btn(`Remove hole ${k}`, () => { e.holes.splice(k - 1, 1); if (!e.holes.length) delete e.holes; sel = { node: sel.node }; commit(); })));
+  return [settings, loops, ...shapePanel(loopName(k), '')];
+}
+
+// A small square hole: the first spot of a grid over the outline's bounds where the document still reads (inside
+// the outline, clear of the other holes and of the bevel).
+function newHole(e, om) {
+  const ol = outline(om.outline), lo = [0, 1].map((a) => Math.min(...ol.map((p) => p[a]))), hi = [0, 1].map((a) => Math.max(...ol.map((p) => p[a])));
+  const r = Math.min(hi[0] - lo[0], hi[1] - lo[1]) / 12;
+  const sq = ([x, y]) => [[x - r, y - r], [x - r, y + r], [x + r, y + r], [x + r, y - r]].map((p) => p.map(r4));
+  const holes = (e.holes ??= []);
+  for (let n = 2; n <= 16; n *= 2) for (let i = 1; i < n; i += 2) for (let j = 1; j < n; j += 2) {
+    holes.push(sq([lo[0] + ((hi[0] - lo[0]) * i) / n, lo[1] + ((hi[1] - lo[1]) * j) / n]));
+    try { read(doc, values, { files }); return; } catch { holes.pop(); }
+  }
+  holes.push(sq([(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2])); // nothing fits: the reader's error says why
+}
+
+// The shape being edited: a loft section's points (a point added or removed in every section) or an extrude loop.
+// { pts: source points, ev: their values, all: [[source, values], ...] that change together }.
+function shapeSel() {
+  const mi = meshOf(sel?.node), m = R().meshes?.[mi], om = out?.meshes?.[mi];
+  if (m?.loft && sel.section !== undefined && m.loft.sections[sel.section]) {
+    return { pts: m.loft.sections[sel.section].points, ev: om?.sections?.[sel.section]?.points, key: `s${sel.section}`,
+      all: m.loft.sections.map((x, si) => [x.points, om?.sections?.[si]?.points]) };
+  }
+  if (m?.extrude) {
+    const k = Math.min(sel.loop ?? 0, (m.extrude.holes ?? []).length), pts = k ? m.extrude.holes[k - 1] : m.extrude.outline;
+    const ev = om?.type === 'extrude' ? (k ? om.holes[k - 1] : om.outline) : undefined;
+    return { pts, ev, key: `l${k}`, all: [[pts, ev]] };
+  }
+}
+
+function shapePanel(title, more) {
+  const res = [];
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.id = 'sketch'; svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', `Shape of ${title.toLowerCase()}`);
+  svg.addEventListener('pointerdown', sketchDown);
+  svg.addEventListener('pointermove', sketchMove);
+  svg.addEventListener('pointerup', sketchUp); svg.addEventListener('pointercancel', sketchUp);
+  res.push(sec(h3(`${title} shape`), svg, el('div', { className: 'acts', id: 'shapeBar' }),
+    el('p', {}, 'Drag a point or a handle (Shift-drag a handle to move it alone). Drag a + to add a point (to every section). Double-click a point to switch corner / smooth. Violet means an expression: a violet ring with arrows moves only along the arrows, a filled violet point not at all. "Make numbers" frees it.')));
+  // Point table: every coordinate is a field that takes a number or an expression. hu, hv empty = corner;
+  // typing a handle makes the point smooth, clearing both makes it a corner again.
+  const sh = shapeSel(), s = { points: sh.pts }, ev = sh.ev;
+  const setHandle = (p, k, x) => {
+    if (p.length < 4) p.push(0, 0);
+    p[k] = x;
+  };
+  const handleField = (p, j, k) => {
+    const f = field(`sp${j}-${k}`, p[k], ev?.[j]?.[k], (x) => setHandle(p, k, x), `Point ${j} ${k === 2 ? 'hu' : 'hv'}`);
+    if (p.length < 4) f.placeholder = 'corner';
+    // field() ignores an empty entry; here clearing both handles turns the point back into a corner.
+    f.addEventListener('change', () => {
+      if (f.value.trim() !== '' || p.length < 4) return;
+      p[k] = 0;
+      if (p[2] === 0 && p[3] === 0) p.splice(2, 2);
+      commit();
+    });
+    return f;
+  };
+  res.push(sec(h3(`${title} points · ${s.points.length}`),
+    el('div', { className: 'stab', id: 'ptTable' },
+      el('span'), ...['u', 'v', 'hu', 'hv'].map((t) => el('small', { textContent: t })), el('span'),
+      ...s.points.flatMap((p, j) => [
+        el('button', { type: 'button', className: `idx${j === shapePoint ? ' on' : ''}`, textContent: j, title: 'Select this point',
+          onclick: () => { shapePoint = j; update(); } }),
+        field(`sp${j}-0`, p[0], ev?.[j]?.[0], (x) => { p[0] = x; }, `Point ${j} u`, 0),
+        field(`sp${j}-1`, p[1], ev?.[j]?.[1], (x) => { p[1] = x; }, `Point ${j} v`, 1),
+        handleField(p, j, 2), handleField(p, j, 3),
+        el('button', { type: 'button', className: 'x', textContent: '×', title: 'Remove from every section', ariaLabel: `Remove point ${j}`,
+          onclick: () => removePoint(j) }),
+      ])),
+    el('p', {}, `Type a number or an expression in any cell, e.g. thickness * 0.8. Fill hu, hv to make a point smooth; clear both for a corner. ${more}`)));
+  queueMicrotask(() => drawSketch(svg));
+  return res;
+}
+
+// 2D shape of the selected section, in its (u, v) plane, v up. A point is [u, v] (corner), [u, v, hu, hv]
+// (smooth, bezier handles at (u, v) ± (hu, hv)) or [u, v, ou, ov, iu, iv] (free handles, D-83). Writes skip slots
+// that hold expressions.
+const inH = (p) => (p.length === 6 ? [p[4], p[5]] : [-(p[2] ?? 0), -(p[3] ?? 0)]);
 let sketchR = 1, sketchFor = '', shapePoint = 0, lastTap = {};
-const evPts = (si = sel.section) => out?.meshes?.[meshOf(sel.node)]?.sections?.[si]?.points;
+const evPts = () => shapeSel()?.ev;
 // Where a + sits on edge i, and the point that splits the edge there (smooth when the edge curves).
 function midpoint(pts, i) {
   const a = pts[i], b = pts[(i + 1) % pts.length];
   if (a.length < 4 && b.length < 4) return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-  const c1 = [a[0] + (a[2] ?? 0), a[1] + (a[3] ?? 0)], c2 = [b[0] - (b[2] ?? 0), b[1] - (b[3] ?? 0)];
+  const c1 = [a[0] + (a[2] ?? 0), a[1] + (a[3] ?? 0)], c2 = [b[0] + inH(b)[0], b[1] + inH(b)[1]];
   // Bezier at 1/2, and the handle that keeps both halves on the same curve: B'(1/2) / 6.
   return [0, 1].map((q) => (a[q] + 3 * c1[q] + 3 * c2[q] + b[q]) / 8).concat([0, 1].map((q) => (b[q] + c2[q] - c1[q] - a[q]) / 8));
 }
 // Sections must keep equal point counts, so adding or removing a point does it in every section.
 function insertPoint(edge) {
-  loftOf(sel.node).sections.forEach((x, si) => x.points.splice(edge + 1, 0, midpoint(evPts(si), edge).map(r4)));
+  shapeSel().all.forEach(([p, ev]) => p.splice(edge + 1, 0, midpoint(ev, edge).map(r4)));
 }
 function removePoint(j) {
-  const l = loftOf(sel.node);
-  if (l.sections[0].points.length <= 3) { note = 'A section needs at least 3 points.'; return status(); }
-  l.sections.forEach((x) => x.points.splice(j, 1));
+  const sh = shapeSel();
+  if (sh.pts.length <= 3) { note = 'A shape needs at least 3 points.'; return status(); }
+  sh.all.forEach(([p]) => p.splice(j, 1));
   shapePoint = Math.max(0, j - 1); commit();
 }
 // Corner -> smooth with a handle along its neighbours (a Catmull-Rom tangent); smooth -> corner drops the handle.
 function toggleSmooth(j) {
-  const p = loftOf(sel.node).sections[sel.section].points, ev = evPts(), n = p.length;
-  if (p[j].length === 4) p[j] = p[j].slice(0, 2);
+  const p = shapeSel().pts, ev = evPts(), n = p.length;
+  if (p[j].length >= 4) p[j] = p[j].slice(0, 2);
   else { const a = ev[(j + n - 1) % n], b = ev[(j + 1) % n]; p[j] = [p[j][0], p[j][1], r4((b[0] - a[0]) / 6), r4((b[1] - a[1]) / 6)]; }
   commit();
 }
 function drawSketch(svg) {
-  const s = loftOf(sel?.node)?.sections?.[sel.section], pts = evPts();
+  const sh = sel && shapeSel(), s = sh && { points: sh.pts }, pts = sh?.ev;
   if (!s || !pts) return;
-  const key = `${sel.node}/${sel.section}`;
+  const key = `${sel.node}/${sh.key}`;
   if (key !== sketchFor) { sketchFor = key; shapePoint = 0; sketchR = 0; }
   shapePoint = Math.min(shapePoint, pts.length - 1);
   // Fit once per section, so the view holds still while points move.
@@ -820,11 +881,13 @@ function drawSketch(svg) {
   g.append(mk('line', { class: 'axis', x1: -k, y1: 0, x2: k, y2: 0, 'stroke-width': thin }), mk('line', { class: 'axis', x1: 0, y1: -k, x2: 0, y2: k, 'stroke-width': thin }),
     mk('polygon', { class: 'ol', points: outline(pts).map((p) => p.join(',')).join(' '), 'stroke-width': k / 100 }));
   pts.forEach((_, i) => { const [u, v] = midpoint(pts, i); g.append(mk('circle', { class: 'mid', cx: u, cy: v, r: r * 0.7, 'stroke-width': thin, 'data-mid': i })); });
-  pts.forEach(([u, v, hu, hv], i) => {
+  pts.forEach((pt, i) => {
+    const [u, v, hu, hv] = pt;
     if (hu === undefined) return;
+    const [iu, iv] = inH(pt);
     const lockedH = isStr(s.points[i][2]) && isStr(s.points[i][3]) ? ' locked' : '';
-    g.append(mk('line', { class: 'hline', x1: u - hu, y1: v - hv, x2: u + hu, y2: v + hv, 'stroke-width': thin }),
-      mk('rect', { class: `hdl${lockedH}`, x: u - hu - r * 0.6, y: v - hv - r * 0.6, width: r * 1.2, height: r * 1.2, 'stroke-width': thin * 1.5, 'data-h': i, 'data-dir': -1 }),
+    g.append(mk('line', { class: 'hline', x1: u + iu, y1: v + iv, x2: u + hu, y2: v + hv, 'stroke-width': thin }),
+      mk('rect', { class: `hdl${lockedH}`, x: u + iu - r * 0.6, y: v + iv - r * 0.6, width: r * 1.2, height: r * 1.2, 'stroke-width': thin * 1.5, 'data-h': i, 'data-dir': -1 }),
       mk('rect', { class: `hdl${lockedH}`, x: u + hu - r * 0.6, y: v + hv - r * 0.6, width: r * 1.2, height: r * 1.2, 'stroke-width': thin * 1.5, 'data-h': i, 'data-dir': 1 }));
   });
   pts.forEach(([u, v], j) => {
@@ -843,7 +906,7 @@ function drawSketch(svg) {
   document.querySelectorAll('#ptTable .idx').forEach((b, j) => b.classList.toggle('on', j === shapePoint));
   const bar = document.getElementById('shapeBar');
   if (bar && !sketchDrag) {
-    const sp = s.points[shapePoint], smooth = sp.length === 4, exprs = sp.filter(isStr);
+    const sp = s.points[shapePoint], smooth = sp.length >= 4, exprs = sp.filter(isStr);
     bar.replaceChildren(el('span', { className: 'lbl', textContent: `Point ${shapePoint}`, style: 'align-self:center;color:var(--mute)' }),
       exprs.length > 0 && btn('Make numbers', () => {
         // Like Blender's Delete driver: each expression becomes the value it has now, and stops following its parameters.
@@ -881,10 +944,13 @@ function sketchDown(e) {
 }
 function sketchMove(e) {
   if (!sketchDrag) return;
-  const svg = e.currentTarget, q = sketchPoint(e, svg), p = loftOf(sel.node).sections[sel.section].points[sketchDrag.j];
+  const svg = e.currentTarget, q = sketchPoint(e, svg), p = shapeSel().pts[sketchDrag.j];
   if (sketchDrag.dir) {
     const [u, v] = evPts()[sketchDrag.j];
-    [(q[0] - u) * sketchDrag.dir, (q[1] - v) * sketchDrag.dir].forEach((c, k) => { if (!isStr(p[2 + k])) p[2 + k] = r4(c); });
+    // Shift breaks the handles apart (free, D-83); a free point's handles always move alone.
+    if (e.shiftKey && p.length === 4 && !isStr(p[2]) && !isStr(p[3])) p.push(-p[2], -p[3]);
+    const free = p.length === 6, at = free && sketchDrag.dir < 0 ? 4 : 2, sgn = free ? 1 : sketchDrag.dir;
+    [(q[0] - u) * sgn, (q[1] - v) * sgn].forEach((c, k) => { if (!isStr(p[at + k])) p[at + k] = r4(c); });
   } else q.forEach((c, k) => { if (!isStr(p[k])) p[k] = r4(c); });
   evaluate(); draw(); drawSketch(svg); status();
 }
