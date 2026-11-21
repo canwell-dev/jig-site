@@ -99,7 +99,7 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
   // Draft f6: a core glTF material's JIG_recipe sets its color and factor slots; the core slots are the bake's
   // cache. A color is an expression giving a vec4 (D-91) or a list of linear channels, clamped to 0..1.
   need(doc.materials === undefined || Array.isArray(doc.materials), '/materials', 'must be a list');
-  const materials = (doc.materials ?? []).map((m, i) => {
+  const materialAt = (m, i, scope) => {
     const x = m?.extensions?.[EXT], at = `/materials/${i}/extensions/${EXT}`;
     if (x === undefined || isBaked(m)) return null;
     need(isObj(x), at, 'must be an object');
@@ -128,6 +128,14 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
       if (t.scale !== undefined) o[k].scale = vec(t.scale, 2, scope, `${tat}/scale`);
     }
     return o;
+  };
+  // Draft f20 (D-104): a material is evaluated in the scope of each copy whose mesh uses it, as a mesh is (D-92).
+  // materials[i] is material i at the first copy that uses it (at the parameters when none does); a copy where it
+  // evaluates otherwise draws a finished material of its own (`placed`). `pending` holds the error of a material
+  // that fails at the parameters, as it may need a copy's names.
+  const pending = new Map();
+  const materials = (doc.materials ?? []).map((m, i) => {
+    try { return materialAt(m, i, scope); } catch (e) { pending.set(i, e); return null; }
   });
   // Draft f15 (D-92): a recipe mesh is evaluated in the scope of each copy that draws it, so it sees that copy's
   // indices and rows. meshes[i] is recipe mesh i at the first copy that draws it (at the parameters when none does);
@@ -137,8 +145,20 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     if (!meshKey.has(key)) meshKey.set(key, slot !== undefined && meshes[slot] === undefined ? (meshes[slot] = m, slot) : meshes.push(m) - 1);
     return meshKey.get(key);
   };
+  let own;
   const meshAt = (i, s) => {
-    const m = mesh(recipeMeshes[i], s, `${rat}/meshes/${i}`, materials.length);
+    const m = mesh(recipeMeshes[i], s, `${rat}/meshes/${i}`, materials.length), j = m.material;
+    if (j !== undefined && (materials[j] || pending.has(j))) {
+      const o = materialAt(doc.materials[j], j, s);
+      if (pending.has(j)) { pending.delete(j); materials[j] = o; }
+      else if (JSON.stringify(o) !== JSON.stringify(materials[j])) {
+        own ??= strip(doc);
+        const { extensions: { [EXT]: _, ...ext } = {}, ...rest } = structuredClone(own.materials[j]);
+        const mat = slots({ ...rest, ...(Object.keys(ext).length && { extensions: ext }) }, o);
+        delete m.material;
+        m.placed = addPlaced(lift(mat, ownTexture(own), '', `${rat}/meshes/${i}/material`));
+      }
+    }
     return intern(m, `${i} ${JSON.stringify(m)}`, i);
   };
 
@@ -230,12 +250,34 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
   // first copy. `bound` is { rec, skin }: the joint a shape is bound to, the nearest joint at or above its node.
   // A placed document's tree hangs under the placing record, marked `foreign`.
   const nodes = [], instances = [];
+  // Draft f20 (D-106): `on` places the node on a loft, taken where the node's parent puts its origin; the node's own
+  // transform applies after the placement.
+  const nodeAt = (raw, s, at) => {
+    const n = node(raw, recipeMeshes.length, s, at), on = n.jig.on, oat = `${at}/extensions/${EXT}/on`;
+    if (on === undefined) return n;
+    need(isObj(on), oat, 'must be { "mesh", "t" or "d", "u" }');
+    only(on, ['mesh', 't', 'd', 'u'], oat);
+    need(Number.isInteger(on.mesh) && on.mesh >= 0 && on.mesh < recipeMeshes.length, `${oat}/mesh`, `must be a recipe mesh index 0..${recipeMeshes.length - 1}`);
+    const m = mesh(recipeMeshes[on.mesh], s, `${rat}/meshes/${on.mesh}`, materials.length);
+    need(m.type === 'loft', `${oat}/mesh`, `must be a loft, is a ${m.type}`);
+    need((on.t === undefined) !== (on.d === undefined), oat, 'needs t or d, not both (D-94)');
+    let t;
+    if (on.t !== undefined) { t = num(on.t, s, `${oat}/t`); need(t >= 0 && t <= 1, `${oat}/t`, `must be in 0..1, is ${t}`); }
+    else { const L = curveLength(loftCurve(m)), d = num(on.d, s, `${oat}/d`); t = Math.min(1, Math.max(0, (d < 0 ? L + d : d) / L)); }
+    const u = on.u === undefined ? undefined : num(on.u, s, `${oat}/u`);
+    need(u === undefined || (u >= 0 && u <= 1), `${oat}/u`, `must be in 0..1, is ${u}`);
+    const f = loftPlace(m, t, u), q = frameQuat(f.x, f.y, f.z), R = compose([0, 0, 0], q, [1, 1, 1]);
+    n.translation = [0, 1, 2].map((a) => f.p[a] + R[a] * n.translation[0] + R[4 + a] * n.translation[1] + R[8 + a] * n.translation[2]);
+    n.rotation = qmul(q, n.rotation);
+    n.matrix = compose(n.translation, n.rotation, n.scale);
+    return n;
+  };
   const walk = (i, parent, s, shown, copy, bone) => {
     const x = src[i].extensions?.[EXT], at = `/nodes/${i}`, xat = `${at}/extensions/${EXT}`;
     const rep = isObj(x) && x.repeat !== undefined ? repeat(x.repeat, s, `${xat}/repeat`) : null;
     return Array.from({ length: rep ? Math.max(1, rep.count) : 1 }, (_, k) => {
       const sk = rep ? { ...s, [rep.index]: k, ...rep.rows?.[k] } : s, c = rep ? [...copy, k] : copy;
-      const n = node(src[i], recipeMeshes.length, sk, at), vis = shown && (!rep || k < rep.count);
+      const n = nodeAt(src[i], sk, at), vis = shown && (!rep || k < rep.count);
       if (n.mesh !== undefined) n.mesh = meshAt(n.mesh, sk);
       nodes[i] ??= { ...n, repeated: repeated.has(i) };
       const world = mul(parent, n.matrix);
@@ -270,11 +312,7 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     // Its materials come along (D-78): each one a shape uses, at this copy's values, as a finished glTF material.
     m.stripped ??= strip(m.doc);
     const dir = m.dir ?? '', sd = m.stripped;
-    const own = (i) => { // a texture of the placed document itself
-      const { source, sampler, ...texture } = sd.textures?.[i] ?? {};
-      need(isObj(sd.textures?.[i]) && isObj(sd.images?.[source]), `${xat}/model`, `in ${m.label}: texture ${i} or its image is missing`);
-      return { texture, image: sd.images[source], sampler: sampler === undefined ? undefined : sd.samplers?.[sampler] };
-    };
+    const own = ownTexture(sd, `${xat}/model`, `in ${m.label}: `); // a texture of the placed document itself
     // Its shapes join this document's, shared with equal shapes placed before (D-92).
     const remap = sub.meshes.map(({ material, placed: pm, ...mesh }) => {
       if (pm !== undefined) mesh.placed = addPlaced(lift(structuredClone(sub.placed[pm]), (i) => sub.placedTextures[i], dir, `${xat}/model`));
@@ -300,14 +338,22 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     }
   };
   const tree = roots.flatMap((i) => walk(i, IDENTITY, scope, true, [], null));
-  src.forEach((n, i) => { if (!nodes[i] && !isBaked(n)) nodes[i] = node(n, recipeMeshes.length, scope, `/nodes/${i}`); });
+  src.forEach((n, i) => { if (!nodes[i] && !isBaked(n)) nodes[i] = nodeAt(n, scope, `/nodes/${i}`); });
   for (let i = 0; i < recipeMeshes.length; i++) if (meshes[i] === undefined) meshAt(i, scope); // drawn by no copy
+  for (const e of pending.values()) throw e; // used by no copy, and wrong at the parameters
 
   // y of the floor in model space; hosts stand the model there. Default: the lowest point on the vertical line
   // through the origin, or 0 when no shape crosses that line.
   const floor = r.floor === undefined ? lowestOnAxis(meshes, instances) : num(r.floor, scope, `${rat}/floor`);
   return { params, sets, vars, floor, materials, meshes, nodes, instances, tree, skins, placed, placedTextures };
 }
+
+// A texture of a stripped document as { texture, image, sampler }, for `lift`.
+const ownTexture = (sd, at = '', pre = '') => (i) => {
+  const { source, sampler, ...texture } = sd.textures?.[i] ?? {};
+  need(isObj(sd.textures?.[i]) && isObj(sd.images?.[source]), at, `${pre}texture ${i} or its image is missing`);
+  return { texture, image: sd.images[source], sampler: sampler === undefined ? undefined : sd.samplers?.[sampler] };
+};
 
 // Draft f10: the files a document's models name by relative `uri`, and theirs, as { name: document }, for read's
 // `files`. `load(name)` returns a file's text (or a promise of it); names are relative to one folder.
@@ -352,20 +398,21 @@ function node(n, meshCount, scope, at) {
   const xat = `${at}/extensions/${EXT}`;
   const x = n.extensions?.[EXT] ?? {};
   need(isObj(x), xat, 'must be an object');
-  only(x, ['name', 'mesh', 'translation', 'rotation', 'euler', 'scale', 'repeat', 'model', 'values'], xat);
+  only(x, ['name', 'mesh', 'translation', 'rotation', 'euler', 'scale', 'repeat', 'model', 'values', 'on'], xat);
   need(x.values === undefined || x.model !== undefined, `${xat}/values`, 'needs model');
   need(x.rotation === undefined || x.euler === undefined, `${xat}/euler`, 'cannot stand next to rotation');
   if (x.mesh !== undefined) {
     need(Number.isInteger(x.mesh) && x.mesh >= 0 && x.mesh < meshCount, `${xat}/mesh`, `must be a recipe mesh index 0..${meshCount - 1}`);
   }
   if (n.matrix !== undefined) {
+    need(x.on === undefined, `${at}/matrix`, `a node placed by ${EXT} on cannot have a matrix`);
     need(['translation', 'rotation', 'euler', 'scale'].every((k) => x[k] === undefined), `${at}/matrix`,
       `a node with a matrix cannot take translation, rotation, euler or scale from ${EXT}`);
     need(Array.isArray(n.matrix) && n.matrix.length === 16 && n.matrix.every((c) => typeof c === 'number'), `${at}/matrix`, 'must be a list of 16 numbers');
   }
   const pick = (k, size, dflt) => {
     if (x[k] !== undefined) return vec(x[k], size, scope, `${xat}/${k}`);
-    if (n[k] === undefined) return dflt;
+    if (n[k] === undefined || (x.on !== undefined && k !== 'scale')) return dflt; // with `on` they are cache
     need(Array.isArray(n[k]) && n[k].length === size && n[k].every((c) => typeof c === 'number'), `${at}/${k}`, `must be a list of ${size} numbers`);
     return n[k];
   };
@@ -960,12 +1007,22 @@ function curvePoints(g, scope, at) {
 // Draft f13 (D-89): a circle or ellipse section as 4 smooth points (from +u, counter-clockwise) with the standard
 // quarter-circle handle, so it meets point k of a 4-point section.
 const KAPPA = (4 * (Math.SQRT2 - 1)) / 3;
+// Draft f20 (D-105): { "squircle": [rx, ry, n] }, the same 4 points with handles k·r that put each quarter's
+// midpoint on the superellipse |u/rx|^n + |v/ry|^n = 1: k = (8·2^(−1/n) − 4) / 3, so n 2 gives KAPPA and n 1 a
+// diamond (k 0); k stops at 1 (n ≈ 5.2) so the curve stays inside its box.
 function roundSection(x, scope, at) {
-  only(x, ['circle', 'ellipse'], at);
-  need(Object.keys(x).filter((k) => !k.startsWith('//')).length === 1, at, 'must be { "circle": r } or { "ellipse": [rx, ry] }');
-  const [rx, ry] = x.circle !== undefined ? Array(2).fill(num(x.circle, scope, `${at}/circle`)) : vec(x.ellipse, 2, scope, `${at}/ellipse`);
-  need(rx > 0 && ry > 0, `${at}/${x.circle !== undefined ? 'circle' : 'ellipse'}`, `must be > 0, is ${x.circle !== undefined ? rx : [rx, ry]}`);
-  const kx = KAPPA * rx, ky = KAPPA * ry;
+  only(x, ['circle', 'ellipse', 'squircle'], at);
+  const keys = Object.keys(x).filter((k) => !k.startsWith('//'));
+  need(keys.length === 1, at, 'must be { "circle": r }, { "ellipse": [rx, ry] } or { "squircle": [rx, ry, n] }');
+  let k = KAPPA, rx, ry;
+  if (x.squircle !== undefined) {
+    let n;
+    [rx, ry, n] = vec(x.squircle, 3, scope, `${at}/squircle`);
+    need(n >= 1, `${at}/squircle/2`, `must be >= 1, is ${n}`);
+    k = Math.min(1, (8 * 2 ** (-1 / n) - 4) / 3);
+  } else [rx, ry] = x.circle !== undefined ? Array(2).fill(num(x.circle, scope, `${at}/circle`)) : vec(x.ellipse, 2, scope, `${at}/ellipse`);
+  need(rx > 0 && ry > 0, `${at}/${keys[0]}`, `must be > 0, is ${x.circle !== undefined ? rx : [rx, ry]}`);
+  const kx = k * rx, ky = k * ry;
   return [[rx, 0, 0, ky], [0, ry, -kx, 0], [-rx, 0, 0, -ky], [0, -ry, kx, 0]];
 }
 
@@ -1022,6 +1079,7 @@ function extrude(e, scope, at) {
   // shortcut: checks one point of each hole, not that holes stay clear of the outline and of each other; upgrade
   // when a model needs that error.
   holes.forEach((h, i) => need(inside(h[0], poly), `${at}/holes/${i}`, 'must lie inside the outline'));
+  crossings([out, ...holes], at);
   const depth = num(e.depth, scope, `${at}/depth`);
   need(depth > 0, `${at}/depth`, `must be > 0, is ${depth}`);
   // Draft f12 (D-86): a round edge on both rims, its radius at most half the depth.
@@ -1030,6 +1088,43 @@ function extrude(e, scope, at) {
   const m = { type: 'extrude', outline: out, holes, depth, ...(bevel > 0 && { bevel }) };
   try { extrudeGeometry(m); } catch (err) { need(false, at, err.message.replace(/^\/: /, '')); } // caps that cannot be triangulated (D-66)
   return m;
+}
+// Names the first two edges of the outline and holes that cross: `…/outline/3: its edge to point 4 crosses the edge
+// from point 0 to 1`. Edges are checked as drawn (curves as their samples).
+function crossings(loops, at) {
+  const name = (i) => (i === 0 ? 'outline' : `holes/${i - 1}`);
+  const segs = loops.flatMap((pts, i) => {
+    const { poly, starts } = flatten(pts);
+    return poly.map((a, q) => ({ a, b: poly[(q + 1) % poly.length], i, k: starts.findLastIndex((s) => s <= q), n: pts.length }));
+  });
+  for (let x = 0; x < segs.length; x++) for (let y = x + 1; y < segs.length; y++) {
+    const s = segs[x], t = segs[y];
+    if (!crossAt(s.a, s.b, t.a, t.b)) continue;
+    const other = t.i === s.i ? `the edge from point ${t.k} to ${(t.k + 1) % t.n}` : `${name(t.i)} edge from point ${t.k} to ${(t.k + 1) % t.n}`;
+    need(false, `${at}/${name(s.i)}/${s.k}`, `its edge to point ${(s.k + 1) % s.n} crosses ${other}${s.k === t.k && t.i === s.i ? ' (a handle points backwards?)' : ''}`);
+  }
+}
+// The point where segments ab and cd cross, not just touch at an end; else null.
+function crossAt(a, b, c, d) {
+  const r = sub(b, a), q = sub(d, c), den = r[0] * q[1] - r[1] * q[0];
+  if (Math.abs(den) < 1e-15) return null;
+  const ca = sub(c, a), t = (ca[0] * q[1] - ca[1] * q[0]) / den, u = (ca[0] * r[1] - ca[1] * r[0]) / den, e = 1e-9;
+  return t > e && t < 1 - e && u > e && u < 1 - e ? [a[0] + t * r[0], a[1] + t * r[1]] : null;
+}
+// An inset ring with its swallowtails cut out: where an edge crosses a later one (an inset deeper than the curve's
+// radius there), the points between move to the crossing, so the ring keeps its point count for the walls.
+function untangle(ring) {
+  const L = ring.length, p = ring.map((v) => [...v]);
+  for (let i = 0; i < L; i++) {
+    for (let s = 2; s <= L / 2; s++) {
+      const j = (i + s) % L, x = crossAt(p[i], p[(i + 1) % L], p[j], p[(j + 1) % L]);
+      if (!x) continue;
+      for (let k = 1; k <= s; k++) p[(i + k) % L] = [...x];
+      i += s - 1;
+      break;
+    }
+  }
+  return p;
 }
 const inside = ([x, y], poly) => poly.reduce((c, p, i) => {
   const q = poly[(i + 1) % poly.length];
@@ -1057,7 +1152,7 @@ function extrudeGeometry(m, fit = true) {
       const e0 = l.edge[(k + L - 1) % L], e1 = l.edge[k], bis = norm(e0.map((c, q) => c + e1[q]));
       return scale(bis, 1 / Math.max(0.2, dot(bis, e1))); // shortcut: miters capped at 5x; insets of sharp spikes overlap
     });
-    l.inset = (d) => (d === 0 ? l.poly : l.poly.map((p, k) => [p[0] - d * l.miter[k][0], p[1] - d * l.miter[k][1]]));
+    l.inset = (d) => (d === 0 ? l.poly : untangle(l.poly.map((p, k) => [p[0] - d * l.miter[k][0], p[1] - d * l.miter[k][1]])));
   }
   const flat = loops.flatMap((l) => l.inset(r));
   const tris = triangulate(loops.map((l) => l.inset(r)));
@@ -1077,7 +1172,7 @@ function extrudeGeometry(m, fit = true) {
       return { z: side * (h - r * (1 - Math.cos(th))), d: r * (1 - Math.sin(th)), s: Math.sin(th), c: side * Math.cos(th) };
     }));
   for (const l of loops) {
-    const { poly, hard, edge, miter } = l, L = poly.length, along = [0];
+    const { poly, hard, edge } = l, L = poly.length, along = [0], ring = rings.map((g) => l.inset(g.d));
     for (let k = 0; k < L; k++) along.push(along[k] + dist(poly[k], poly[(k + 1) % L]));
     const U = (k) => (fit ? along[k] / along[L] : along[k]), V = (z) => (fit ? (h - z) / m.depth : h - z);
     const at = (k, e) => (hard[k % L] ? edge[e % L] : norm(edge[(k + L - 1) % L].map((c, q) => c + edge[k % L][q])));
@@ -1085,9 +1180,10 @@ function extrudeGeometry(m, fit = true) {
     for (let k = 0; k < L; k++) {
       const na = at(k, k), nb = at(k + 1, k);
       for (let j = 0; j + 1 < rings.length; j++) {
-        const lo = rings[j], hi = rings[j + 1], first = positions.length / 3;
-        for (const [i, nn, g, e] of [[k, na, lo, k], [(k + 1) % L, nb, lo, k + 1], [(k + 1) % L, nb, hi, k + 1], [k, na, hi, k]]) {
-          positions.push(poly[i][0] - g.d * miter[i][0], poly[i][1] - g.d * miter[i][1], g.z); normals.push(...tilt(nn, g)); uvs.push(U(e), V(g.z));
+        const first = positions.length / 3;
+        for (const [i, nn, r, e] of [[k, na, j, k], [(k + 1) % L, nb, j, k + 1], [(k + 1) % L, nb, j + 1, k + 1], [k, na, j + 1, k]]) {
+          const g = rings[r];
+          positions.push(ring[r][i][0], ring[r][i][1], g.z); normals.push(...tilt(nn, g)); uvs.push(U(e), V(g.z));
         }
         indices.push(first, first + 1, first + 2, first, first + 2, first + 3);
       }
@@ -1195,7 +1291,7 @@ export function triangulate(loops) {
       return turn(a, b, c) > 0 && !V.some((x) => ![a, b, c].some((q) => same(pts[x], q)) && inTri(pts[x], a, b, c));
     });
     if (cut < 0) cut = V.findIndex((_, i) => turn(...tri(V, i).map((x) => pts[x])) === 0); // drop a flat corner
-    need(cut >= 0, '', 'outline and holes overlap or cross');
+    need(cut >= 0, '', 'cannot be triangulated (its edges cross)');
     const t = tri(V, cut);
     if (turn(...t.map((x) => pts[x])) > 0) tris.push(...t);
     V.splice(cut, 1);
@@ -1271,6 +1367,42 @@ export function loftFrame(curve, t) {
   const z = norm(lerp(a.z, b.z)), y0 = lerp(a.y, b.y), y = norm(sub(y0, scale(z, dot(y0, z))));
   return { p: lerp(a.p, b.p), x: cross(y, z), y, z };
 }
+
+// Draft f20 (D-106): where `on` puts a node, as { p, x, y, z }. Without u, the curve's frame at t (z the tangent).
+// With u (0..1 round the section from point 0, by length, as uv "fit"), the surface point: z the outward normal,
+// y along increasing t, x = y × z.
+export function loftPlace(m, t, u) {
+  const curve = loftCurve(m), f = loftFrame(curve, t);
+  if (u === undefined) return f;
+  const sorted = [...m.sections].sort((a, b) => a.t - b.t), spans = edgeSpans(sorted, m.sides), ccw = area(outline(sorted[0].points)) > 0;
+  const at = (tt, uu) => {
+    const { points, twist } = blendAt(sorted, m.blend, tt, m.closed), r = turn(resample(points, spans), twist);
+    const ring = ccw ? [...r, r[0]] : [r[0], ...r.slice(1).reverse(), r[0]], len = [0];
+    for (let j = 1; j < ring.length; j++) len.push(len[j - 1] + dist(ring[j], ring[j - 1]));
+    const want = (((uu % 1) + 1) % 1) * len[len.length - 1];
+    let j = 1;
+    while (j < len.length - 1 && len[j] < want) j++;
+    const g = (want - len[j - 1]) / (len[j] - len[j - 1] || 1), [a, b] = [0, 1].map((q) => ring[j - 1][q] + g * (ring[j][q] - ring[j - 1][q]));
+    const { p, x, y } = loftFrame(curve, tt);
+    return [0, 1, 2].map((q) => p[q] + a * x[q] + b * y[q]);
+  };
+  const e = 1e-4, t0 = Math.max(0, t - e), t1 = Math.min(1, t + e);
+  const du = sub(at(t, u + e), at(t, u - e)), dt = sub(at(t1, u), at(t0, u));
+  const z = norm(cross(du, dt)), y = norm(sub(dt, scale(z, dot(dt, z))));
+  return { p: at(t, u), x: cross(y, z), y, z };
+}
+
+// A unit quaternion [x, y, z, w] for the rotation whose columns are the axes x, y, z.
+function frameQuat([m00, m10, m20], [m01, m11, m21], [m02, m12, m22]) {
+  const tr = m00 + m11 + m22;
+  let q;
+  if (tr > 0) { const s = 2 * Math.sqrt(tr + 1); q = [(m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, s / 4]; }
+  else if (m00 > m11 && m00 > m22) { const s = 2 * Math.sqrt(1 + m00 - m11 - m22); q = [s / 4, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s]; }
+  else if (m11 > m22) { const s = 2 * Math.sqrt(1 + m11 - m00 - m22); q = [(m01 + m10) / s, s / 4, (m12 + m21) / s, (m02 - m20) / s]; }
+  else { const s = 2 * Math.sqrt(1 + m22 - m00 - m11); q = [(m02 + m20) / s, (m12 + m21) / s, s / 4, (m10 - m01) / s]; }
+  return norm(q);
+}
+const qmul = ([ax, ay, az, aw], [bx, by, bz, bw]) => [aw * bx + ax * bw + ay * bz - az * by, aw * by - ax * bz + ay * bw + az * bx, aw * bz + ax * by - ay * bx + az * bw, aw * bw - ax * bx - ay * by - az * bz];
 
 function loftGeometry(m, fit = true) {
   const curve = loftCurve(m), sorted = [...m.sections].sort((a, b) => a.t - b.t);
@@ -1611,7 +1743,7 @@ const textureSlots = (mat) => Object.entries(TEXTURE_SLOTS)
 // A color value: linear [r, g, b, a], numbers 0..1, as glTF's baseColorFactor and Blender's color sockets.
 const isColor = (c) => Array.isArray(c) && c.length === 4 && c.every((x) => typeof x === 'number' && x >= 0 && x <= 1);
 // A recipe slot that sets core slot k: euler sets rotation.
-const twin = (x, k) => x[k] ?? (k === 'rotation' ? x.euler : undefined);
+const twin = (x, k) => x[k] ?? (k === 'rotation' ? x.euler : undefined) ?? (k === 'translation' || k === 'rotation' ? x.on : undefined);
 // A number in a name: whole numbers as integers, others to 6 significant digits.
 const fmt = (v) => (Number.isInteger(v) ? String(v) : String(+v.toPrecision(6)));
 function need(ok, at, msg) { if (!ok) throw new Error(`${at || '/'}: ${msg}`); }

@@ -260,12 +260,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=f01fc06';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=b832cf5';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=f01fc06', loft: 'examples/loft.gltf?v=f01fc06', star: 'examples/star.gltf?v=f01fc06', bench: 'examples/bench.gltf?v=f01fc06', lathe: 'examples/lathe.gltf?v=f01fc06', lantern: 'examples/lantern.gltf?v=f01fc06', paths: 'examples/paths.gltf?v=f01fc06', ends: 'examples/ends.gltf?v=f01fc06',
-  finger: 'examples/finger.gltf?v=f01fc06', hand: 'examples/hand.gltf?v=f01fc06' };
+const examples = { box: 'examples/box.gltf?v=b832cf5', loft: 'examples/loft.gltf?v=b832cf5', star: 'examples/star.gltf?v=b832cf5', bench: 'examples/bench.gltf?v=b832cf5', lathe: 'examples/lathe.gltf?v=b832cf5', lantern: 'examples/lantern.gltf?v=b832cf5', paths: 'examples/paths.gltf?v=b832cf5', ends: 'examples/ends.gltf?v=b832cf5', cushion: 'examples/cushion.gltf?v=b832cf5',
+  finger: 'examples/finger.gltf?v=b832cf5', hand: 'examples/hand.gltf?v=b832cf5' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -510,6 +510,7 @@ function placeGizmo() {
   const n = out.nodes[sel.node];
   if (mode === 'object') {
     if (doc.nodes[sel.node].matrix) { locked = ['matrix']; return; }
+    if (doc.nodes[sel.node].extensions?.[EXT]?.on) { locked = ['on']; return; } // shortcut: placed on a loft (D-106), no gizmo in the placed frame
     pivot.matrix.fromArray(parentWorld(sel.node));
     proxy.position.fromArray(n.translation); proxy.quaternion.fromArray(n.rotation); proxy.scale.fromArray(n.scale);
     const src = (gizmo === 'rotate' && eulerSrc(sel.node)) || nodeSrc(sel.node, SLOT[gizmo]);
@@ -1165,6 +1166,7 @@ function hint() {
   if (note) return note;
   const lockMsg = locked[0] === 'rotation' ? 'Rotation holds expressions, so the gizmo is off. Edit it in Properties.'
     : locked[0] === 'matrix' ? 'This node uses a matrix. Edit it in Source.'
+    : locked[0] === 'on' ? 'This node is placed on a loft (on). Edit t and u in Source.'
       : locked.length ? `${locked.join(', ')} ${locked.length > 1 ? 'are expressions' : 'is an expression'}: the gizmo leaves ${locked.length > 1 ? 'them' : 'it'} alone. Edit in Properties.` : '';
   if (mode === 'edit') return lockMsg || (editTool === 'path'
     ? '<b>Click</b> a point to select it · drag the arrows to move it · click the curve to add a point · <b>Del</b> removes it · <b>Tab</b> back'
