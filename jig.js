@@ -1558,8 +1558,9 @@ function flatten(pts) {
     const b = pts[(i + 1) % pts.length];
     starts.push(out.length);
     out.push([a[0], a[1]]);
-    if (a.length < 4 && b.length < 4) return;
-    const c1 = [a[0] + (a[2] ?? 0), a[1] + (a[3] ?? 0)], [iu, iv] = inHandle(b), c2 = [b[0] + iu, b[1] + iv];
+    const [iu, iv] = inHandle(b);
+    if (!a[2] && !a[3] && !iu && !iv) return; // straight: samples would bunch at its ends and fold under a bevel
+    const c1 = [a[0] + (a[2] ?? 0), a[1] + (a[3] ?? 0)], c2 = [b[0] + iu, b[1] + iv];
     for (let k = 1; k < CURVE_STEPS; k++) {
       const t = k / CURVE_STEPS, s = 1 - t;
       out.push([0, 1].map((q) => s * s * s * a[q] + 3 * s * s * t * c1[q] + 3 * s * t * t * c2[q] + t * t * t * b[q]));

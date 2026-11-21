@@ -260,12 +260,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=5f2078a';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, outline, turn, sectionAt, mul, loadFiles, EXT, VERSION } from './jig.js?v=e3066a1';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=5f2078a', loft: 'examples/loft.gltf?v=5f2078a', star: 'examples/star.gltf?v=5f2078a', bench: 'examples/bench.gltf?v=5f2078a', lathe: 'examples/lathe.gltf?v=5f2078a', lantern: 'examples/lantern.gltf?v=5f2078a', paths: 'examples/paths.gltf?v=5f2078a', ends: 'examples/ends.gltf?v=5f2078a', cushion: 'examples/cushion.gltf?v=5f2078a',
-  finger: 'examples/finger.gltf?v=5f2078a', hand: 'examples/hand.gltf?v=5f2078a' };
+const examples = { box: 'examples/box.gltf?v=e3066a1', loft: 'examples/loft.gltf?v=e3066a1', star: 'examples/star.gltf?v=e3066a1', bench: 'examples/bench.gltf?v=e3066a1', lathe: 'examples/lathe.gltf?v=e3066a1', lantern: 'examples/lantern.gltf?v=e3066a1', paths: 'examples/paths.gltf?v=e3066a1', ends: 'examples/ends.gltf?v=e3066a1', cushion: 'examples/cushion.gltf?v=e3066a1',
+  finger: 'examples/finger.gltf?v=e3066a1', hand: 'examples/hand.gltf?v=e3066a1' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -447,6 +447,7 @@ function draw() {
       const f = x.baseColorFactor ?? pbr.baseColorFactor ?? [1, 1, 1, 1], e = x.emissiveFactor ?? core.emissiveFactor;
       t.color.setRGB(f[0], f[1], f[2]);
       if (core.alphaMode === 'BLEND') { t.transparent = true; t.opacity = f[3]; t.depthWrite = false; } // as GLTFLoader: sorted back to front, no depth write
+      if (core.doubleSided) t.side = THREE.DoubleSide; // an open lathe or loft end shows its inside (D-90)
       t.metalness = x.metallicFactor ?? pbr.metallicFactor ?? 1; t.roughness = x.roughnessFactor ?? pbr.roughnessFactor ?? 1;
       if (e && !on) t.emissive.setRGB(...e);
       if (!on) t.emissiveIntensity = x.emissiveStrength ?? core.extensions?.KHR_materials_emissive_strength?.emissiveStrength ?? 1; // D-82
