@@ -11,40 +11,74 @@
     "JIG_recipe": {
       "version": "0.1",
       "params": {
-        "round": { "default": 0.012, "min": 0, "max": 0.03 },
-        "glass": { "default": 1, "min": 0, "max": 1 },
-        "flame": { "default": 6, "min": 0, "max": 20 }
+        "round": {
+          "default": 0.012,
+          "min": 0,
+          "max": 0.03,
+          "step": 0.001,
+          "unit": "m",
+          "doc": "Edge radius of the base and cap."
+        },
+        "glass": {
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "unit": "%",
+          "doc": "How clear the globe is; lower is frosted."
+        },
+        "flame": {
+          "default": 6,
+          "min": 0,
+          "max": 20,
+          "doc": "Flame brightness (emissive strength); 0 is out."
+        },
+        "lod": {
+          "type": "int",
+          "default": 0,
+          "min": 0,
+          "max": 2,
+          "doc": "Level of detail: 0 full, 2 coarsest."
+        }
       },
       "sets": { "frosted": { "glass": 0.4 }, "out": { "flame": 0 } },
       "meshes": [
         {
           "// base and cap: rounded boxes (D-98)": "",
-          "box": { "size": [0.2, 0.04, 0.2], "radius": "round" },
+          "box": { "size": [0.2, 0.04, 0.2], "radius": "round * (lod < 2)" },
           "material": 0
         },
-        { "box": { "size": [0.15, 0.03, 0.15], "radius": "round" }, "material": 0 },
+        {
+          "box": { "size": [0.15, 0.03, 0.15], "radius": "round * (lod < 2)" },
+          "material": 0
+        },
         {
           "// globe: a thin glass shell, open at both ends (D-102 transmission)": "",
           "lathe": {
             "profile": [[0.05, 0], [0.085, 0.13, 0, 0.07], [0.05, 0.26]],
-            "sides": 48,
+            "sides": "48 / (1 + lod)",
             "caps": "none"
           },
           "material": 1
         },
         {
           "// flame: emissive core (D-82)": "",
-          "lathe": { "profile": [[0, 0], [0.012, 0.02, 0, 0.01], [0, 0.065]], "sides": 24 },
+          "lathe": {
+            "profile": [[0, 0], [0.012, 0.02, 0, 0.01], [0, 0.065]],
+            "sides": "24 / (1 + lod)"
+          },
           "material": 2
         },
         {
           "// halo: core glTF alphaMode BLEND": "",
-          "lathe": { "profile": [[0, 0], [0.024, 0.03, 0, 0.018], [0, 0.095]], "sides": 24 },
+          "lathe": {
+            "profile": [[0, 0], [0.024, 0.03, 0, 0.018], [0, 0.095]],
+            "sides": "24 / (1 + lod)"
+          },
           "material": 3
         },
         {
           "// burner": "",
-          "box": { "size": [0.05, 0.02, 0.05], "radius": 0.006 },
+          "box": { "size": [0.05, 0.02, 0.05], "radius": "0.006 * (lod < 2)" },
           "material": 0
         },
         {
@@ -52,12 +86,12 @@
           "loft": {
             "path": [[-0.06, 0, 0], [-0.06, 0.09, 0], [0.06, 0.09, 0], [0.06, 0, 0]],
             "sections": [{ "t": 0, "points": { "circle": 0.005 } }],
-            "sides": 12
+            "sides": "12 / (1 + lod)"
           },
           "material": 0
         }
       ],
-      "baked_values": { "round": 0.012, "glass": 1, "flame": 6 }
+      "baked_values": { "round": 0.012, "glass": 1, "flame": 6, "lod": 0 }
     },
     "KHR_materials_variants": { "variants": [{ "name": "frosted" }, { "name": "out" }] }
   },

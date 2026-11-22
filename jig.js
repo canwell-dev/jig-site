@@ -3,6 +3,7 @@
 
 export const VERSION = '0.1';
 export const EXT = 'JIG_recipe';
+export const UNITS = ['m', 'deg', '%', 's']; // draft f25: a value is stored in its unit; % is a 0..1 fraction shown as 0..100
 
 // Read a document. `values` overrides parameter values by name (over baked_values, over defaults).
 // Returns { params, vars, floor, meshes, nodes, instances, tree, skins } or throws an Error whose message starts with
@@ -10,7 +11,7 @@ export const EXT = 'JIG_recipe';
 // `instances` are { node, mesh, matrix, rec, model } for every shape drawn in the default scene, matrix = world
 // transform, column-major as in glTF; `node` is the node of this document that draws or places it.
 // `files` (draft f10): file name -> document, for a model's relative `uri`, as if all were in one folder.
-export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
+export function read(doc, values = {}, { files = {}, stack = [], rest = false } = {}) {
   need(isObj(doc), '', 'document must be an object');
   need(isObj(doc.asset) && doc.asset.version === '2.0', '/asset/version', 'must be "2.0" (a glTF 2.0 document)');
   need(Array.isArray(doc.extensionsUsed) && doc.extensionsUsed.includes(EXT), '/extensionsUsed', `must list "${EXT}"`);
@@ -19,7 +20,7 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
   const rat = `/extensions/${EXT}`;
   const r = doc.extensions?.[EXT];
   need(isObj(r), rat, 'must be an object');
-  only(r, ['version', 'params', 'sets', 'vars', 'floor', 'meshes', 'models', 'skins', 'baked_values', 'baked_set'], rat);
+  only(r, ['version', 'params', 'sets', 'vars', 'floor', 'meshes', 'models', 'skins', 'character', 'clips', 'baked_values', 'baked_set'], rat);
   need(r.version === VERSION, `${rat}/version`, `must be "${VERSION}"`);
 
   need(r.params === undefined || isObj(r.params), `${rat}/params`, 'must be an object');
@@ -33,9 +34,11 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     const at = `${rat}/params/${name}`;
     need(/^[a-z_][a-z0-9_]*$/.test(name), at, 'name must be lower_snake_case');
     need(isObj(p), at, 'must be an object');
-    need(p.type === undefined || p.type === 'bool' || p.type === 'color' || p.type === 'choice', `${at}/type`, 'must be "bool", "color" or "choice" (leave it out for a number)');
+    need(p.type === undefined || ['int', 'bool', 'color', 'choice'].includes(p.type), `${at}/type`, 'must be "int", "bool", "color" or "choice" (leave it out for a number)');
+    need(p.doc === undefined || typeof p.doc === 'string', `${at}/doc`, 'must be a string'); // draft f25: hints, no effect on the model
+    need(p.live === undefined || p.live === true, `${at}/live`, 'must be true, or left out'); // draft f26 (D-131): checked below
     if (p.type === 'choice') { // draft f21: one of named options, its index 0, 1, ... in expressions
-      only(p, ['type', 'options', 'default'], at);
+      only(p, ['type', 'options', 'default', 'doc', 'live'], at);
       need(Array.isArray(p.options) && p.options.length >= 2 && p.options.every((o) => typeof o === 'string' && o !== ''), `${at}/options`, 'must be a list of at least 2 non-empty strings');
       need(new Set(p.options).size === p.options.length, `${at}/options`, 'must not repeat an option');
       need(p.options.includes(p.default), `${at}/default`, `must be one of ${JSON.stringify(p.options)}`);
@@ -46,7 +49,7 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
       continue;
     }
     if (p.type === 'color') { // draft f6: linear [r, g, b, a] in 0..1, as glTF's baseColorFactor; a vec4 in expressions (D-91)
-      only(p, ['type', 'default'], at);
+      only(p, ['type', 'default', 'doc', 'live'], at);
       need(isColor(p.default), `${at}/default`, 'must be a color: linear [r, g, b, a], numbers 0..1');
       if (baked) need(isColor(baked[name]), `${rat}/baked_values/${name}`, 'must be a color: linear [r, g, b, a], numbers 0..1 (baked_values holds every parameter)');
       const v = values[name] ?? baked?.[name] ?? p.default;
@@ -55,25 +58,34 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
       continue;
     }
     if (p.type === 'bool') { // D-47: true/false, 1/0 in expressions
-      only(p, ['type', 'default'], at);
+      only(p, ['type', 'default', 'doc', 'live'], at);
       need(typeof p.default === 'boolean', `${at}/default`, 'must be true or false');
       if (baked) need(typeof baked[name] === 'boolean', `${rat}/baked_values/${name}`, 'must be true or false (baked_values holds every parameter)');
       params[name] = { ...p, value: !!(values[name] ?? baked?.[name] ?? p.default) };
       continue;
     }
-    only(p, ['default', 'min', 'max'], at);
-    for (const k of ['default', 'min', 'max']) need(typeof p[k] === 'number', `${at}/${k}`, 'must be a number');
+    only(p, ['type', 'default', 'min', 'max', 'step', 'unit', 'doc', 'live'], at);
+    const int = p.type === 'int'; // draft f25: whole numbers, rounded half away from zero
+    for (const k of ['default', 'min', 'max']) need(int ? Number.isInteger(p[k]) : typeof p[k] === 'number', `${at}/${k}`, int ? 'must be a whole number' : 'must be a number');
     need(p.min <= p.default && p.default <= p.max, at, 'needs min <= default <= max');
+    need(p.step === undefined || (typeof p.step === 'number' && p.step > 0), `${at}/step`, 'must be a number > 0');
+    need(p.unit === undefined || UNITS.includes(p.unit), `${at}/unit`, `must be one of ${JSON.stringify(UNITS)}`);
     if (baked) need(typeof baked[name] === 'number', `${rat}/baked_values/${name}`, 'must be a number (baked_values holds every parameter)');
     const v = values[name] ?? baked?.[name] ?? p.default;
-    params[name] = { ...p, value: Math.min(p.max, Math.max(p.min, v)) };
+    params[name] = { ...p, value: Math.min(p.max, Math.max(p.min, int ? Math.sign(v) * Math.round(Math.abs(v)) : v)) };
   }
   // D-96: well-known parameters a host may set by name; the reader checks their kind only, not what the model does.
-  for (const k of ['seed', 'width', 'height', 'depth']) {
+  for (const k of ['seed', 'width', 'height', 'depth', 'lod']) {
     const p = params[k], at = `${rat}/params/${k}`;
     if (!p) continue;
-    need(p.type === undefined, `${at}/type`, 'is a well-known parameter (§3.3): must be a number parameter');
-    if (k !== 'seed') need(p.min > 0, `${at}/min`, 'is an extent in metres (§3.3): must be > 0');
+    if (k === 'lod') { // draft f25: 0 is full detail, higher is coarser; the model picks max
+      need(p.type === 'int', `${at}/type`, 'is a well-known parameter (§3.3): must be an int parameter');
+      need(p.min === 0, `${at}/min`, 'is a level of detail (§3.3): must be 0');
+    } else if (k === 'seed') need(p.type === undefined || p.type === 'int', `${at}/type`, 'is a well-known parameter (§3.3): must be a number or int parameter');
+    else {
+      need(p.type === undefined, `${at}/type`, 'is a well-known parameter (§3.3): must be a number parameter');
+      need(p.min > 0, `${at}/min`, 'is an extent in metres (§3.3): must be > 0');
+    }
   }
   // Draft f8: named sets of parameter values, as OpenSCAD's parameterSets. A host applies one by passing its
   // values; the reader only checks them. A set may name some parameters only.
@@ -93,6 +105,8 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
   }
   need(r.baked_set === undefined || Object.hasOwn(sets, r.baked_set), `${rat}/baked_set`, 'must name a set');
   const scope = Object.fromEntries(Object.entries(params).map(([k, p]) => [k, p.type === 'color' ? [...p.value] : p.type === 'choice' ? p.options.indexOf(p.value) : +p.value]));
+  const choices = Object.entries(params).filter(([, p]) => p.type === 'choice').map(([k, p]) => [k, p.options]);
+  if (choices.length) scope[CHOICES] = Object.fromEntries(choices); // draft f24 (D-115): for `opening == 'window'`
 
   // Sketch (draft f2): named expressions, in order; each sees the params and the vars before it. A var may hold a
   // color (vec4, D-91).
@@ -180,6 +194,8 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
   // Draft f10 (D-72..D-74): other JIG documents, placed by nodes with their own parameter values. Embedded as
   // `document`, or a `uri` as glTF's: a data: URI or a file name looked up in `files`.
   need(r.models === undefined || Array.isArray(r.models), `${rat}/models`, 'must be a list');
+  const valueSinks = new Map(); // draft f26: placed values that reach a bake slot of the placed document, path -> expression
+  const skinnedPlaced = new Set(); // draft f26 (D-134): nodes placing a document with skins
   const placed = [], placedKey = new Map(); // draft f10 (D-78): materials of placed documents, as finished glTF materials
   // Draft f11: the textures those materials use, each { texture, image, sampler } with the image's uri made relative
   // to this document; a placed material's texture slots index this list.
@@ -212,6 +228,20 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     const key = JSON.stringify(l);
     if (!lightKey.has(key)) lightKey.set(key, lights.push(l) - 1);
     return lightKey.get(key);
+  };
+  // Draft f24 (D-119): a light's recipe `color`, `intensity`, `range`, evaluated in the scope of the node that picks
+  // it; the evaluated light is a baked one, equal ones shared.
+  const lightOf = (k, s, at) => {
+    const l = lights[k], x = l.extensions?.[EXT], xat = `${lat}/lights/${k}/extensions/${EXT}`;
+    if (x === undefined) return k;
+    need(isObj(x), xat, 'must be an object');
+    only(x, ['color', 'intensity', 'range'], xat);
+    const { [EXT]: _, ...ext } = l.extensions, o = { ...l, extensions: ext };
+    if (!Object.keys(ext).length) delete o.extensions;
+    if (x.color !== undefined) o.color = color(x.color, 3, s, `${xat}/color`);
+    if (x.intensity !== undefined) { o.intensity = num(x.intensity, s, `${xat}/intensity`); need(o.intensity >= 0, `${xat}/intensity`, `must be >= 0, is ${o.intensity} (at ${at})`); }
+    if (x.range !== undefined) { o.range = num(x.range, s, `${xat}/range`); need(o.range > 0, `${xat}/range`, `must be > 0, is ${o.range} (at ${at})`); }
+    return addLight(o);
   };
   const models = (r.models ?? []).map((m, k) => {
     const at = `${rat}/models/${k}`;
@@ -263,7 +293,7 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
   (r.skins ?? []).forEach((sk, k) => {
     const at = `${rat}/skins/${k}`;
     need(isObj(sk), at, 'must be an object');
-    only(sk, ['joints'], at);
+    only(sk, ['joints', 'blend'], at);
     list(sk.joints, `${at}/joints`).forEach((j, m) => {
       need(seen.has(j), `${at}/joints/${m}`, 'must be a node of the default scene');
       need(!jointOf.has(j), `${at}/joints/${m}`, `node ${j} is already a joint`);
@@ -271,6 +301,48 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     });
   });
   const skins = (r.skins ?? []).map(() => []);
+  // Draft f28 (D-144): a skin's blend width, the default for its shapes; a node's own blend overrides it.
+  const skinBlend = (r.skins ?? []).map((sk, k) => {
+    if (sk.blend === undefined) return undefined;
+    const w = num(sk.blend, scope, `${rat}/skins/${k}/blend`);
+    need(w > 0, `${rat}/skins/${k}/blend`, `must be > 0, is ${w}`);
+    return w;
+  });
+  const owner = {}; // marks the records of this document, so a node's blend_joints names its own joints
+
+  // Draft f30 (D-148..D-151): a character's naming scheme and its joints' roles, one role per joint node; under
+  // vrm1_humanoid, VRM 1.0's bone names and `meta` for the bake's VRMC_vrm.
+  const cat = `${rat}/character`;
+  let character;
+  if (r.character !== undefined) {
+    need(isObj(r.character), cat, 'must be an object');
+    only(r.character, ['scheme', 'meta'], cat);
+    need(typeof r.character.scheme === 'string' && r.character.scheme !== '', `${cat}/scheme`, 'must be a non-empty string');
+    const vrm = r.character.scheme === 'vrm1_humanoid', meta = r.character.meta;
+    if (vrm) {
+      need(isObj(meta), `${cat}/meta`, 'must be an object: VRM 1.0 meta, with name, authors and licenseUrl');
+      need(typeof meta.name === 'string' && meta.name !== '', `${cat}/meta/name`, 'must be a non-empty string');
+      need(Array.isArray(meta.authors) && meta.authors.length > 0 && meta.authors.every((a) => typeof a === 'string' && a !== ''), `${cat}/meta/authors`, 'must be a non-empty list of non-empty strings');
+      need(meta.licenseUrl === VRM_LICENSE, `${cat}/meta/licenseUrl`, `must be "${VRM_LICENSE}", as VRM 1.0 says; another license goes in otherLicenseUrl`);
+    } else need(meta === undefined, `${cat}/meta`, 'is only for scheme "vrm1_humanoid"');
+    character = { scheme: r.character.scheme, meta, roles: [] };
+  }
+  src.forEach((n, i) => {
+    const role = n?.extensions?.[EXT]?.role, at = `/nodes/${i}/extensions/${EXT}/role`;
+    if (role === undefined || isBaked(n)) return;
+    need(character, at, `needs ${rat}/character`);
+    need(typeof role === 'string' && role !== '', at, 'must be a non-empty string');
+    need(jointOf.has(i), at, 'must be on a joint (a node listed in a skin, §6.3)');
+    need(!repeated.has(i), at, 'a repeated node has several copies; give each its own node');
+    const twice = character.roles.find((x) => x.role === role);
+    need(!twice, at, `"${role}" is already the role of node ${twice?.node}`);
+    if (character.scheme === 'vrm1_humanoid') need(VRM_BONES.includes(role), at, `"${role}" is not a VRM 1.0 humanoid bone`);
+    character.roles.push({ role, node: i });
+  });
+  if (character?.scheme === 'vrm1_humanoid') {
+    const missing = VRM_REQUIRED.filter((b) => !character.roles.some((x) => x.role === b));
+    need(!missing.length, cat, `vrm1_humanoid needs the roles ${missing.join(', ')}`);
+  }
 
   // Evaluate the tree with world matrices. A repeated node is evaluated once per copy, its index and row bound
   // for its subtree (D-44, D-46, D-75). `tree` holds one record per copy: { i, node, rep, shown, kids, world, name,
@@ -302,28 +374,50 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     n.matrix = compose(n.translation, n.rotation, n.scale);
     return n;
   };
-  const walk = (i, parent, s, shown, copy, bone) => {
+  const walk = (i, parent, s, shown, drawn, copy, bone) => {
     const x = src[i].extensions?.[EXT], at = `/nodes/${i}`, xat = `${at}/extensions/${EXT}`;
     const rep = isObj(x) && x.repeat !== undefined ? repeat(x.repeat, s, `${xat}/repeat`) : null;
     return Array.from({ length: rep ? Math.max(1, rep.count) : 1 }, (_, k) => {
       const sk = repeatVars(rep?.vars, rep ? { ...s, [rep.index]: k, ...rep.rows?.[k] } : s, `${xat}/repeat/vars`), c = rep ? [...copy, k] : copy;
-      const n = nodeAt(src[i], sk, at), vis = shown && (!rep || k < rep.count);
+      const n = nodeAt(src[i], sk, at), vis = shown && (!rep || k < rep.count) && n.visible;
       if (n.mesh !== undefined) n.mesh = meshAt(n.mesh, sk);
       nodes[i] ??= { ...n, repeated: repeated.has(i), scope: sk }; // scope: the first copy's, for editor drags
       const world = mul(parent, n.matrix);
-      const rec = { i, node: n, rep: !!rep, shown: vis, kids: [], world, name: n.name, mesh: n.mesh, light: n.jig.light };
+      // drawn: baked, shown or not; hidden: its own visible is 0 (D-130: baked with KHR_node_visibility false)
+      const rec = { i, node: n, rep: !!rep, shown: vis, drawn: drawn && (!rep || k < rep.count), hidden: !n.visible, kids: [], world, name: n.name, mesh: n.mesh, light: n.jig.light === undefined ? undefined : lightOf(n.jig.light, sk, `${xat}/light`) };
       let b = bone;
+      rec.owner = owner;
       if (jointOf.has(i)) { b = { rec, skin: jointOf.get(i) }; if (vis) skins[b.skin].push(rec); }
       if (n.mesh !== undefined && b) rec.bound = b;
+      if (n.jig.blend !== undefined || n.jig.blend_joints !== undefined) rec.blend = blendOf(n.jig, sk, xat, b, rec.bound);
       if (vis && n.mesh !== undefined) instances.push({ node: i, mesh: n.mesh, matrix: world, copy: c, rec });
-      rec.kids = n.children.filter((ch) => !isBaked(src[ch])).flatMap((ch) => walk(ch, world, sk, vis, c, b));
-      if (n.jig.model !== undefined) place(n.jig, sk, xat, rec, vis, c, b);
+      // Draft f24 (D-118): the placed model first, so the node's children see its bounds.
+      const kids = n.children.filter((ch) => !isBaked(src[ch])), p = n.jig.model === undefined ? null : place(n.jig, sk, xat, rec, vis && n.modelVisible, c, b, kids.length > 0);
+      rec.kids = kids.flatMap((ch) => walk(ch, world, p?.bounds ? { ...sk, ...p.bounds } : sk, vis, rec.drawn, c, b));
+      if (p) { rec.kids.push(...p.tree); instances.push(...p.inst); }
       return rec;
     });
   };
+  // Draft f28 (D-143..D-145): a node's blend width (0: rigid) and the joints its shape may follow.
+  const blendOf = (x, s, xat, b, bound) => {
+    const key = `${xat}/${x.blend !== undefined ? 'blend' : 'blend_joints'}`;
+    need(x.mesh !== undefined, key, 'needs mesh');
+    need(bound || stack.length > 0, key, 'its shape is bound to no joint (§6.3)'); // a placed document's may be bound by the placing node
+    const w = x.blend === undefined ? undefined : num(x.blend, s, `${xat}/blend`);
+    need(w === undefined || w >= 0, `${xat}/blend`, `must be >= 0, is ${w}`);
+    let only = null;
+    if (x.blend_joints !== undefined) {
+      only = new Set(list(x.blend_joints, `${xat}/blend_joints`));
+      x.blend_joints.forEach((j, m) => {
+        need(jointOf.has(j), `${xat}/blend_joints/${m}`, 'must be a joint of a skin (§6.3)');
+        need(!b || b.rec.owner !== owner || jointOf.get(j) === b.skin, `${xat}/blend_joints/${m}`, `must be a joint of skin ${b?.skin}, the one its shape is bound to`);
+      });
+    }
+    return { w, only, owner };
+  };
   // Draft f10: a node's `model` and `values`. The placed document is read with those values; its shapes, skins
   // and tree join this one under the node. Its skins join the placing node's skin, or are skins of their own.
-  const place = (x, s, xat, rec, vis, c, bone) => {
+  const place = (x, s, xat, rec, vis, c, bone, wantBounds) => {
     need(Number.isInteger(x.model) && x.model >= 0 && x.model < models.length, `${xat}/model`, `must be a model index 0..${models.length - 1}`);
     const m = models[x.model];
     need(m.doc !== doc && !stack.includes(m.doc) && stack.length < 16, `${xat}/model`, 'places itself, or nests deeper than 16');
@@ -346,6 +440,8 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
     }
     let sub;
     try { sub = read(m.doc, vals, { files, stack: [...stack, doc] }); } catch (e) { need(false, `${xat}/model`, `in ${m.label}: ${e.message}`); }
+    for (const k of Object.keys(vals)) if (!sub.params[k].live) valueSinks.set(`${xat}/values/${k}`, x.values[k]); // draft f26: reaches a bake slot there
+    if (sub.skins.length) skinnedPlaced.add(rec.i);
     // Its materials come along (D-78): each one a shape uses, at this copy's values, as a finished glTF material.
     m.stripped ??= strip(m.doc);
     const dir = m.dir ?? '', sd = m.stripped;
@@ -360,7 +456,7 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
       }
       return intern(mesh, `placed ${JSON.stringify(mesh)}`);
     });
-    const skinAt = sub.skins.map(() => (bone ? bone.skin : skins.push([]) - 1));
+    const skinAt = sub.skins.map((_, k) => (bone ? bone.skin : (skinBlend.push(sub.skinBlend[k]), skins.push([]) - 1)));
     const lightAt = sub.lights.map(addLight);
     if (vis) sub.skins.forEach((js, k) => skins[skinAt[k]].push(...js));
     const relink = (r) => {
@@ -371,20 +467,217 @@ export function read(doc, values = {}, { files = {}, stack = [] } = {}) {
       r.kids.forEach(relink);
     };
     sub.tree.forEach(relink);
-    rec.kids.push(...sub.tree);
-    if (vis) for (const si of sub.instances) {
-      instances.push({ node: rec.i, mesh: si.rec.mesh, matrix: mul(rec.world, si.matrix), copy: [...c, ...si.copy], rec: si.rec, model: true });
-    }
+    if (!vis) sub.tree.forEach(function hide(r) { r.shown = false; r.kids.forEach(hide); }); // model_visible 0 (D-118)
+    if (!rec.drawn) sub.tree.forEach(function drop(r) { r.drawn = false; r.kids.forEach(drop); });
+    if (!rec.node.modelVisible) sub.tree.forEach((r) => { r.hidden = true; }); // baked hidden (D-130)
+    const inst = vis ? sub.instances.map((si) => ({ node: rec.i, mesh: si.rec.mesh, matrix: mul(rec.world, si.matrix), copy: [...c, ...si.copy], rec: si.rec, model: true })) : [];
+    return { tree: sub.tree, inst, bounds: wantBounds ? modelBounds(sub) : null };
   };
-  const tree = roots.flatMap((i) => walk(i, IDENTITY, scope, true, [], null));
+  const tree = roots.flatMap((i) => walk(i, IDENTITY, scope, true, true, [], null));
   src.forEach((n, i) => { if (!nodes[i] && !isBaked(n)) nodes[i] = nodeAt(n, scope, `/nodes/${i}`); });
   for (let i = 0; i < recipeMeshes.length; i++) if (meshes[i] === undefined) meshAt(i, scope); // drawn by no copy
   for (const e of pending.values()) throw e; // used by no copy, and wrong at the parameters
 
   // y of the floor in model space; hosts stand the model there. Default: the lowest point on the vertical line
-  // through the origin, or 0 when no shape crosses that line.
-  const floor = r.floor === undefined ? lowestOnAxis(meshes, instances) : num(r.floor, scope, `${rat}/floor`);
-  return { params, sets, vars, floor, materials, meshes, nodes, instances, tree, skins, placed, placedTextures, lights };
+  // through the origin, or 0 when no shape crosses that line. The default builds geometry, so it is worked out
+  // only when asked for: a placed document's floor, which is ignored, never is.
+  const floor = r.floor === undefined ? undefined : num(r.floor, scope, `${rat}/floor`);
+  // Draft f26 (D-129..D-131): a parameter is live unless some value of it can reach a bake slot.
+  for (const [k, at] of bakeSlots(r, src, valueSinks, Object.keys(params), jointOf, skinnedPlaced)) {
+    params[k].live = false;
+    need(!r.params[k].live, `${rat}/params/${k}/live`, `is live, but reaches ${at}, which changes the baked meshes`);
+  }
+  for (const p of Object.values(params)) p.live ??= true;
+  const clips = stack.length ? [] : clipsOf(r.clips, params, scope, rat); // draft f31: the outermost document's
+  let low;
+  const out = { params, sets, vars, get floor() { return floor ?? (low ??= lowestOnAxis(meshes, instances)); }, materials, meshes, nodes, instances, tree, skins, skinBlend, character, clips, placed, placedTextures, lights };
+  // Draft f28 (D-146): skinned shapes are built and weighted at the bind pose, every live parameter at its default,
+  // and follow their joints from there. Done once, by the outermost document.
+  if (!stack.length && !rest && skins.some((js) => js.length)) {
+    const live = Object.entries(params).filter(([, p]) => p.live && JSON.stringify(p.value) !== JSON.stringify(p.default));
+    skinPose(out, live.length ? read(doc, { ...values, ...Object.fromEntries(live.map(([k, p]) => [k, p.default])) }, { files, stack, rest: true }) : out);
+  }
+  return out;
+}
+
+// Draft f31 (D-152, D-153): clips drive live parameters over time. Each clip is sampled here, at `fps` (default 30)
+// with keys exactly at 0 and `length`: [{ name, length, loop, fps, times, keys: [{ param: value }] }]; each value an
+// expression of t (seconds) and u (t / length) over the parameters and variables.
+function clipsOf(c, params, scope, rat) {
+  if (c === undefined) return [];
+  need(isObj(c), `${rat}/clips`, 'must be an object: clip name -> { length, loop, fps, values }');
+  return Object.entries(c).filter(([name]) => !name.startsWith('//')).map(([name, clip]) => {
+    const at = `${rat}/clips/${name}`;
+    need(name !== '' && !name.includes('/'), at, 'a clip name is non-empty text without /');
+    need(isObj(clip), at, 'must be an object');
+    only(clip, ['length', 'loop', 'fps', 'values'], at);
+    need(!('t' in scope) && !('u' in scope), at, 'a parameter or variable named t or u hides the clip time');
+    const length = num(clip.length, scope, `${at}/length`), fps = clip.fps === undefined ? 30 : num(clip.fps, scope, `${at}/fps`);
+    need(length > 0, `${at}/length`, `must be > 0 seconds, is ${length}`);
+    need(fps > 0, `${at}/fps`, `must be > 0, is ${fps}`);
+    need(clip.loop === undefined || typeof clip.loop === 'boolean', `${at}/loop`, 'must be true or false');
+    need(isObj(clip.values) && Object.keys(clip.values).some((k) => !k.startsWith('//')), `${at}/values`, 'must be an object: live parameter -> expression of t and u');
+    const vals = Object.entries(clip.values).filter(([k]) => !k.startsWith('//'));
+    for (const [k] of vals) {
+      need(Object.hasOwn(params, k), `${at}/values/${k}`, 'is not a parameter');
+      need(params[k].live, `${at}/values/${k}`, 'is a bake parameter: a clip changes no mesh (§3.4)');
+      need(params[k].type !== 'choice', `${at}/values/${k}`, 'a choice parameter cannot follow a clip');
+    }
+    const n = Math.max(1, Math.round(length * fps)), times = Array.from({ length: n + 1 }, (_, k) => (k === n ? length : (k * length) / n));
+    const keys = times.map((t) => Object.fromEntries(vals.map(([k, e]) => {
+      const sc = { ...scope, t, u: t / length }, kat = `${at}/values/${k}`, p = params[k];
+      if (p.type === 'color') return [k, color(e, 4, sc, kat)];
+      const v = num(e, sc, kat);
+      return [k, p.type === 'bool' ? v !== 0 : v];
+    })));
+    return { name, length, loop: clip.loop ?? false, fps, times, keys };
+  });
+}
+
+// Draft f28 (D-143..D-146): each skinned instance gets `rest`, its matrix at the bind pose; a rigid one is moved by
+// its joint's motion from the bind pose, a blended one gets per-vertex `weights` (the 4 nearest bones by distance at
+// the bind pose, over its blend width) and `restGeo` / `deformed`: its vertices in model space at the bind pose and
+// at the values read. A joint's bone is the segments from its origin to its child joints' origins (a point when it
+// has none). `out.restJoints[s]`: the joints' world matrices at the bind pose.
+function skinPose(out, rest) {
+  const cur = out.instances.filter((x) => x.rec.bound), was = rest.instances.filter((x) => x.rec.bound);
+  need(cur.length === was.length && out.skins.every((js, s) => js.length === rest.skins[s].length), '', 'the bind pose has other skinned shapes than the values read');
+  out.restJoints = rest.skins.map((js) => js.map((j) => j.world));
+  const motion = out.skins.map((js, s) => js.map((j, k) => mul(j.world, invert(out.restJoints[s][k]))));
+  const at = (m) => [m[12], m[13], m[14]];
+  const bones = rest.skins.map((js) => {
+    const idx = new Map(js.map((j, k) => [j, k])), kids = js.map(() => []);
+    (function walk(recs, up) { for (const r of recs) { const k = idx.get(r); if (k !== undefined && up !== undefined) kids[up].push(k); walk(r.kids, k ?? up); } })(rest.tree, undefined);
+    return js.map((j, k) => ({ o: at(j.world), ends: kids[k].map((c) => at(js[c].world)) }));
+  });
+  const geoms = new Map();
+  cur.forEach((x, n) => {
+    const s = x.rec.bound.skin, js = out.skins[s], B = was[n].matrix;
+    x.rest = B;
+    const w = x.rec.blend?.w ?? out.skinBlend[s] ?? 0;
+    if (!(w > 0)) { x.matrix = mul(motion[s][js.indexOf(x.rec.bound.rec)], B); return; }
+    if (!geoms.has(x.mesh)) geoms.set(x.mesh, geometry(out.meshes[x.mesh]));
+    const g = geoms.get(x.mesh), count = g.positions.length / 3, only = x.rec.blend?.only;
+    const ks = js.map((_, k) => k).filter((k) => !only || (js[k].owner === x.rec.blend.owner && only.has(js[k].i)));
+    const nm = inverse3([0, 1, 2].map((r) => [0, 1, 2].map((c) => B[c * 4 + r]))) ?? [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+    const P = new Float32Array(3 * count), N = new Float32Array(3 * count), dp = new Float32Array(3 * count), dn = new Float32Array(3 * count);
+    const joints = new Uint16Array(4 * count), weights = new Float32Array(4 * count);
+    for (let v = 0; v < count; v++) {
+      const [px, py, pz] = g.positions.subarray(3 * v, 3 * v + 3), [qx, qy, qz] = g.normals.subarray(3 * v, 3 * v + 3);
+      const p = [0, 1, 2].map((a) => B[a] * px + B[4 + a] * py + B[8 + a] * pz + B[12 + a]);
+      const q = [0, 1, 2].map((a) => nm[0][a] * qx + nm[1][a] * qy + nm[2][a] * qz), ql = Math.hypot(...q) || 1;
+      const top = blendWeights(p, ks.map((k) => bones[s][k]), w).map((e) => ({ k: ks[e.k], f: e.f }));
+      const dv = [0, 0, 0], nv = [0, 0, 0];
+      top.forEach((e, m) => {
+        joints[4 * v + m] = e.k; weights[4 * v + m] = e.f;
+        const M = motion[s][e.k];
+        for (let a = 0; a < 3; a++) {
+          dv[a] += e.f * (M[a] * p[0] + M[4 + a] * p[1] + M[8 + a] * p[2] + M[12 + a]);
+          nv[a] += (e.f * (M[a] * q[0] + M[4 + a] * q[1] + M[8 + a] * q[2])) / ql;
+        }
+      });
+      const nl = Math.hypot(...nv) || 1;
+      for (let a = 0; a < 3; a++) { P[3 * v + a] = p[a]; N[3 * v + a] = q[a] / ql; dp[3 * v + a] = dv[a]; dn[3 * v + a] = nv[a] / nl; }
+    }
+    // D-97: a mirroring bind matrix turns faces inside out once baked into vertices; flip winding back
+    const det = B[0] * (B[5] * B[10] - B[9] * B[6]) - B[4] * (B[1] * B[10] - B[9] * B[2]) + B[8] * (B[1] * B[6] - B[5] * B[2]);
+    const indices = det < 0 ? Uint32Array.from(g.indices, (_, i) => g.indices[i - (i % 3) + [0, 2, 1][i % 3]]) : g.indices;
+    x.weights = { joints, weights };
+    x.restGeo = { positions: P, normals: N, uvs: g.uvs, indices };
+    x.deformed = { positions: dp, normals: dn, uvs: g.uvs, indices };
+    x.matrix = IDENTITY;
+  });
+}
+
+// Draft f28 (D-143): a point's weights over bones { o, ends } (segments from o to each end; o alone without ends):
+// f(x) = 1 − smoothstep(0, 1, x), x = (d − d_min) / w, d the distance to a bone; the largest 4 (ties to the lower
+// index), divided by their sum. Returns [{ k, f }].
+export function blendWeights(p, bones, w) {
+  const d = bones.map(({ o, ends }) => {
+    if (!ends.length) return Math.hypot(p[0] - o[0], p[1] - o[1], p[2] - o[2]);
+    let best = Infinity;
+    for (const e of ends) {
+      const a = [e[0] - o[0], e[1] - o[1], e[2] - o[2]], l2 = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+      const t = l2 ? Math.max(0, Math.min(1, ((p[0] - o[0]) * a[0] + (p[1] - o[1]) * a[1] + (p[2] - o[2]) * a[2]) / l2)) : 0;
+      best = Math.min(best, Math.hypot(p[0] - o[0] - t * a[0], p[1] - o[1] - t * a[1], p[2] - o[2] - t * a[2]));
+    }
+    return best;
+  });
+  const dmin = Math.min(...d);
+  const top = d.map((dk, k) => { const x = Math.min(1, (dk - dmin) / w); return { k, f: 1 - x * x * (3 - 2 * x) }; })
+    .filter((e) => e.f > 0).sort((a, b) => b.f - a.f || a.k - b.k).slice(0, 4);
+  const sum = top.reduce((a, e) => a + e.f, 0);
+  return top.map((e) => ({ k: e.k, f: e.f / sum }));
+}
+
+// Draft f26 (D-129, D-130): parameter -> the first bake slot it can reach, worked out from the document alone,
+// without evaluating, in every branch. Bake slots: recipe mesh slots, a repeat's count, and a placed document's
+// values that reach one there; and (D-134) a visible or model_visible that can hide a shape drawn by a skin's mesh
+// (glTF cannot hide one primitive), and any values entry of a document placed under a joint. Everything else is
+// live. Local names (vars, repeat vars, rows, model_*) pass on the parameters they read; they are pooled across the
+// document, which only errs towards bake (D-134).
+function bakeSlots(r, src, valueSinks, params, jointOf, skinnedPlaced) {
+  const deps = new Map(params.map((k) => [k, new Set([k])]));
+  const reads = (v, text) => (typeof v !== 'string' ? [] : text ? [...v.matchAll(/\{([^}]*)\}/g)].flatMap((m) => namesIn(m[1])) : namesIn(v));
+  const from = (names) => new Set(names.flatMap((n) => [...(deps.get(n) ?? [])]));
+  const defs = []; // [name, names it reads]
+  for (const [k, v] of Object.entries(isObj(r.vars) ? r.vars : {})) defs.push([k, reads(v)]);
+  for (const n of src) {
+    const x = n?.extensions?.[EXT], rp = x?.repeat;
+    if (Array.isArray(rp?.each)) for (const row of rp.each) for (const [k, v] of Object.entries(isObj(row) ? row : {})) defs.push([k, reads(v)]);
+    for (const [k, v] of Object.entries(isObj(rp?.vars) ? rp.vars : {})) defs.push([k, reads(v)]);
+    for (const v of Object.values(isObj(x?.values) ? x.values : {})) for (const a of 'xyz') for (const e of '01') defs.push([`model_${a}${e}`, reads(v)]);
+  }
+  for (let changed = true; changed;) { // until nothing new passes on
+    changed = false;
+    for (const [k, names] of defs) {
+      const d = deps.get(k) ?? new Set(), size = d.size;
+      for (const p of from(names)) d.add(p);
+      deps.set(k, d);
+      if (d.size > size) changed = true;
+    }
+  }
+  const out = new Map(), sink = (at, names) => { for (const p of from(names)) if (!out.has(p)) out.set(p, at); };
+  const SKIP = ['material', 'uv', 'blend', 'caps', 'plane', 'falloff']; // indices and keywords, not expressions
+  const walk = (v, at, text) => {
+    if (typeof v === 'string') return sink(at, reads(v, text));
+    if (Array.isArray(v)) return v.forEach((e, i) => walk(e, `${at}/${i}`));
+    if (isObj(v)) for (const [k, e] of Object.entries(v)) if (!k.startsWith('//') && !SKIP.includes(k)) walk(e, `${at}/${k}`, k === 'text' && typeof e === 'string');
+  };
+  (r.meshes ?? []).forEach((m, i) => walk(m, `/extensions/${EXT}/meshes/${i}`));
+  src.forEach((n, i) => { const c = n?.extensions?.[EXT]?.repeat?.count; if (c !== undefined) sink(`/nodes/${i}/extensions/${EXT}/repeat/count`, reads(c)); });
+  for (const [at, v] of valueSinks) sink(at, reads(v));
+  const parent = new Map();
+  src.forEach((n, i) => (Array.isArray(n?.children) ? n.children : []).forEach((c) => parent.set(c, i)));
+  const underJoint = (i) => i !== undefined && (jointOf.has(i) || underJoint(parent.get(i)));
+  const skinned = (i, x) => skinnedPlaced.has(i) || (x?.model !== undefined && underJoint(i)); // its placed document
+  const carries = (i) => { const x = src[i]?.extensions?.[EXT]; return skinned(i, x) || (x?.mesh !== undefined && underJoint(i)) || (src[i]?.children ?? []).some(carries); };
+  src.forEach((n, i) => {
+    const x = n?.extensions?.[EXT], xat = `/nodes/${i}/extensions/${EXT}`;
+    if (x?.visible !== undefined && carries(i)) sink(`${xat}/visible`, reads(x.visible));
+    if (x?.model_visible !== undefined && skinned(i, x)) sink(`${xat}/model_visible`, reads(x.model_visible));
+    if (x?.model !== undefined && underJoint(i)) for (const [k, v] of Object.entries(isObj(x.values) ? x.values : {})) sink(`${xat}/values/${k}`, reads(v));
+    if (x?.blend !== undefined) sink(`${xat}/blend`, reads(x.blend)); // draft f28: weights are baked
+  });
+  (Array.isArray(r.skins) ? r.skins : []).forEach((sk, k) => { if (sk?.blend !== undefined) sink(`/extensions/${EXT}/skins/${k}/blend`, reads(sk.blend)); });
+  return out;
+}
+
+// Draft f24 (D-118): a placed document's shown shapes' axis-aligned bounds in the placing node's frame, as the names
+// its children see; all 0 when it shows none.
+function modelBounds(sub) {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity], geo = new Map();
+  for (const { mesh: mi, matrix: m } of sub.instances) {
+    if (!geo.has(mi)) geo.set(mi, geometry(sub.meshes[mi]).positions);
+    const p = geo.get(mi);
+    for (let v = 0; v < p.length; v += 3) for (let a = 0; a < 3; a++) {
+      const w = m[a] * p[v] + m[4 + a] * p[v + 1] + m[8 + a] * p[v + 2] + m[12 + a];
+      if (w < lo[a]) lo[a] = w;
+      if (w > hi[a]) hi[a] = w;
+    }
+  }
+  const f = (x) => (Number.isFinite(x) ? x : 0);
+  return Object.fromEntries(['x', 'y', 'z'].flatMap((a, k) => [[`model_${a}0`, f(lo[k])], [`model_${a}1`, f(hi[k])]]));
 }
 
 // A texture of a stripped document as { texture, image, sampler }, for `lift`.
@@ -456,8 +749,9 @@ function node(n, meshCount, scope, at) {
   const xat = `${at}/extensions/${EXT}`;
   const x = n.extensions?.[EXT] ?? {};
   need(isObj(x), xat, 'must be an object');
-  only(x, ['name', 'mesh', 'translation', 'rotation', 'euler', 'scale', 'repeat', 'model', 'values', 'on', 'light'], xat);
+  only(x, ['name', 'mesh', 'translation', 'rotation', 'euler', 'scale', 'repeat', 'model', 'values', 'on', 'light', 'visible', 'model_visible', 'blend', 'blend_joints', 'role'], xat);
   need(x.values === undefined || x.model !== undefined, `${xat}/values`, 'needs model');
+  need(x.model_visible === undefined || x.model !== undefined, `${xat}/model_visible`, 'needs model');
   need(x.rotation === undefined || x.euler === undefined, `${xat}/euler`, 'cannot stand next to rotation');
   if (x.mesh !== undefined) {
     need(Number.isInteger(x.mesh) && x.mesh >= 0 && x.mesh < meshCount, `${xat}/mesh`, `must be a recipe mesh index 0..${meshCount - 1}`);
@@ -492,7 +786,10 @@ function node(n, meshCount, scope, at) {
     name = x.name.replace(/\{([^{}]*)\}/g, (_, e) => fmt(num(e, scope, `${xat}/name`)));
     need(name !== '' && !/[{}]/.test(name), `${xat}/name`, 'must give a non-empty name without unmatched { or }');
   }
-  return { name, mesh: x.mesh, translation, rotation, scale, matrix: n.matrix ?? compose(translation, rotation, scale), children, jig: x };
+  // Draft f24 (D-116, D-118): 0 hides the node and its subtree (KHR_node_visibility); model_visible the placed model alone.
+  const visible = x.visible === undefined || num(x.visible, scope, `${xat}/visible`) !== 0;
+  const modelVisible = x.model_visible === undefined || num(x.model_visible, scope, `${xat}/model_visible`) !== 0;
+  return { name, mesh: x.mesh, translation, rotation, scale, matrix: n.matrix ?? compose(translation, rotation, scale), children, jig: x, visible, modelVisible };
 }
 
 // Euler angles in degrees about glTF's (Y-up) axes: x, then y, then z, each about the fixed axes (matrix Rz·Ry·Rx), as a
@@ -504,8 +801,8 @@ export function eulerQuat(deg) {
 
 function mesh(m, scope, at, materialCount) {
   need(isObj(m), at, 'must be an object');
-  only(m, ['box', 'loft', 'extrude', 'lathe', 'material', 'uv'], at);
-  need(Object.keys(m).filter((k) => !k.startsWith('//') && k !== 'material' && k !== 'uv').length === 1, at, 'must have one shape: box, loft, extrude or lathe');
+  only(m, ['box', 'loft', 'extrude', 'lathe', 'text', 'material', 'uv'], at);
+  need(Object.keys(m).filter((k) => !k.startsWith('//') && k !== 'material' && k !== 'uv').length === 1, at, 'must have one shape: box, loft, extrude, lathe or text');
   if (m.uv !== undefined) { // draft f11 (D-80): texture coordinates as fractions of the shape, or in meters
     need(UV.includes(m.uv), `${at}/uv`, `must be one of ${UV.map((u) => `"${u}"`).join(', ')}`);
     return { ...mesh({ ...m, uv: undefined }, scope, at, materialCount), uv: m.uv };
@@ -517,6 +814,7 @@ function mesh(m, scope, at, materialCount) {
   if (m.loft !== undefined) return loft(m.loft, scope, `${at}/loft`);
   if (m.extrude !== undefined) return extrude(m.extrude, scope, `${at}/extrude`);
   if (m.lathe !== undefined) return lathe(m.lathe, scope, `${at}/lathe`);
+  if (m.text !== undefined) return text(m.text, scope, `${at}/text`);
   const b = m.box;
   at += '/box';
   need(isObj(b), at, 'must be an object');
@@ -531,10 +829,44 @@ function mesh(m, scope, at, materialCount) {
 
 // --- Bake (D-11, D-14..D-17, D-23) ---
 
-const OWNED = ['meshes', 'accessors', 'bufferViews', 'buffers', 'nodes', 'materials', 'skins', 'images', 'samplers', 'textures'];
+const OWNED = ['meshes', 'accessors', 'bufferViews', 'buffers', 'nodes', 'materials', 'skins', 'images', 'samplers', 'textures', 'animations'];
 const KHR_TT = 'KHR_texture_transform';
 const KHR_VARIANTS = 'KHR_materials_variants';
+const KHR_AP = 'KHR_animation_pointer';
+// Draft f31 (D-155): what a clip may change in a baked glTF, key -> value with glTF's defaults. Keys: "translation 3"
+// (node 3), "pointer /materials/0/..." (a KHR_animation_pointer target), "?<what>" (a change no channel is written for).
+function animatable(g, at) {
+  const m = new Map(), lights = g.extensions?.KHR_lights_punctual?.lights ?? [];
+  m.set('?the number of nodes, materials or lights', [g.nodes?.length, g.materials?.length, lights.length]);
+  (g.nodes ?? []).forEach((n, i) => {
+    m.set(`translation ${i}`, n.translation ?? [0, 0, 0]); m.set(`rotation ${i}`, n.rotation ?? [0, 0, 0, 1]); m.set(`scale ${i}`, n.scale ?? [1, 1, 1]);
+    m.set(`pointer /nodes/${i}/extensions/${KHR_NV}/visible`, n.extensions?.[KHR_NV]?.visible ?? true);
+    m.set(`?a node's mesh or children (node ${i})`, [n.mesh, n.children, n.skin]);
+  });
+  (g.materials ?? []).forEach((mt, i) => {
+    const pbr = mt.pbrMetallicRoughness ?? {}, at = `/materials/${i}`;
+    m.set(`pointer ${at}/pbrMetallicRoughness/baseColorFactor`, pbr.baseColorFactor ?? [1, 1, 1, 1]);
+    m.set(`pointer ${at}/pbrMetallicRoughness/metallicFactor`, pbr.metallicFactor ?? 1);
+    m.set(`pointer ${at}/pbrMetallicRoughness/roughnessFactor`, pbr.roughnessFactor ?? 1);
+    m.set(`pointer ${at}/emissiveFactor`, mt.emissiveFactor ?? [0, 0, 0]);
+    m.set(`?material ${i}'s extensions or texture transforms (emissive strength, transmission, ior)`, JSON.stringify([mt.extensions, pbr.baseColorTexture, pbr.metallicRoughnessTexture, mt.normalTexture, mt.occlusionTexture, mt.emissiveTexture]));
+  });
+  lights.forEach((l, i) => {
+    m.set(`pointer /extensions/KHR_lights_punctual/lights/${i}/color`, l.color ?? [1, 1, 1]);
+    m.set(`pointer /extensions/KHR_lights_punctual/lights/${i}/intensity`, l.intensity ?? 1);
+    m.set(`?light ${i}'s range or cone`, JSON.stringify([l.range, l.spot]));
+  });
+  return m;
+}
+const VRMC = 'VRMC_vrm', VRM_LICENSE = 'https://vrm.dev/licenses/1.0/';
+// VRM 1.0 humanoid bones (draft f30, D-149); the first 15 are required.
+const VRM_REQUIRED = ['hips', 'spine', 'head', 'leftUpperLeg', 'leftLowerLeg', 'leftFoot', 'rightUpperLeg', 'rightLowerLeg', 'rightFoot',
+  'leftUpperArm', 'leftLowerArm', 'leftHand', 'rightUpperArm', 'rightLowerArm', 'rightHand'];
+const VRM_BONES = [...VRM_REQUIRED, 'chest', 'upperChest', 'neck', 'leftEye', 'rightEye', 'jaw', 'leftToes', 'rightToes', 'leftShoulder', 'rightShoulder',
+  ...['left', 'right'].flatMap((s) => [`${s}ThumbMetacarpal`, `${s}ThumbProximal`, `${s}ThumbDistal`,
+    ...['Index', 'Middle', 'Ring', 'Little'].flatMap((f) => [`${s}${f}Proximal`, `${s}${f}Intermediate`, `${s}${f}Distal`])])];
 const KHR_LIGHTS = 'KHR_lights_punctual';
+const KHR_NV = 'KHR_node_visibility';
 const KHR_ES = 'KHR_materials_emissive_strength';
 // Recipe slots kept in a material extension: [extension, default]; the bake writes the extension only off the default.
 const EXT_SLOTS = { emissiveStrength: [KHR_ES, 1], transmissionFactor: ['KHR_materials_transmission', 0], ior: ['KHR_materials_ior', 1.5] };
@@ -553,6 +885,11 @@ export function strip(doc) {
     need(late < 0, `/${k}/${late}`, 'baked items must come after all other items (D-17)');
     d[k] = d[k].slice(0, first);
     if (!d[k].length) delete d[k];
+  }
+  if (d.extensions?.[EXT]?.clips !== undefined && Array.isArray(d.extensionsUsed)) d.extensionsUsed = d.extensionsUsed.filter((e) => e !== KHR_AP); // draft f31: cache of the clips
+  if (d.extensions?.[EXT]?.character !== undefined && d.extensions[VRMC] !== undefined) { // VRMC_vrm comes from the character (draft f30)
+    delete d.extensions[VRMC];
+    if (Array.isArray(d.extensionsUsed)) d.extensionsUsed = d.extensionsUsed.filter((e) => e !== VRMC);
   }
   if (d.extensions?.[EXT]?.sets !== undefined && d.extensions[KHR_VARIANTS] !== undefined) { // variants come from the sets
     delete d.extensions[KHR_VARIANTS];
@@ -589,7 +926,9 @@ export function strip(doc) {
     const x = n?.extensions?.[EXT];
     if (isObj(x)) for (const k of ['name', 'mesh', 'translation', 'rotation', 'scale']) if (twin(x, k) !== undefined) delete n[k];
     if (x?.light !== undefined && isObj(n.extensions)) delete n.extensions[KHR_LIGHTS]; // its twin (D-113)
+    if (x?.visible !== undefined && isObj(n.extensions)) delete n.extensions[KHR_NV]; // its twin (D-130)
   }
+  if (Array.isArray(d.extensionsUsed) && !(d.nodes ?? []).some((n) => n?.extensions?.[KHR_NV])) d.extensionsUsed = d.extensionsUsed.filter((e) => e !== KHR_NV);
   const lx = d.extensions?.[KHR_LIGHTS];
   if (Array.isArray(lx?.lights)) { // the lights of placed documents (D-113)
     lx.lights = lx.lights.filter((l) => !isBaked(l));
@@ -637,14 +976,15 @@ export function hoist(doc) {
 // separate file (D-23). The same document and values give the same bytes (D-15).
 // `set` names a set to bake with (its values under `values`) and records it as baked_set; null drops baked_set;
 // left out, baked_set stays as it is.
-export function bake(doc, values = {}, { uri, set, files } = {}) {
+export function bake(doc, values = {}, { uri, set, files, quick = false } = {}) {
   const d = strip(hoist(doc));
   const r = d.extensions?.[EXT];
   if (typeof set === 'string') {
     need(isObj(r?.sets?.[set]), `/extensions/${EXT}/sets`, `has no set named "${set}"`);
     values = { ...r.sets[set], ...values };
   }
-  const out = read(d, values, { files });
+  const out = read(d, values, { files, rest: quick }); // quick (draft f31): a clip key, no shapes and no bind pose
+  const shapeGeo = quick ? () => NO_GEOMETRY : geometry;
   d.asset.generator = `JIG ${VERSION} reference baker`;
   r.baked_values = Object.fromEntries(Object.entries(out.params).map(([k, p]) => [k, p.value]));
   if (set !== undefined) { delete r.baked_set; if (set !== null) r.baked_set = set; }
@@ -693,12 +1033,15 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
     return add('materials', mat);
   };
   const matIndex = (m) => (m.placed === undefined ? m.material : (placedAt[m.placed] ??= placedMaterial(m.placed)));
-  // Only meshes a shown node draws unskinned are baked, in recipe order; meshAt maps recipe mesh to core mesh.
-  const used = new Set(out.instances.filter((x) => !x.rec.bound).map((x) => x.mesh)), meshAt = {};
+  // Only meshes a drawn node draws unskinned are baked, hidden ones too (D-130), in recipe order; meshAt maps recipe
+  // mesh to core mesh. A hidden shape bound to a joint is left out of its skin's mesh; its visible is bake (D-134).
+  const drawn = [];
+  (function all(recs) { for (const rec of recs) if (rec.drawn) { drawn.push(rec); all(rec.kids); } })(out.tree);
+  const used = new Set(drawn.filter((rec) => rec.mesh !== undefined && !rec.bound).map((rec) => rec.mesh)), meshAt = {};
   for (const [mi, m] of out.meshes.entries()) {
     if (!used.has(mi)) continue;
     meshAt[mi] = base.meshes + Object.keys(meshAt).length;
-    const { positions, normals, uvs, indices: all } = geometry(m);
+    const { positions, normals, uvs, indices: all } = shapeGeo(m);
     const short = positions.length / 3 <= 65535; // glTF reserves 65535 in 16-bit indices
     const indices = short ? Uint16Array.from(all) : all;
     const min = [0, 1, 2].map((a) => Math.min(...positions.filter((_, i) => i % 3 === a)));
@@ -720,22 +1063,24 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
   // a placed document (draft f10). A shape bound to a joint is drawn by its skin's mesh, not by its node.
   const nodeOf = new Map();
   const copyOf = (rec) => {
-    const kids = rec.kids.filter((r) => r.shown).map(copyOf), n = rec.node, b = {};
+    const kids = rec.kids.filter((r) => r.drawn).map(copyOf), n = rec.node, b = {};
     if (rec.name !== undefined) b.name = rec.name;
     if (rec.mesh !== undefined && !rec.bound) b.mesh = meshAt[rec.mesh];
     if (rec.light !== undefined) b.extensions = { [KHR_LIGHTS]: { light: rec.light } };
+    if (rec.hidden) b.extensions = { ...b.extensions, [KHR_NV]: { visible: false } };
     for (const [k, id] of [['translation', '0,0,0'], ['rotation', '0,0,0,1'], ['scale', '1,1,1']]) if (String(n[k]) !== id) b[k] = n[k];
     if (kids.length) b.children = kids;
     const i = add('nodes', b);
     nodeOf.set(rec, i);
     return i;
   };
-  const bound = new Set(out.instances.filter((x) => !x.model && x.rec.bound).map((x) => x.node));
+  const bound = new Set(drawn.filter((rec) => !rec.foreign && rec.mesh !== undefined && rec.bound).map((rec) => rec.i));
   for (const [i, n] of out.nodes.entries()) {
     if (!n || n.repeated) continue;
     if (n.mesh !== undefined && !bound.has(i)) d.nodes[i].mesh = meshAt[n.mesh];
     for (const k of ['name', 'translation', 'rotation', 'scale']) if (twin(n.jig, k) !== undefined) d.nodes[i][k] = n[k];
     if (n.jig.light !== undefined) d.nodes[i].extensions[KHR_LIGHTS] = { light: n.jig.light };
+    if (!n.visible) d.nodes[i].extensions[KHR_NV] = { visible: false }; // D-130: the twin of visible
   }
   // Draft f23 (D-113): placed documents' lights join the document's own, marked baked.
   if (out.lights.length) {
@@ -745,11 +1090,12 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
   }
   const place = (recs) => recs.forEach((rec) => {
     if (!rec.rep && !rec.foreign) { nodeOf.set(rec, rec.i); return place(rec.kids); }
-    if (rec.shown) (d.nodes[nodeOf.get(rec.parent) ?? rec.i].children ??= []).push(copyOf(rec));
+    if (rec.drawn) (d.nodes[nodeOf.get(rec.parent) ?? rec.i].children ??= []).push(copyOf(rec));
   });
   const parents = (recs, parent) => recs.forEach((rec) => { if (rec.foreign && !parent?.foreign) rec.parent = parent; parents(rec.kids, rec); });
   parents(out.tree, null);
   place(out.tree);
+  if (drawn.some((rec) => rec.hidden) && !d.extensionsUsed.includes(KHR_NV)) d.extensionsUsed.push(KHR_NV);
 
   // Skins (draft f10, D-77): glTF skins with the joints' baked nodes and inverse bind matrices at this pose. The
   // shapes bound to a skin are one baked mesh, a primitive per shape, in model space at the bind pose, each vertex
@@ -758,12 +1104,12 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
   out.skins.forEach((joints, s) => {
     if (!joints.length) return;
     const shapes = out.instances.filter((x) => x.rec.bound?.skin === s);
-    const ibm = new Float32Array(joints.flatMap((j) => invert(j.world)));
+    const ibm = new Float32Array(joints.flatMap((j, k) => invert(out.restJoints?.[s][k] ?? j.world))); // at the bind pose (D-146)
     const inverseBindMatrices = add('accessors', { bufferView: view(ibm), componentType: 5126, count: joints.length, type: 'MAT4' });
     const skin = add('skins', { inverseBindMatrices, joints: joints.map((j) => nodeOf.get(j)) });
     if (!shapes.length) return;
     const primitives = shapes.map((x) => {
-      const g = (geoms[x.mesh] ??= geometry(out.meshes[x.mesh])), n = g.positions.length / 3, m = x.matrix;
+      const g = x.restGeo ?? (geoms[x.mesh] ??= shapeGeo(out.meshes[x.mesh])), n = g.positions.length / 3, m = x.restGeo ? IDENTITY : x.rest ?? x.matrix;
       const nm = inverse3([0, 1, 2].map((rw) => [0, 1, 2].map((c) => m[c * 4 + rw]))) ?? [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
       const positions = new Float32Array(3 * n), normals = new Float32Array(3 * n);
       for (let v = 0; v < n; v++) {
@@ -782,8 +1128,8 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
       const acc = (array, componentType, type, extra = {}) => add('accessors', { bufferView: view(array, 34962), componentType, count: n, type, ...extra });
       const attributes = { POSITION: acc(positions, 5126, 'VEC3', { min, max }), NORMAL: acc(normals, 5126, 'VEC3'),
         TEXCOORD_0: acc(g.uvs, 5126, 'VEC2'),
-        JOINTS_0: acc(new Uint16Array(4 * n).map((_, i) => (i % 4 ? 0 : joint)), 5123, 'VEC4'),
-        WEIGHTS_0: acc(new Float32Array(4 * n).map((_, i) => (i % 4 ? 0 : 1)), 5126, 'VEC4') };
+        JOINTS_0: acc(x.weights?.joints ?? new Uint16Array(4 * n).map((_, i) => (i % 4 ? 0 : joint)), 5123, 'VEC4'),
+        WEIGHTS_0: acc(x.weights?.weights ?? new Float32Array(4 * n).map((_, i) => (i % 4 ? 0 : 1)), 5126, 'VEC4') };
       const idx = add('accessors', { bufferView: view(indices, 34963), componentType: short ? 5123 : 5125, count: indices.length, type: 'SCALAR' });
       const mat = matIndex(out.meshes[x.mesh]), own = out.meshes[x.mesh].material;
       return { attributes, indices: idx, ...(mat !== undefined && { material: mat }),
@@ -792,6 +1138,48 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
     const mesh = add('meshes', { primitives });
     d.scenes[d.scene].nodes.push(add('nodes', { name: `skin ${s}`, mesh, skin }));
   });
+
+  // Draft f30 (D-151): a vrm1_humanoid character as VRM 1.0, its humanoid bones the joint nodes.
+  if (out.character?.scheme === 'vrm1_humanoid') {
+    d.extensions[VRMC] = { specVersion: '1.0', meta: structuredClone(out.character.meta),
+      humanoid: { humanBones: Object.fromEntries(out.character.roles.toSorted((a, b) => VRM_BONES.indexOf(a.role) - VRM_BONES.indexOf(b.role)).map(({ role, node: i }) => [role, { node: i }])) } };
+    if (!d.extensionsUsed.includes(VRMC)) d.extensionsUsed.push(VRMC);
+  }
+
+  // Draft f31 (D-153, D-155): each clip as a glTF animation. The document is baked quickly at every key; a node
+  // whose translation, rotation or scale changes gets a LINEAR channel, and a material colour or factor, a light's
+  // colour or intensity, or a node's visibility that changes gets a KHR_animation_pointer channel.
+  if (!quick) for (const clip of out.clips) {
+    const cat = `/extensions/${EXT}/clips/${clip.name}`;
+    const states = clip.keys.map((k) => animatable(bake(doc, { ...r.baked_values, ...k }, { set: null, files, quick: true }).gltf, cat));
+    const s0 = states[0], samplers = [], channels = [];
+    const input = add('accessors', { bufferView: view(new Float32Array(clip.times)), componentType: 5126, count: clip.times.length, type: 'SCALAR', min: [0], max: [clip.length] });
+    for (const [key, v0] of s0) {
+      const series = states.map((st) => st.get(key));
+      if (series.every((v) => JSON.stringify(v) === JSON.stringify(v0))) continue;
+      need(!key.startsWith('?'), cat, `changes ${key.slice(1)}, which no animation channel is written for`);
+      const [kind, path] = key.split(' ');
+      if (kind === 'rotation') for (let i = 1; i < series.length; i++) { // the short way between keys
+        const a = series[i - 1], b = series[i];
+        if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0) series[i] = b.map((c) => -c);
+      }
+      const bool = typeof v0 === 'boolean', size = bool || typeof v0 === 'number' ? 1 : v0.length;
+      const data = bool ? Uint8Array.from(series, (v) => (v ? 1 : 0)) : new Float32Array(series.flat());
+      const output = add('accessors', { bufferView: view(data), componentType: bool ? 5121 : 5126, count: series.length, type: ['SCALAR', 'VEC2', 'VEC3', 'VEC4'][size - 1] });
+      samplers.push({ input, output, interpolation: bool ? 'STEP' : 'LINEAR' });
+      const sampler = samplers.length - 1;
+      if (kind === 'pointer') {
+        channels.push({ sampler, target: { path: 'pointer', extensions: { [KHR_AP]: { pointer: path } } } });
+        const nv = path.match(/^\/nodes\/(\d+)\/extensions\/KHR_node_visibility\/visible$/); // the pointer needs the property there
+        if (nv) { const n = d.nodes[+nv[1]]; n.extensions = { ...n.extensions, [KHR_NV]: { visible: n.extensions?.[KHR_NV]?.visible ?? true } }; }
+      } else channels.push({ sampler, target: { node: +path, path: kind } });
+    }
+    if (!channels.length) continue; // a clip that changes nothing writes no animation
+    add('animations', { name: clip.name, samplers, channels, extras: { loop: clip.loop } });
+    const pointers = channels.map((c) => c.target.extensions?.[KHR_AP]?.pointer).filter(Boolean);
+    if (pointers.length && !d.extensionsUsed.includes(KHR_AP)) d.extensionsUsed.push(KHR_AP);
+    if (pointers.some((q) => q.includes(KHR_NV)) && !d.extensionsUsed.includes(KHR_NV)) d.extensionsUsed.push(KHR_NV);
+  }
 
   const bin = new Uint8Array(offset);
   let at = 0;
@@ -806,11 +1194,15 @@ export function bake(doc, values = {}, { uri, set, files } = {}) {
 // Triangles of a recipe mesh: { positions, normals, uvs, indices } (Float32Array x 3, Uint32Array). uvs are
 // TEXCOORD_0 in glTF's convention (draft f11, D-80): `"uv": "fit"` (default) fractions 0..1 of the shape, "meters"
 // the same layout in meters.
+const NO_GEOMETRY = { positions: new Float32Array(0), normals: new Float32Array(0), uvs: new Float32Array(0), indices: new Uint32Array(0) };
 export function geometry(m) {
   const fit = (m.uv ?? 'fit') === 'fit';
-  if (m.type === 'loft') return loftGeometry(m, fit);
+  if (m.type === 'loft' || m.type === 'lathe') {
+    const { tu, length, ...g } = (m.type === 'loft' ? loftGeometry : latheGeometry)(m, fit);
+    return shell(m.dents ? dent(g, m.dents, tu, length) : g, m.thickness);
+  }
   if (m.type === 'extrude') return extrudeGeometry(m, fit);
-  if (m.type === 'lathe') return latheGeometry(m, fit);
+  if (m.type === 'text') return textGeometry(m, fit);
   const g = m.radius ? roundedBoxGeometry(m.size, m.radius, fit) : boxGeometry(m.size, fit);
   return { ...g, indices: Uint32Array.from(g.indices) };
 }
@@ -820,6 +1212,120 @@ const UV = ['fit', 'meters'];
 function planarUv(pts, fit) {
   const lo = [0, 1].map((a) => Math.min(...pts.map((p) => p[a]))), hi = [0, 1].map((a) => Math.max(...pts.map((p) => p[a])));
   return pts.map(([u, v]) => (fit ? [(u - lo[0]) / (hi[0] - lo[0] || 1), (hi[1] - v) / (hi[1] - lo[1] || 1)] : [u, -v]));
+}
+
+// Draft f24 (D-120): lettering in a built-in single-stroke font. A glyph is its advance width and strokes, polylines on
+// a grid with cap height 6 and the baseline at 0. `ea(cx, cy, rx, ry, from, to)` is an elliptic arc, degrees, ≤ 10° steps.
+const ea = (cx, cy, rx, ry, a0, a1) => {
+  const n = Math.max(1, Math.ceil(Math.abs(a1 - a0) / 10));
+  return Array.from({ length: n + 1 }, (_, k) => { const a = ((a0 + ((a1 - a0) * k) / n) * Math.PI) / 180; return [cx + rx * Math.cos(a), cy + ry * Math.sin(a)]; });
+};
+const GLYPHS = {
+  A: [4, [[0, 0], [2, 6], [4, 0]], [[0.7, 2], [3.3, 2]]],
+  B: [4, [[0, 3], [0, 6], [2.5, 6], ...ea(2.5, 4.5, 1.5, 1.5, 90, -90), [0, 3], [2.5, 3], ...ea(2.5, 1.5, 1.5, 1.5, 90, -90), [0, 0], [0, 3]]],
+  C: [4, ea(2, 3, 2, 3, 45, 315)],
+  D: [4, [[1, 0], [0, 0], [0, 6], [1, 6], ...ea(1, 3, 3, 3, 90, -90)]],
+  E: [4, [[4, 6], [0, 6], [0, 0], [4, 0]], [[0, 3], [3, 3]]],
+  F: [4, [[4, 6], [0, 6], [0, 0]], [[0, 3], [3, 3]]],
+  G: [4, [...ea(2, 3, 2, 3, 45, 360), [2.2, 3]]],
+  H: [4, [[0, 0], [0, 6]], [[4, 0], [4, 6]], [[0, 3], [4, 3]]],
+  I: [0, [[0, 0], [0, 6]]],
+  J: [4, [[4, 6], [4, 2], ...ea(2, 2, 2, 2, 0, -180)]],
+  K: [4, [[0, 0], [0, 6]], [[4, 6], [0, 2]], [[1.4, 3.4], [4, 0]]],
+  L: [3.5, [[0, 6], [0, 0], [3.5, 0]]],
+  M: [5, [[0, 0], [0, 6], [2.5, 1.5], [5, 6], [5, 0]]],
+  N: [4, [[0, 0], [0, 6], [4, 0], [4, 6]]],
+  O: [4, ea(2, 3, 2, 3, 0, 360)],
+  P: [4, [[0, 0], [0, 6], [2.5, 6], ...ea(2.5, 4.5, 1.5, 1.5, 90, -90), [0, 3]]],
+  Q: [4, ea(2, 3, 2, 3, 0, 360), [[2.5, 1.5], [4.2, -0.3]]],
+  R: [4, [[0, 0], [0, 6], [2.5, 6], ...ea(2.5, 4.5, 1.5, 1.5, 90, -90), [0, 3]], [[2, 3], [4, 0]]],
+  S: [4, [...ea(2, 4.5, 2, 1.5, 20, 270), ...ea(2, 1.5, 2, 1.5, 90, -200)]],
+  T: [4, [[0, 6], [4, 6]], [[2, 6], [2, 0]]],
+  U: [4, [[0, 6], [0, 2], ...ea(2, 2, 2, 2, 180, 360), [4, 6]]],
+  V: [4, [[0, 6], [2, 0], [4, 6]]],
+  W: [5, [[0, 6], [1.25, 0], [2.5, 4], [3.75, 0], [5, 6]]],
+  X: [4, [[0, 0], [4, 6]], [[0, 6], [4, 0]]],
+  Y: [4, [[0, 6], [2, 3], [4, 6]], [[2, 3], [2, 0]]],
+  Z: [4, [[0, 6], [4, 6], [0, 0], [4, 0]]],
+  0: [4, ea(2, 3, 2, 3, 0, 360)],
+  1: [4, [[0.8, 4.8], [2, 6], [2, 0]], [[0.8, 0], [3.2, 0]]],
+  2: [4, [...ea(2, 4.5, 2, 1.5, 160, -40), [0, 0], [4, 0]]],
+  3: [4, [...ea(2, 4.5, 2, 1.5, 150, -90), ...ea(2, 1.5, 2, 1.5, 90, -150)]],
+  4: [4, [[3, 0], [3, 6], [0, 1.8], [4, 1.8]]],
+  5: [4, [[3.8, 6], [0.5, 6], [0.3, 3.4], ...ea(2, 1.9, 2, 1.9, 130, -150)]],
+  6: [4, [...ea(2, 3, 2, 3, 50, 180), [0, 1.8]], ea(2, 1.8, 2, 1.8, 0, 360)],
+  7: [4, [[0, 6], [4, 6], [1.5, 0]]],
+  8: [4, ea(2, 4.6, 1.7, 1.4, 0, 360), ea(2, 1.6, 2, 1.6, 0, 360)],
+  9: [4, ea(2, 4.2, 2, 1.8, 0, 360), [[4, 4.2], ...ea(2, 3, 2, 3, 0, -130)]],
+  '.': [0, [[0, 0], [0, 0.01]]],
+  ',': [0.3, [[0.3, 0.3], [0, -0.8]]],
+  ':': [0, [[0, 0], [0, 0.01]], [[0, 3.5], [0, 3.51]]],
+  '-': [2.5, [[0, 3], [2.5, 3]]],
+  "'": [0.2, [[0.2, 6], [0, 4.6]]],
+  '&': [4, [[4, 0], [1, 4.3], [0.8, 5.2], [1.4, 6], [2.3, 6], [2.8, 5.3], [2.6, 4.5], [0.6, 2.8], [0.1, 1.6], [0.5, 0.4], [1.6, 0], [2.8, 0.4], [3.9, 2.2]]],
+  ' ': [2],
+};
+function text(t, scope, at) {
+  need(isObj(t), at, 'must be an object');
+  only(t, ['text', 'size', 'depth', 'stroke'], at);
+  need(typeof t.text === 'string', `${at}/text`, 'must be a string');
+  // {expression} is replaced by its value, as in a node's name template (D-79); letters are drawn as capitals.
+  const str = t.text.replace(/\{([^{}]*)\}/g, (_, e) => fmt(num(e, scope, `${at}/text`))).toUpperCase();
+  need(/\S/.test(str), `${at}/text`, 'must hold a character to draw');
+  for (const ch of str) need(Object.hasOwn(GLYPHS, ch), `${at}/text`, `"${ch}" is not in the font (A-Z, 0-9, space and . , : - ' &)`);
+  const size = num(t.size, scope, `${at}/size`), depth = num(t.depth, scope, `${at}/depth`);
+  const stroke = t.stroke === undefined ? size / 8 : num(t.stroke, scope, `${at}/stroke`);
+  need(size > 0, `${at}/size`, `must be > 0, is ${size}`);
+  need(depth > 0, `${at}/depth`, `must be > 0, is ${depth}`);
+  need(stroke > 0 && stroke <= size / 2, `${at}/stroke`, `must be > 0 and at most size / 2, is ${stroke}`);
+  return { type: 'text', text: str, size, depth, stroke };
+}
+// Strokes laid out left to right and centred on the origin; each segment a bar and each point a disc, `stroke` wide and
+// `depth` deep along z, so strokes have round ends and joints.
+function textGeometry(m, fit = true) {
+  const u = m.size / 6, gap = 1.2 * u + m.stroke, strokes = [];
+  let x = 0;
+  for (const ch of m.text) {
+    const [w, ...ss] = GLYPHS[ch];
+    for (const st of ss) strokes.push(st.map(([a, b]) => [x + a * u, b * u]));
+    x += w * u + gap;
+  }
+  const r = m.stroke / 2, cx = (x - gap) / 2, cy = 3 * u, z = m.depth / 2;
+  const positions = [], normals = [], indices = [];
+  const unit2 = (o) => { const d = Math.hypot(o[0], o[1]); return [o[0] / d, o[1] / d, 0]; };
+  const prism = (pts, centre) => { // a convex polygon, counter-clockwise seen from +z, as a closed prism; round sides when centre is given
+    const n = pts.length;
+    for (const s of [1, -1]) {
+      const b = positions.length / 3;
+      for (const [a, c] of pts) { positions.push(a - cx, c - cy, s * z); normals.push(0, 0, s); }
+      for (let k = 1; k < n - 1; k++) indices.push(...(s > 0 ? [b, b + k, b + k + 1] : [b, b + k + 1, b + k]));
+    }
+    for (let k = 0; k < n; k++) {
+      const p = pts[k], q = pts[(k + 1) % n], b = positions.length / 3, flat = unit2([q[1] - p[1], p[0] - q[0]]);
+      const np = centre ? unit2([p[0] - centre[0], p[1] - centre[1]]) : flat, nq = centre ? unit2([q[0] - centre[0], q[1] - centre[1]]) : flat;
+      for (const [[a, c], nn, s] of [[p, np, 1], [p, np, -1], [q, nq, -1], [q, nq, 1]]) { positions.push(a - cx, c - cy, s * z); normals.push(...nn); }
+      indices.push(b, b + 1, b + 2, b, b + 2, b + 3);
+    }
+  };
+  const seen = new Set();
+  for (const st of strokes) {
+    for (const [a, c] of st) {
+      const key = `${a.toFixed(6)},${c.toFixed(6)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      prism(Array.from({ length: 12 }, (_, k) => [a + r * Math.cos((k * Math.PI) / 6), c + r * Math.sin((k * Math.PI) / 6)]), [a, c]);
+    }
+    for (let k = 0; k + 1 < st.length; k++) {
+      const p = st[k], q = st[k + 1], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (d < 1e-9) continue;
+      const o = [((p[1] - q[1]) / d) * r, ((q[0] - p[0]) / d) * r]; // left of p→q
+      prism([[p[0] - o[0], p[1] - o[1]], [q[0] - o[0], q[1] - o[1]], [q[0] + o[0], q[1] + o[1]], [p[0] + o[0], p[1] + o[1]]], null);
+    }
+  }
+  // uv projected on the xy plane, over the text's bounds (fit) or in meters (D-80)
+  const w = x - gap + m.stroke, h = 6 * u + m.stroke, uvs = [];
+  for (let k = 0; k < positions.length; k += 3) uvs.push(fit ? (positions[k] + w / 2) / w : positions[k], fit ? (h / 2 - positions[k + 1]) / h : -positions[k + 1]);
+  return { positions: Float32Array.from(positions), normals: Float32Array.from(normals), uvs: Float32Array.from(uvs), indices: Uint32Array.from(indices) };
 }
 
 // Box centred on the origin: 6 faces x 4 corners, outward normals, counter-clockwise seen from outside.
@@ -915,8 +1421,14 @@ export function mul(a, b) {
 // triangles for other shapes.
 function lowestOnAxis(meshes, instances) {
   let low = Infinity;
-  for (const { mesh: mi, matrix: m } of instances) {
-    if (meshes[mi].type !== 'box' || meshes[mi].radius) { low = Math.min(low, lowestOnTriangles(geometry(meshes[mi]), m)); continue; }
+  const geo = new Map(); // copies share their mesh's geometry
+  for (const { mesh: mi, matrix: m, deformed } of instances) {
+    if (deformed) { low = Math.min(low, lowestOnTriangles(deformed, m)); continue; } // draft f28: a blended shape
+    if (meshes[mi].type !== 'box' || meshes[mi].radius) {
+      if (!geo.has(mi)) geo.set(mi, geometry(meshes[mi]));
+      low = Math.min(low, lowestOnTriangles(geo.get(mi), m));
+      continue;
+    }
     // Local point = A⁻¹(world − t), linear in y along the line: a + y·d. A is the matrix's 3x3 part.
     const inv = inverse3([0, 1, 2].map((r) => [0, 1, 2].map((c) => m[c * 4 + r])));
     if (!inv) continue; // a flat box has no volume to stand on
@@ -976,7 +1488,7 @@ function inverse3([[a, b, c], [d, e, f], [g, h, i]]) {
 
 function loft(l, scope, at) {
   need(isObj(l), at, 'must be an object');
-  only(l, ['path', 'sections', 'sides', 'steps', 'blend', 'caps', 'cap_depth', 'closed'], at);
+  only(l, ['path', 'sections', 'sides', 'steps', 'blend', 'caps', 'cap_depth', 'closed', 'dents', 'thickness'], at);
   need(l.closed === undefined || typeof l.closed === 'boolean', `${at}/closed`, 'must be true or false');
   const closed = l.closed === true;
   need(!closed || l.caps === undefined, `${at}/caps`, 'a closed loft has no ends to cap (D-93)');
@@ -1015,7 +1527,8 @@ function loft(l, scope, at) {
   const capDepth = l.cap_depth === undefined ? 1 : num(l.cap_depth, scope, `${at}/cap_depth`);
   need(capDepth > 0, `${at}/cap_depth`, `must be > 0, is ${capDepth}`);
   const m = { type: 'loft', path, sections, sides: int('sides', 24, 3, 256), steps: int('steps', 48, 1, 1024), blend, ...(caps && { caps }), ...(dome && { capDepth }),
-    ...(radius && { radius }), ...(closed && { closed }) };
+    ...(radius && { radius }), ...(closed && { closed }), ...dentsOf(l, scope, at, length) };
+  need(!m.thickness || capKind(caps, 'start') === 'none' || capKind(caps, 'end') === 'none', `${at}/thickness`, 'needs an open end (caps "none")');
   // The caps are the first and last section's rings as loftGeometry builds them; triangulate them here to name the section.
   const sorted = [...sections].sort((a, b) => a.t - b.t), spans = edgeSpans(sorted, m.sides);
   for (const [s, end] of [[sorted[0], 'start'], [sorted[sorted.length - 1], 'end']]) {
@@ -1025,6 +1538,37 @@ function loft(l, scope, at) {
     try { triangulate([area(ring) > 0 ? ring : ring.reverse()]); } catch { need(false, `${at}/sections/${sections.indexOf(s)}/points`, 'outline crosses itself'); }
   }
   return m;
+}
+
+// Draft f27 (D-139..D-142): a loft's or lathe's `dents` and `thickness`, as { dents, thickness } when given. A dent
+// sits at (t or d, u) as `on` does; d is metres along the curve (a lathe: its profile) of the given length. An item's
+// `repeat` is a node's (§6.1): one dent per copy, in that copy's scope.
+const FALLOFF = ['smooth', 'sphere', 'linear'];
+function dentsOf(l, scope, at, length) {
+  const out = {};
+  if (l.thickness !== undefined) {
+    out.thickness = num(l.thickness, scope, `${at}/thickness`);
+    need(out.thickness > 0, `${at}/thickness`, `must be > 0, is ${out.thickness}`);
+  }
+  if (l.dents === undefined) return out;
+  out.dents = list(l.dents, `${at}/dents`).flatMap((d, i) => {
+    const dat = `${at}/dents/${i}`;
+    need(isObj(d), dat, 'must be an object');
+    only(d, ['t', 'd', 'u', 'radius', 'depth', 'falloff', 'repeat'], dat);
+    need((d.t === undefined) !== (d.d === undefined), dat, 'needs t or d, not both');
+    need(d.falloff === undefined || FALLOFF.includes(d.falloff), `${dat}/falloff`, `must be one of ${FALLOFF.map((x) => `"${x}"`).join(', ')}`);
+    const rep = d.repeat === undefined ? null : repeat(d.repeat, scope, `${dat}/repeat`);
+    return Array.from({ length: rep ? rep.count : 1 }, (_, k) => {
+      const s = rep ? repeatVars(rep.vars, { ...scope, [rep.index]: k, ...rep.rows?.[k] }, `${dat}/repeat/vars`) : scope;
+      let t;
+      if (d.t !== undefined) { t = num(d.t, s, `${dat}/t`); need(t >= 0 && t <= 1, `${dat}/t`, `must be in 0..1, is ${t}`); }
+      else { const dd = num(d.d, s, `${dat}/d`); t = Math.min(1, Math.max(0, (dd < 0 ? length + dd : dd) / length)); }
+      const r = Array.isArray(d.radius) ? vec(d.radius, 2, s, `${dat}/radius`) : [num(d.radius, s, `${dat}/radius`)];
+      r.forEach((x, q) => need(x > 0, `${dat}/radius${r.length > 1 ? `/${q}` : ''}`, `must be > 0, is ${x}`));
+      return { t, u: num(d.u, s, `${dat}/u`), radius: [r[0], r[r.length - 1]], depth: num(d.depth, s, `${dat}/depth`), falloff: d.falloff ?? 'smooth' };
+    });
+  });
+  return out;
 }
 
 // Draft f13 (D-90): which ends get a flat cap; an open end shows the inside only through a doubleSided material.
@@ -1348,7 +1892,7 @@ function extrudeGeometry(m, fit = true) {
 
 function lathe(l, scope, at) {
   need(isObj(l), at, 'must be an object');
-  only(l, ['profile', 'sides', 'caps'], at);
+  only(l, ['profile', 'sides', 'caps', 'dents', 'thickness'], at);
   const profile = pointList(l.profile, scope, `${at}/profile`);
   need(profile.length >= 2, `${at}/profile`, 'needs at least 2 points');
   profile.forEach((p, j) => {
@@ -1361,7 +1905,10 @@ function lathe(l, scope, at) {
   // Rounded, then clamped, as a loft's (D-37).
   const sides = Math.min(256, Math.max(3, Math.round(l.sides === undefined ? 24 : num(l.sides, scope, `${at}/sides`))));
   const caps = capsOf(l.caps, `${at}/caps`);
-  return { type: 'lathe', profile, sides, ...(caps && { caps }) };
+  const m = { type: 'lathe', profile, sides, ...(caps && { caps }), ...dentsOf(l, scope, at, poly.reduce((a, q, i) => (i ? a + dist(q, poly[i - 1]) : 0), 0)) };
+  const open = (i, end) => poly[i][0] > 1e-9 && capKind(caps, end) === 'none';
+  need(!m.thickness || open(0, 'start') || open(poly.length - 1, 'end'), `${at}/thickness`, 'needs an open end (r > 0, caps "none")');
+  return m;
 }
 
 // The open profile as a polyline (the closing edge left out), the polyline indices of its inner corners, and
@@ -1380,7 +1927,7 @@ function latheGeometry(m, fit = true) {
   const along = [0];
   for (let i = 1; i < poly.length; i++) along.push(along[i - 1] + dist(poly[i], poly[i - 1]));
   const L = along[along.length - 1], ang = (j) => (2 * Math.PI * j) / n;
-  const positions = [], normals = [], uvs = [], indices = [];
+  const positions = [], normals = [], uvs = [], indices = [], tu = [];
   const cuts = [0, ...hard, poly.length - 1];
   for (let c = 0; c + 1 < cuts.length; c++) {
     const s = cuts[c], e = cuts[c + 1], first = positions.length / 3;
@@ -1390,6 +1937,7 @@ function latheGeometry(m, fit = true) {
         const [r, y] = poly[i], a = ang(j), cs = Math.cos(a), sn = Math.sin(a);
         positions.push(r * cs, y, -r * sn); normals.push(nr * cs, ny, -nr * sn);
         uvs.push(fit ? j / n : r * a, fit ? along[i] / L : along[i]);
+        tu.push([along[i] / L, j / n, 2 * Math.PI * r]);
       }
     }
     for (let i = 0; i < e - s; i++) for (let j = 0; j < n; j++) {
@@ -1402,11 +1950,84 @@ function latheGeometry(m, fit = true) {
     const [r, y] = poly[i];
     if (r < 1e-9 || capKind(m.caps, end) !== 'flat') continue;
     const first = positions.length / 3, ring = Array.from({ length: n }, (_, j) => [r * Math.cos(ang(j)), r * Math.sin(ang(j))]);
-    for (const [u, v] of ring) { positions.push(u, y, -v); normals.push(0, s, 0); }
+    for (const [u, v] of ring) { positions.push(u, y, -v); normals.push(0, s, 0); tu.push(null); }
     uvs.push(...planarUv(ring.map(([u, v]) => [s * u, v]), fit).flat());
     for (let j = 1; j + 1 < n; j++) indices.push(...(s > 0 ? [0, j, j + 1] : [0, j + 1, j]).map((k) => first + k)); // a fan faces +y
   }
-  return { positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uvs), indices: new Uint32Array(indices) };
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uvs), indices: new Uint32Array(indices), tu, length: L };
+}
+
+// Draft f27 (D-140): each dent moves the side's vertices against their undented normal by depth·f(s), s the
+// distance from the dent's centre along the surface (t by `length`, u by ring length, wrapping round) over its radius.
+// A vertex elsewhere at the same place (a cap's rim, the seam copy) moves with it. Normals are then summed from the
+// faces again, kept apart where they were split (corners, cap edges).
+const FALL = { smooth: (s) => (1 - s * s) ** 2, sphere: (s) => Math.sqrt(1 - s * s), linear: (s) => 1 - s };
+const posKey = (p, i) => `${Math.round(p[3 * i] * 1e6)},${Math.round(p[3 * i + 1] * 1e6)},${Math.round(p[3 * i + 2] * 1e6)}`;
+function dent({ positions, normals, uvs, indices }, dents, tu, length) {
+  const N = positions.length / 3, move = new Map(), pos = Float32Array.from(positions);
+  for (let i = 0; i < N; i++) {
+    if (!tu[i]) continue;
+    const [t, u, ring] = tu[i];
+    let d = 0;
+    for (const q of dents) {
+      const du = ((((u - q.u) % 1) + 1.5) % 1) - 0.5, s = Math.hypot(((t - q.t) * length) / q.radius[0], (du * ring) / q.radius[1]);
+      if (s < 1) d += q.depth * FALL[q.falloff](s);
+    }
+    const k = posKey(positions, i);
+    if (d && !move.has(k)) move.set(k, [0, 1, 2].map((a) => -d * normals[3 * i + a]));
+  }
+  for (let i = 0; i < N; i++) { const v = move.get(posKey(positions, i)); if (v) for (let a = 0; a < 3; a++) pos[3 * i + a] += v[a]; }
+  const group = [], sums = new Map(); // a vertex's group: same place, same undented normal
+  for (let i = 0; i < N; i++) group.push(`${posKey(positions, i)}|${[0, 1, 2].map((a) => Math.round(normals[3 * i + a] * 1e3)).join(',')}`);
+  const at = (i) => [pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]];
+  for (let k = 0; k < indices.length; k += 3) {
+    const [a, b, c] = [indices[k], indices[k + 1], indices[k + 2]], f = cross(sub(at(b), at(a)), sub(at(c), at(a)));
+    for (const i of [a, b, c]) { const g = sums.get(group[i]) ?? [0, 0, 0]; sums.set(group[i], g.map((x, q) => x + f[q])); }
+  }
+  const nrm = new Float32Array(3 * N);
+  for (let i = 0; i < N; i++) nrm.set(norm(sums.get(group[i]) ?? [normals[3 * i], normals[3 * i + 1], normals[3 * i + 2]]), 3 * i);
+  return { positions: pos, normals: nrm, uvs, indices };
+}
+
+// Draft f27 (D-142): a wall w thick. The inner surface is every vertex moved inward: where faces meet at a crease (a
+// cap's rim) along the mean of their normals, far enough that each face's wall is w (at most 3w), so the inner floor
+// meets the inner side. A rim of flat quads joins the outer and inner surface along every open edge.
+function shell(g, w) {
+  if (!w) return g;
+  const { positions: P, normals: Nm, uvs, indices: I } = g, N = P.length / 3;
+  const key = Array.from({ length: N }, (_, i) => posKey(P, i)), dirs = new Map();
+  for (let i = 0; i < N; i++) {
+    const n = [Nm[3 * i], Nm[3 * i + 1], Nm[3 * i + 2]], d = dirs.get(key[i]) ?? [];
+    if (!d.some((m) => dot(m, n) > 0.9999)) d.push(n);
+    dirs.set(key[i], d);
+  }
+  const off = new Map();
+  for (const [k, ns] of dirs) {
+    const d = norm(ns.reduce((a, n) => a.map((c, q) => c + n[q]), [0, 0, 0])), c = Math.min(...ns.map((n) => dot(d, n)));
+    off.set(k, scale(d, -Math.min(3 * w, w / Math.max(c, 1e-9))));
+  }
+  const positions = [...P], normals = [...Nm], uv = [...uvs], indices = [...I];
+  for (let i = 0; i < N; i++) {
+    const o = off.get(key[i]);
+    positions.push(P[3 * i] + o[0], P[3 * i + 1] + o[1], P[3 * i + 2] + o[2]);
+    normals.push(-Nm[3 * i], -Nm[3 * i + 1], -Nm[3 * i + 2]); uv.push(uvs[2 * i], uvs[2 * i + 1]);
+  }
+  for (let k = 0; k < I.length; k += 3) indices.push(N + I[k], N + I[k + 2], N + I[k + 1]);
+  // Open edges: an edge between two places used by one triangle only (seam and corner copies share their places).
+  const edges = new Map();
+  for (let k = 0; k < I.length; k += 3) for (let e = 0; e < 3; e++) {
+    const a = I[k + e], b = I[k + ((e + 1) % 3)], id = key[a] < key[b] ? `${key[a]}/${key[b]}` : `${key[b]}/${key[a]}`;
+    const x = edges.get(id);
+    if (x) x.n++; else edges.set(id, { a, b, n: 1 });
+  }
+  const at = (i) => positions.slice(3 * i, 3 * i + 3);
+  for (const { a, b, n } of edges.values()) {
+    if (n !== 1 || key[a] === key[b]) continue;
+    const f = norm(cross(sub(at(a), at(b)), sub(at(N + a), at(b)))), first = positions.length / 3;
+    for (const i of [b, a, N + a, N + b]) { positions.push(...at(i)); normals.push(...f); uv.push(uvs[2 * (i % N)], uvs[2 * (i % N) + 1]); }
+    indices.push(first, first + 1, first + 2, first, first + 2, first + 3);
+  }
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uv), indices: new Uint32Array(indices) };
 }
 
 // Triangles over loops[0] (counter-clockwise) minus the other loops (clockwise), as indices into all loops' points
@@ -1589,10 +2210,12 @@ function loftGeometry(m, fit = true) {
     ...endDome.map((q) => ({ ...q, v: a0 + length + q.arc })),
   ];
   const r0 = startDome.length, r1 = r0 + ts.length - 1; // the rows of the curve's two ends
+  const tu = []; // per side vertex of the curve (not a dome): [t, u, ring length], for dents (D-140)
   rows.forEach(({ ring: rg, round: rd, frame: { p, x, y, z }, along, v: vv, t }) => {
     const ring = [...rg, rg[0]], ru = [...rd, rd[0]], round = [0]; // u as the end ring's, so u stays put up a dome
     for (let j = 1; j < w; j++) round.push(round[j - 1] + dist(ru[j], ru[j - 1]));
     ring.forEach(([u, v], j) => {
+      tu.push(t === undefined ? null : [t, round[j] / round[n], round[n]]);
       positions.push(...[0, 1, 2].map((a) => p[a] + u * x[a] + v * y[a] + along * z[a]));
       uvs.push(fit ? round[j] / round[n] : round[j], fit ? (m.capDepth ? vv / total : t) : vv);
     });
@@ -1623,7 +2246,7 @@ function loftGeometry(m, fit = true) {
     uvs.push(...planarUv(rings[r].map(([u, v]) => [s * u, v]), fit).flat());
     for (let k = 0; k < tris.length; k += 3) indices.push(...(s < 0 ? [tris[k], tris[k + 2], tris[k + 1]] : tris.slice(k, k + 3)).map((i) => first + i));
   }
-  return { positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uvs), indices: new Uint32Array(indices) };
+  return { positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uvs), indices: new Uint32Array(indices), tu, length };
 }
 
 const CURVE_STEPS = 16; // polygon edges per bezier edge
@@ -1784,10 +2407,14 @@ function color(c, n, scope, at) {
   return v.slice(0, n).map((x) => Math.min(1, Math.max(0, x)));
 }
 
+const TOKENS = /'[^']*'|\d+\.?\d*|\.\d+|[a-z_][a-z0-9_]*|[<>=!]=|[-+*/(),.<>]|\S/gi;
+// The names an expression reads: not functions, swizzles or quoted text (draft f26).
+const namesIn = (src) => { const t = src.match(TOKENS) ?? []; return t.filter((w, i) => /^[a-z_]/i.test(w) && t[i + 1] !== '(' && t[i - 1] !== '.'); };
+
 // An expression's value: a number, or a vec4 (D-91: a color, linear RGBA, GLSL's vec4) as a list of 4 numbers.
 // Operators and built-ins work per component on vec4s, a number standing for every component; each vec4 is clamped to 0..1.
 export function evaluate(src, scope) {
-  const toks = src.match(/\d+\.?\d*|\.\d+|[a-z_][a-z0-9_]*|[<>=!]=|[-+*/(),.<>]|\S/gi) ?? [];
+  const toks = src.match(TOKENS) ?? [];
   let i = 0;
   const peek = () => toks[i], take = () => toks[i++];
   const atom = () => {
@@ -1807,10 +2434,12 @@ export function evaluate(src, scope) {
     if (t === undefined) throw new Error(`"${src}": ends too early`);
     if (t === '(') { const v = compare(); if (take() !== ')') throw new Error(`"${src}": missing )`); return v; }
     if (/^\.?\d/.test(t)) return Number(t);
+    if (t[0] === "'") throw new Error(`"${src}": text ${t} can only be compared with == or !=`); // draft f24 (D-115)
     if (/^[a-z_]/i.test(t)) {
       if (peek() === '(') return call(t);
+      if (Object.hasOwn(CONSTS, t)) return CONSTS[t]; // D-154: names are lower_snake_case, so these never clash
       if (!(t in scope)) throw new Error(`"${src}": unknown name "${t}"`);
-      if (typeof scope[t] === 'string') throw new Error(`"${src}": "${t}" is text ("${scope[t]}"), only a placed model's choice value can take it`); // draft f23 (D-112)
+      if (typeof scope[t] === 'string') throw new Error(`"${src}": "${t}" is text ("${scope[t]}"): a placed model's choice value, or compared with == or !=`); // draft f23 (D-112)
       return scope[t];
     }
     throw new Error(`"${src}": unexpected "${t}"`);
@@ -1832,10 +2461,37 @@ export function evaluate(src, scope) {
   const product = () => { let v = atom(); while (peek() === '*' || peek() === '/') { const op = ops[take()]; v = each(op, [v, atom()]); } return v; };
   const sum = () => { let v = product(); while (peek() === '+' || peek() === '-') { const op = ops[take()]; v = each(op, [v, product()]); } return v; };
   // Draft f21: a comparison of two numbers is 1 or 0, as a bool parameter (D-47); one per level, as in GLSL.
+  // Draft f24 (D-115): a side of == or != may be text: a quoted literal, a row's text, or a lone choice parameter.
+  const side = () => {
+    const t = peek(), nx = toks[i + 1], lone = (nx === undefined || nx in CMP || nx === ')' || nx === ',') && /^['a-z_]/i.test(t ?? '');
+    if (!lone) return sum();
+    if (t[0] === "'") { take(); return { text: t.slice(1, -1) }; }
+    if (typeof scope[t] === 'string') { take(); return { text: scope[t] }; }
+    if (scope[CHOICES]?.[t]) { take(); return { choice: t, options: scope[CHOICES][t], index: scope[t] }; }
+    return sum();
+  };
   const compare = () => {
-    const a = sum();
-    if (!(peek() in CMP)) return a;
-    const op = take(), b = sum();
+    let a = side();
+    if (!(peek() in CMP)) {
+      if (a.text !== undefined) throw new Error(`"${src}": text "${a.text}" can only be compared with == or !=`);
+      return a.choice ? a.index : a;
+    }
+    const op = take();
+    let b = side();
+    if (a.text !== undefined || b.text !== undefined) {
+      if (op !== '==' && op !== '!=') throw new Error(`"${src}": ${op} compares numbers; text takes == or !=`);
+      const name = (x, o) => {
+        if (x.text !== undefined) return x.text;
+        if (!x.choice) throw new Error(`"${src}": text compares with text or a choice parameter, not a number`);
+        if (!x.options.includes(o.text)) throw new Error(`"${src}": "${o.text}" is not an option of ${x.choice} (${JSON.stringify(x.options)})`);
+        return x.options[x.index];
+      };
+      const eq = name(a, b) === name(b, a);
+      if (peek() in CMP) throw new Error(`"${src}": a comparison of a comparison needs parentheses`);
+      return (op === '==') === eq ? 1 : 0;
+    }
+    if (a.choice) a = a.index;
+    if (b.choice) b = b.index;
     if (Array.isArray(a) || Array.isArray(b)) throw new Error(`"${src}": ${op} compares numbers, not a color (vec4)`);
     if (peek() in CMP) throw new Error(`"${src}": a comparison of a comparison needs parentheses`);
     return CMP[op](a, b) ? 1 : 0;
@@ -1885,8 +2541,10 @@ function withLiteral(src, i, n, c) {
 const each = (f, args) => (args.some(Array.isArray) ? clamp01([0, 1, 2, 3].map((k) => f(...args.map((a) => (Array.isArray(a) ? a[k] : a))))) : f(...args));
 const clamp01 = (v) => v.map((x) => (Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : x)); // not finite stays, for the error
 
+const CHOICES = Symbol('choices'); // a scope's choice parameters → their options (draft f24)
 const CMP = { '==': (a, b) => a === b, '!=': (a, b) => a !== b, '<': (a, b) => a < b, '<=': (a, b) => a <= b, '>': (a, b) => a > b, '>=': (a, b) => a >= b };
 // GLSL ES built-ins with GLSL's definitions (mod floors, step is edge <= x), per component on vec4s; and vec4.
+const CONSTS = { PI: Math.PI, TAU: 2 * Math.PI };
 const FUNCS = {
   abs: Math.abs, sign: Math.sign, floor: Math.floor, ceil: Math.ceil, fract: (x) => x - Math.floor(x),
   mod: (x, y) => x - y * Math.floor(x / y), min: Math.min, max: Math.max,

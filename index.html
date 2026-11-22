@@ -7,29 +7,30 @@
 <style>
 /* Layout: four-area workbench (outliner | viewport | properties, parameters/source under the viewport, status line). Accent = selection; violet = expression (a drag rewrites one number in it). */
 :root {
-  --bg: #f4f2ee; --panel: #ffffff; --chip: #ece8e1; --fg: #222; --mute: #6e6862; --line: #ddd8d0;
-  --accent: #d9480f; --expr: #7646c9; --err: #b00020; --vp: #e9e6e0; --helper: #2f6fdf;
+  --bg: #f4f2ee; --panel: #ffffff; --chip: #ece8e1; --fg: #222; --mute: #67615b; --line: #ddd8d0; --field: #8f887f;
+  --accent: #c94310; --on-accent: #fff; --expr: #7646c9; --err: #b00020; --vp: #e9e6e0; --helper: #2f6fdf;
   --ax0: #d9443f; --ax1: #3e9d4f; --ax2: #2f6fdf;
   --ui: system-ui, sans-serif; --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #1b1b1d; --panel: #232326; --chip: #2d2d31; --fg: #e8e8e8; --mute: #a19c96; --line: #3a3a3e;
-  --accent: #ff7a3d; --expr: #b18cff; --err: #ff6b7f; --vp: #151517; --helper: #5b93ff;
+  --bg: #1b1b1d; --panel: #232326; --chip: #2d2d31; --fg: #e8e8e8; --mute: #a19c96; --line: #3a3a3e; --field: #6c6c73;
+  --accent: #ff7a3d; --on-accent: #1b1b1d; --expr: #b18cff; --err: #ff6b7f; --vp: #151517; --helper: #5b93ff;
   --ax0: #ff6b66; --ax1: #6fd17f; --ax2: #6ea0ff; color-scheme: dark } }
 :root[data-theme="dark"] {
-  --bg: #1b1b1d; --panel: #232326; --chip: #2d2d31; --fg: #e8e8e8; --mute: #a19c96; --line: #3a3a3e;
-  --accent: #ff7a3d; --expr: #b18cff; --err: #ff6b7f; --vp: #151517; --helper: #5b93ff;
+  --bg: #1b1b1d; --panel: #232326; --chip: #2d2d31; --fg: #e8e8e8; --mute: #a19c96; --line: #3a3a3e; --field: #6c6c73;
+  --accent: #ff7a3d; --on-accent: #1b1b1d; --expr: #b18cff; --err: #ff6b7f; --vp: #151517; --helper: #5b93ff;
   --ax0: #ff6b66; --ax1: #6fd17f; --ax2: #6ea0ff; color-scheme: dark }
 html, body { height: 100%; }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.4 var(--ui); }
 [hidden] { display: none !important; }
-#app { --wo: 230px; --wp: 310px; --hb: 230px; height: 100%; display: grid; grid-template-columns: var(--wo) minmax(0, 1fr) var(--wp); grid-template-rows: auto minmax(0, 1fr) var(--hb) 28px;
+#app { --xw: 22px; --wo: 230px; --wp: 310px; --hb: 230px; height: 100%; display: grid; grid-template-columns: var(--wo) minmax(0, 1fr) var(--wp); grid-template-rows: auto minmax(0, 1fr) var(--hb) 28px;
   grid-template-areas: "top top top" "out vp props" "out bot props" "st st st"; }
 #top { grid-area: top; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px max(12px, env(safe-area-inset-right, 0px)) 6px max(12px, env(safe-area-inset-left, 0px)); background: var(--panel); border-bottom: 1px solid var(--line); position: relative; }
 #top .brand { font-weight: 600; letter-spacing: .02em; margin-right: 6px; }
 #top .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
 #top .grow { flex: 1; }
+#fileName { color: var(--mute); font: 12px var(--mono); }
 button, select { font: inherit; color: inherit; }
 .btn { padding: 3px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); cursor: pointer; white-space: nowrap; }
 .btn:hover { border-color: var(--mute); }
@@ -38,7 +39,7 @@ button, select { font: inherit; color: inherit; }
 .seg .btn { border-radius: 0; margin-left: -1px; }
 .seg .btn:first-child { border-radius: 5px 0 0 5px; margin-left: 0; }
 .seg .btn:last-child { border-radius: 0 5px 5px 0; }
-.btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; position: relative; }
+.btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); position: relative; }
 kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; background: var(--panel); color: var(--mute); }
 .btn kbd { margin-left: 5px; border: 0; background: none; padding: 0; color: inherit; opacity: .6; }
 .menu { position: absolute; top: 100%; z-index: 5; margin-top: 4px; display: grid; min-width: 220px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 24px rgb(0 0 0 / .18); }
@@ -46,7 +47,7 @@ kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); bor
 .menu button:hover, .menu button:focus-visible { background: var(--chip); outline: none; }
 .menu small { color: var(--mute); margin-left: auto; padding-left: 16px; }
 .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; width: 100%; }
-.menu .mh { font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); padding: 6px 10px 2px; }
+.menu .mh { font: 500 11px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); padding: 6px 10px 2px; }
 .pane { background: var(--panel); min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
 .gut { position: absolute; z-index: 4; touch-action: none; }
 .gut[aria-orientation="vertical"] { top: 0; bottom: 0; width: 7px; cursor: col-resize; }
@@ -54,12 +55,13 @@ kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); bor
 #out .gut { right: -4px; }
 #props .gut { left: -4px; }
 .gut:hover, .gut:focus-visible, .gut.on { background: color-mix(in srgb, var(--accent) 45%, transparent); outline: none; }
-.pane-h { font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); padding: 7px 12px; border-bottom: 1px solid var(--line); background: var(--chip); display: flex; gap: 8px; align-items: center; }
+.pane-h { font: 500 11px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); padding: 7px 12px; border-bottom: 1px solid var(--line); background: var(--chip); display: flex; gap: 8px; align-items: center; }
 .pane-b { overflow: auto; flex: 1; min-height: 0; }
 #out { grid-area: out; border-right: 1px solid var(--line); }
 #tree { list-style: none; margin: 0; padding: 4px 0; }
 #tree li { display: flex; gap: 7px; align-items: center; padding: 4px 12px; cursor: pointer; white-space: nowrap; }
 #tree li:hover { background: var(--chip); }
+#tree li.scn { color: var(--mute); cursor: default; background: none; }
 #tree li.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 #tree li:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 #tree .nm { overflow: hidden; text-overflow: ellipsis; }
@@ -68,6 +70,7 @@ kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); bor
 .ic.box { border-radius: 2px; }
 .ic.loft { border-radius: 6px 6px 2px 2px; height: 13px; width: 8px; }
 .ic.lathe { border-radius: 40% 40% 2px 2px; height: 13px; width: 10px; }
+.ic.text { border-width: 0 0 1.5px 1.5px; border-radius: 0; }
 .ic.extrude { border-radius: 2px; box-shadow: inset 0 0 0 3px var(--panel, transparent); }
 .ic.empty { border-style: dashed; border-radius: 50%; }
 #vp { grid-area: vp; position: relative; background: var(--vp); min-height: 0; overflow: hidden; }
@@ -78,11 +81,11 @@ kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); bor
 .vp-views .btn { background: color-mix(in srgb, var(--panel) 85%, transparent); padding: 2px 8px; font-size: 12px; }
 #bot { grid-area: bot; border-top: 1px solid var(--line); }
 .tabs { display: flex; gap: 0; background: var(--chip); border-bottom: 1px solid var(--line); }
-.tabs button { border: 0; background: none; padding: 6px 14px; cursor: pointer; font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); border-bottom: 2px solid transparent; }
+.tabs button { border: 0; background: none; padding: 6px 14px; cursor: pointer; font: 500 11px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); border-bottom: 2px solid transparent; }
 .tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
 #props { grid-area: props; border-left: 1px solid var(--line); }
 .sec { padding: 10px 12px; display: grid; gap: 6px; border-bottom: 1px solid var(--line); }
-.sec h3 { margin: 0; font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); display: flex; gap: 6px; align-items: center; }
+.sec h3 { margin: 0; font: 500 11px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); display: flex; gap: 6px; align-items: center; }
 .sec h3 .grow { flex: 1; }
 .sec h2 { margin: 0; font-size: 14px; font-weight: 600; display: flex; gap: 8px; align-items: center; }
 .sec p { margin: 0; color: var(--mute); }
@@ -90,19 +93,20 @@ kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); bor
 .vrow.q { grid-template-columns: 64px repeat(4, minmax(0, 1fr)); }
 .vrow.two { grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1fr); }
 .vrow.crow { grid-template-columns: 64px 28px minmax(0, 1fr) minmax(0, 72px); }
-.vrow.crow input[type=color] { width: 28px; height: 24px; padding: 0; border: 1px solid var(--line); border-radius: 4px; background: none; }
+.vrow.crow input[type=color] { width: 28px; height: 24px; padding: 0; border: 1px solid var(--field); border-radius: 4px; background: none; }
 .vrow.one { grid-template-columns: 64px minmax(0, 1fr); }
 .vrow label, .vrow .lbl { color: var(--mute); font-size: 12px; }
-.prow { display: grid; grid-template-columns: 28px repeat(3, minmax(0, 1fr)) 22px; gap: 4px; align-items: center; }
-.srow { display: grid; grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) 46px 22px; gap: 4px; align-items: center; }
-.stab { display: grid; grid-template-columns: 28px repeat(4, minmax(0, 1fr)) 22px; gap: 4px; align-items: center; }
+.prow { display: grid; grid-template-columns: 28px repeat(3, minmax(0, 1fr)) var(--xw); gap: 4px; align-items: center; }
+.srow { display: grid; grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) 46px var(--xw); gap: 4px; align-items: center; }
+.stab { display: grid; grid-template-columns: 28px repeat(4, minmax(0, 1fr)) var(--xw); gap: 4px; align-items: center; }
 .stab small { color: var(--mute); font: 11px var(--mono); }
 .srow small, .prow small { color: var(--mute); font: 11px var(--mono); }
 .idx { font: 11px var(--mono); padding: 2px 0; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); cursor: pointer; }
-.idx.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-.x { border: 0; background: none; color: var(--mute); cursor: pointer; padding: 0; font-size: 15px; line-height: 1; }
+.idx.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.x { border: 0; background: none; color: var(--mute); cursor: pointer; padding: 0; font-size: 15px; line-height: 1; min-width: var(--xw); min-height: var(--xw); border-radius: 4px; }
+.x:focus-visible, .btn:focus-visible, .idx:focus-visible, .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .x:hover { color: var(--err); }
-input.f, select.f { width: 100%; min-width: 0; font: 12px var(--mono); padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); font-variant-numeric: tabular-nums; }
+input.f, select.f { width: 100%; min-width: 0; font: 12px var(--mono); padding: 3px 5px; border: 1px solid var(--field); border-radius: 4px; background: var(--bg); color: var(--fg); font-variant-numeric: tabular-nums; }
 input.f:focus, select.f:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 input.f.ax0 { box-shadow: inset 2px 0 var(--ax0); } input.f.ax1 { box-shadow: inset 2px 0 var(--ax1); } input.f.ax2 { box-shadow: inset 2px 0 var(--ax2); }
 input.f.expr { color: var(--expr); border-color: color-mix(in srgb, var(--expr) 55%, var(--line)); background: color-mix(in srgb, var(--expr) 8%, var(--bg)); }
@@ -121,17 +125,18 @@ input.f.expr { color: var(--expr); border-color: color-mix(in srgb, var(--expr) 
 #sketch .hdl { fill: var(--panel); stroke: var(--accent); cursor: grab; }
 #sketch .hdl.expr { stroke: var(--expr); }
 .setbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px 12px 0; }
-.setbar label { font: 10.5px var(--mono); color: var(--mute); text-transform: uppercase; letter-spacing: .05em; }
+.setbar label { font: 11px var(--mono); color: var(--mute); text-transform: uppercase; letter-spacing: .05em; }
 .setbar .f { width: auto; min-width: 90px; }
-.ptable { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(90px, 2fr) 54px 64px 64px 64px 22px; gap: 4px 6px; align-items: center; padding: 8px 12px; }
-.vtable { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(120px, 3fr) 64px 22px; gap: 4px 6px; align-items: center; padding: 0 12px 10px; }
-.ptable .hd, .vtable .hd { font: 10.5px var(--mono); color: var(--mute); text-transform: uppercase; letter-spacing: .05em; }
+.ptable { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(90px, 2fr) 54px 64px 64px 64px var(--xw); gap: 4px 6px; align-items: center; padding: 8px 12px; }
+.vtable { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(120px, 3fr) 64px var(--xw); gap: 4px 6px; align-items: center; padding: 0 12px 10px; }
+.ptable .hd, .vtable .hd { font: 11px var(--mono); color: var(--mute); text-transform: uppercase; letter-spacing: .05em; }
 .ptable .cdef { grid-column: span 3; display: flex; gap: 4px; min-width: 0; }
 .ptable .cdef .f { min-width: 0; } .ptable .cdef select { flex: 0 0 auto; } .ptable .cdef input:not([type]) { flex: 1; }
 .ptable .swatch { height: 18px; border-radius: 3px; border: 1px solid var(--line); }
 .ptable output, .vtable output { font: 12px var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+.ptable input.f.bake { box-shadow: inset 3px 0 var(--accent); } /* draft f26: changes the baked meshes */
 .ptable input[type=range] { width: 100%; min-width: 0; accent-color: var(--accent); }
-.gh { grid-column: 1 / -1; font: 500 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); padding-top: 4px; }
+.gh { grid-column: 1 / -1; font: 500 11px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); padding-top: 4px; }
 #src { width: 100%; height: 100%; resize: none; border: 0; padding: 10px 12px; background: var(--panel); color: var(--fg); font: 12px/1.5 var(--mono); }
 .keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 18px; padding: 10px 12px; }
 .keys div { display: flex; gap: 8px; align-items: baseline; }
@@ -149,9 +154,15 @@ input.f.expr { color: var(--expr); border-color: color-mix(in srgb, var(--expr) 
   #props, #out { border: 0; border-top: 1px solid var(--line); }
   #bot .pane-b { max-height: 360px; }
   #st { min-height: 28px; }
-  .ptable { grid-template-columns: minmax(60px, 1fr) minmax(80px, 2fr) 48px 22px; }
+  .ptable { grid-template-columns: minmax(60px, 1fr) minmax(80px, 2fr) 48px var(--xw); }
   .ptable .wide { display: none; }
   .gut { display: none; }
+}
+@media (pointer: coarse) {
+  #app { --xw: 36px; }
+  .btn, .tabs button { min-height: 40px; }
+  input.f, select.f { min-height: 36px; font-size: 16px; } /* 16px: iOS zooms into smaller fields */
+  #tree li { padding-block: 9px; }
 }
 </style>
 <script>
@@ -186,6 +197,7 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
       <button type="button" role="menuitem" data-add="loft"><span class="ic loft"></span>Loft<small>path + sections</small></button>
       <button type="button" role="menuitem" data-add="extrude"><span class="ic extrude"></span>Extrude<small>outline + holes</small></button>
       <button type="button" role="menuitem" data-add="lathe"><span class="ic lathe"></span>Lathe<small>profile turned round y</small></button>
+      <button type="button" role="menuitem" data-add="text"><span class="ic text"></span>Text<small>stroke lettering</small></button>
     </div>
     <span class="seg" role="group" aria-label="Mode">
       <button class="btn" id="mObject" type="button" aria-pressed="true">Object</button>
@@ -193,13 +205,13 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
     </span>
     <span class="seg" role="group" aria-label="Tool" id="tools"></span>
     <span class="grow"></span>
-    <span id="fileName" style="color:var(--mute);font:12px var(--mono)"></span>
+    <span id="fileName"></span>
   </header>
 
   <section id="out" class="pane" aria-label="Outliner">
     <div class="pane-h">Outliner</div>
     <div class="gut" data-gut="wo" role="separator" aria-orientation="vertical" aria-label="Resize outliner" tabindex="0"></div>
-    <div class="pane-b"><ul id="tree"></ul></div>
+    <div class="pane-b"><ul id="tree" role="tree" aria-label="Scene nodes"></ul></div>
   </section>
 
   <section id="vp" aria-label="Viewport">
@@ -220,14 +232,14 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
 
   <section id="bot" class="pane">
     <div class="gut" data-gut="hb" role="separator" aria-orientation="horizontal" aria-label="Resize bottom panel" tabindex="0"></div>
-    <div class="tabs" role="tablist">
-      <button type="button" role="tab" id="tabParams" aria-selected="true" data-tab="params">Parameters</button>
-      <button type="button" role="tab" id="tabSrc" aria-selected="false" data-tab="src">Source</button>
-      <button type="button" role="tab" id="tabKeys" aria-selected="false" data-tab="keys">Keys</button>
+    <div class="tabs" role="tablist" aria-label="Bottom panel">
+      <button type="button" role="tab" id="tabParams" aria-selected="true" aria-controls="paneParams" data-tab="params">Parameters</button>
+      <button type="button" role="tab" id="tabSrc" aria-selected="false" aria-controls="paneSrc" tabindex="-1" data-tab="src">Source</button>
+      <button type="button" role="tab" id="tabKeys" aria-selected="false" aria-controls="paneKeys" tabindex="-1" data-tab="keys">Keys</button>
     </div>
-    <div class="pane-b" id="paneParams" role="tabpanel"></div>
-    <div class="pane-b" id="paneSrc" role="tabpanel" hidden><textarea id="src" spellcheck="false" aria-label="JIG document source"></textarea></div>
-    <div class="pane-b" id="paneKeys" role="tabpanel" hidden>
+    <div class="pane-b" id="paneParams" role="tabpanel" aria-labelledby="tabParams"></div>
+    <div class="pane-b" id="paneSrc" role="tabpanel" aria-labelledby="tabSrc" hidden><textarea id="src" spellcheck="false" aria-label="JIG document source"></textarea></div>
+    <div class="pane-b" id="paneKeys" role="tabpanel" aria-labelledby="tabKeys" tabindex="0" hidden>
       <div class="keys">
         <div><span><kbd>Ctrl</kbd><kbd>Z</kbd></span><span>Undo (<kbd>Shift</kbd> to redo)</span></div>
         <div><span><kbd>Shift</kbd><kbd>A</kbd></span><span>Add a box or a loft</span></div>
@@ -257,12 +269,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION } from './jig.js?v=7daa316';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION } from './jig.js?v=5da7edf';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=7daa316', loft: 'examples/loft.gltf?v=7daa316', star: 'examples/star.gltf?v=7daa316', bench: 'examples/bench.gltf?v=7daa316', lathe: 'examples/lathe.gltf?v=7daa316', lantern: 'examples/lantern.gltf?v=7daa316', paths: 'examples/paths.gltf?v=7daa316', ends: 'examples/ends.gltf?v=7daa316', cushion: 'examples/cushion.gltf?v=7daa316',
-  finger: 'examples/finger.gltf?v=7daa316', hand: 'examples/hand.gltf?v=7daa316' };
+const examples = { box: 'examples/box.gltf?v=5da7edf', loft: 'examples/loft.gltf?v=5da7edf', star: 'examples/star.gltf?v=5da7edf', bench: 'examples/bench.gltf?v=5da7edf', lathe: 'examples/lathe.gltf?v=5da7edf', lantern: 'examples/lantern.gltf?v=5da7edf', paths: 'examples/paths.gltf?v=5da7edf', ends: 'examples/ends.gltf?v=5da7edf', cushion: 'examples/cushion.gltf?v=5da7edf',
+  sign: 'examples/sign.gltf?v=5da7edf', finger: 'examples/finger.gltf?v=5da7edf', hand: 'examples/hand.gltf?v=5da7edf', grandpa: 'examples/grandpa.gltf?v=5da7edf' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -278,15 +290,17 @@ const $ = (s) => document.querySelector(s);
 const isStr = (v) => typeof v === 'string';
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const r4 = (v) => +(+v).toFixed(4);
+// Draft f25: a number with its unit; % is a 0..1 fraction shown as 0..100.
+const withUnit = (v, unit) => (unit === '%' ? `${fmt(v * 100)} %` : unit === 'deg' ? `${fmt(v)}°` : unit ? `${fmt(v)} ${unit}` : fmt(v));
 const fmt = (v) => (Array.isArray(v) ? `vec4(${v.map(fmt).join(', ')})` : v === undefined || !Number.isFinite(+v) ? '' : String(+(+v).toFixed(3)));
 const R = () => doc.extensions[EXT];
 const meshOf = (i) => doc.nodes?.[i]?.extensions?.[EXT]?.mesh;
-const shapeKind = (m) => (m?.loft ? 'loft' : m?.extrude ? 'extrude' : m?.lathe ? 'lathe' : 'box');
+const shapeKind = (m) => (m?.loft ? 'loft' : m?.extrude ? 'extrude' : m?.lathe ? 'lathe' : m?.text ? 'text' : 'box');
 const loftOf = (i) => R().meshes?.[meshOf(i)]?.loft;
 const latheOf = (i) => R().meshes?.[meshOf(i)]?.lathe;
 const extrudeOf = (i) => R().meshes?.[meshOf(i)]?.extrude;
 // Edit mode: every shape (a lathe's or extrude's round forms and arc items are edited in the JSON).
-const editable = (i) => meshOf(i) !== undefined && !!R().meshes?.[meshOf(i)];
+const editable = (i) => meshOf(i) !== undefined && !!R().meshes?.[meshOf(i)] && !R().meshes[meshOf(i)].text; // text: in Properties or the JSON
 // shortcut: a path with a corner radius, an arc or a spiral (D-99) has no point editor; edit its JSON
 const plainPath = (l) => l?.path.every((p) => Array.isArray(p) && p.length === 3);
 const X = (i) => ((doc.nodes[i].extensions ??= {})[EXT] ??= {});
@@ -358,7 +372,7 @@ function theme() {
   const g = new THREE.Color(css('--line')), g2 = new THREE.Color(css('--mute'));
   grid = new THREE.GridHelper(4, 40, g2, g);
   scene.add(grid);
-  if (out) draw();
+  if (out) draw(); else redraw();
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', theme);
 new MutationObserver(theme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
@@ -371,9 +385,13 @@ tc.addEventListener('objectChange', onGizmo);
 
 new ResizeObserver(() => {
   const { clientWidth: w, clientHeight: h } = vp;
-  renderer.setSize(w, h, false); camera.aspect = w / Math.max(h, 1); camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false); camera.aspect = w / Math.max(h, 1); camera.updateProjectionMatrix(); redraw();
 }).observe(vp);
-renderer.setAnimationLoop(() => renderer.render(scene, camera));
+let frameReq = 0;
+const redraw = () => { frameReq ||= requestAnimationFrame(() => { frameReq = 0; renderer.render(scene, camera); }); };
+orbit.addEventListener('change', redraw); tc.addEventListener('change', redraw);
+// any input may change the scene (hover, drags, fields); async changes call redraw themselves
+for (const t of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'keyup', 'input', 'change']) addEventListener(t, redraw, { passive: true, capture: true });
 
 // Pane sizes: drag or arrow-key a separator; remembered per browser.
 const app = $('#app'), GUT = { wo: [120, 1, 'clientX'], wp: [180, -1, 'clientX'], hb: [60, -1, 'clientY'] }; // min px, sign, axis
@@ -413,7 +431,7 @@ function textureOf(slot, placed, transform, srgb) {
   if (typeof e?.image?.uri !== 'string') return null;
   const url = new URL(e.image.uri, docBase ?? location.href).href, t = new THREE.Texture();
   if (!images.has(url)) images.set(url, new Promise((ok) => loader.load(url, ok, undefined, () => ok(null))));
-  images.get(url).then((img) => { if (img) { t.image = img; t.needsUpdate = true; } });
+  images.get(url).then((img) => { if (img) { t.image = img; t.needsUpdate = true; redraw(); } });
   t.flipY = false; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
   t.wrapS = WRAP[e.sampler?.wrapS] ?? THREE.RepeatWrapping; t.wrapT = WRAP[e.sampler?.wrapT] ?? THREE.RepeatWrapping;
   if (transform?.offset) t.offset.fromArray(transform.offset);
@@ -431,6 +449,7 @@ function bufferGeometry({ positions, normals, uvs, indices }) {
 }
 const v3 = (a) => new THREE.Vector3(...a);
 function draw() {
+  redraw();
   for (const g of [...geos, ...mats]) { g.dispose(); for (const k of ['map', 'normalMap', 'roughnessMap', 'aoMap', 'emissiveMap']) g[k]?.dispose(); }
   for (const c of helperLayer.children) c.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
   meshLayer.clear(); helperLayer.clear(); edit = null;
@@ -467,7 +486,9 @@ function draw() {
     return tinted.get(key);
   };
   for (const inst of out.instances) {
-    const m = new THREE.Mesh(geos[inst.mesh], matOf(out.meshes[inst.mesh], sel?.node === inst.node));
+    const g = inst.deformed ? bufferGeometry(inst.deformed) : geos[inst.mesh]; // draft f28: a blended shape's own vertices
+    if (inst.deformed) geos.push(g);
+    const m = new THREE.Mesh(g, matOf(out.meshes[inst.mesh], sel?.node === inst.node));
     m.matrixAutoUpdate = false; m.matrix.fromArray(inst.matrix); m.userData.node = inst.node;
     meshLayer.add(m);
   }
@@ -622,6 +643,7 @@ function parentWorld(i) {
 }
 let locked = []; // why the gizmo is off: 'matrix', 'on' or 'rotation' (a quaternion holding expressions)
 function placeGizmo() {
+  redraw();
   tc.detach(); locked = []; tc.showX = tc.showY = tc.showZ = true; tc.setSpace('world'); secDrag = null;
   if (!out || !sel || !out.nodes[sel.node]) return;
   const n = out.nodes[sel.node];
@@ -790,14 +812,21 @@ function outliner() {
   const row = (i, depth) => {
     const n = doc.nodes[i]; if (!n) return [];
     const mi = meshOf(i), kind = mi === undefined ? 'empty' : shapeKind(R().meshes?.[mi]);
-    const li = el('li', { className: sel?.node === i ? 'sel' : '', tabIndex: 0, role: 'treeitem', onclick: () => select({ node: i }),
-      onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select({ node: i }); } } },
+    const li = el('li', { className: sel?.node === i ? 'sel' : '', tabIndex: -1, role: 'treeitem', onclick: () => select({ node: i }),
+      onkeydown: (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select({ node: i }); }
+        const d = { ArrowUp: -1, ArrowDown: 1 }[e.key], items = [...$('#tree').querySelectorAll('[role=treeitem]')];
+        if (d) { e.preventDefault(); e.stopPropagation(); items[Math.max(0, Math.min(items.length - 1, items.indexOf(li) + d))]?.focus(); }
+      } },
       el('span', { className: `ic ${kind}` }), el('span', { className: 'nm', textContent: n.extensions?.[EXT]?.name ?? n.name ?? `node ${i}` }),
-      mi !== undefined && el('small', { textContent: `${kind} ${mi}${users[mi] > 1 ? ` ×${users[mi]}` : ''}`, title: users[mi] > 1 ? `mesh ${mi} is shared by ${users[mi]} nodes` : `mesh ${mi}` }));
+      mi !== undefined && el('small', { textContent: `${kind} ${mi}${users[mi] > 1 ? ` ×${users[mi]}` : ''}`, title: users[mi] > 1 ? `mesh ${mi} is shared by ${users[mi]} nodes` : `mesh ${mi}` }),
+      n.extensions?.[EXT]?.role && el('small', { textContent: n.extensions[EXT].role, title: `role (${R().character?.scheme ?? 'no character'}): this joint's name in the naming scheme` })); // draft f30
     li.style.paddingLeft = `${12 + depth * 14}px`;
+    li.setAttribute('aria-selected', String(sel?.node === i)); li.setAttribute('aria-level', String(depth));
     return [li, ...(n.children ?? []).flatMap((c) => row(c, depth + 1))];
   };
-  $('#tree').replaceChildren(el('li', { style: 'color:var(--mute);cursor:default' }, `Scene ${doc.scene ?? 0}`), ...roots.flatMap((i) => row(i, 1)));
+  $('#tree').replaceChildren(el('li', { className: 'scn', role: 'none' }, `Scene ${doc.scene ?? 0}`), ...roots.flatMap((i) => row(i, 1)));
+  const stop = $('#tree .sel') ?? $('#tree [role=treeitem]'); if (stop) stop.tabIndex = 0;
 }
 
 // ---------- properties ----------
@@ -883,6 +912,14 @@ function props() {
     if (m.box) ms.append(vecRow('Size', 'size', m.box.size, om?.size, (a) => { m.box.size = a; }),
       el('div', { className: 'vrow one' }, el('label', { htmlFor: 'radius', textContent: 'Radius' }), // D-98
         field('radius', m.box.radius ?? 0, om?.radius ?? 0, (v) => { if (v === 0) delete m.box.radius; else m.box.radius = v; }, 'Radius')));
+    if (m.text) { // D-120
+      const t = el('input', { id: 'textStr', className: 'f', value: m.text.text ?? '', spellcheck: false, autocomplete: 'off' });
+      t.setAttribute('aria-label', 'Text');
+      t.onchange = () => { m.text.text = t.value; commit(); };
+      ms.append(el('div', { className: 'vrow one' }, el('label', { htmlFor: 'textStr', textContent: 'Text' }), t),
+        ...[['size', 'Size'], ['depth', 'Depth'], ['stroke', 'Stroke']].map(([k, label]) => el('div', { className: 'vrow one' }, el('label', { htmlFor: `text_${k}`, textContent: label }),
+          field(`text_${k}`, m.text[k] ?? '', om?.[k], (v) => { m.text[k] = v; }, label))));
+    }
     kids.push(ms, materialSec(m));
     if (m.loft) kids.push(...loftProps(m.loft, om));
     if (m.extrude) kids.push(...extrudeProps(m.extrude, om));
@@ -1297,21 +1334,30 @@ function params() {
     e.setAttribute('aria-label', `${key} ${k}`); return e;
   };
   const grid1 = el('div', { className: 'ptable' },
-    el('span', { className: 'hd' }, 'parameter'), el('span', { className: 'hd' }, 'try a value'), el('span', { className: 'hd', style: 'text-align:right' }, 'now'),
+    el('span', { className: 'hd', title: 'A bar on the left: changing it rebakes the meshes (bake); no bar: live' }, 'parameter'), el('span', { className: 'hd' }, 'try a value'), el('span', { className: 'hd', style: 'text-align:right' }, 'now'),
     el('span', { className: 'hd wide' }, 'default'), el('span', { className: 'hd wide' }, 'min'), el('span', { className: 'hd wide' }, 'max'), el('span'),
     ...Object.keys(P).filter((k) => isObj(P[k])).flatMap((k) => {
       const p = P[k], now = out?.params?.[k]?.value ?? p.default;
+      const row = paramRow(k, p, now);
+      // draft f25: the parameter's note as a tooltip on its name; draft f26: a mark when it changes the baked meshes
+      const bakes = out?.params?.[k]?.live === false;
+      row[0].classList.toggle('bake', bakes);
+      row[0].title = [p.doc, bakes ? 'Bake: changes the baked meshes or a copy count.' : 'Live: changes no baked mesh, so a game may set it every frame.'].filter((t) => typeof t === 'string').join('\n');
+      return row;
+    }),
+    el('div', { style: 'grid-column:1/-1' }, btn('+ Parameter', () => { r.params = { ...(r.params ?? {}), [fresh('p', taken)]: { default: 1, min: 0, max: 2 } }; commit(); })));
+  function paramRow(k, p, now) {
       if (p.type === 'bool') { // a checkbox to try, a checkbox for the default; no range
         const box = (id, label, checked, on) => { const e = el('input', { id, type: 'checkbox', checked, onchange: (ev) => on(ev.target.checked) }); e.setAttribute('aria-label', label); return e; };
         sliderOut[k] = el('output', { textContent: String(now) });
         return [nameIn('params', k), box(`p-val-${k}`, `${k} value`, now, (v) => { values[k] = v; live(); }), sliderOut[k],
-          box(`p-default-${k}`, `${k} default`, p.default, (v) => { p.default = v; commit(); }), el('span', { className: 'wide' }), el('span', { className: 'wide' }), del('params', k)];
+          Object.assign(box(`p-default-${k}`, `${k} default`, p.default, (v) => { p.default = v; commit(); }), { className: 'wide' }), el('span', { className: 'wide' }), el('span', { className: 'wide' }), del('params', k)];
       }
       if (p.type === 'choice' && Array.isArray(p.options)) { // draft f21: a list to try, a list for the default; options edited in the JSON
         const pick = (id, label, v, on) => { const e = el('select', { id, className: 'f', onchange: (ev) => on(ev.target.value) }, ...p.options.map((o) => el('option', { value: o, textContent: o, selected: o === v }))); e.setAttribute('aria-label', label); return e; };
         sliderOut[k] = el('output', { textContent: String(now) });
         return [nameIn('params', k), pick(`p-val-${k}`, `${k} value`, now, (v) => { values[k] = v; live(); }), sliderOut[k],
-          pick(`p-default-${k}`, `${k} default`, p.default, (v) => { p.default = v; commit(); }), el('span', { className: 'wide' }), el('span', { className: 'wide' }), del('params', k)];
+          Object.assign(pick(`p-default-${k}`, `${k} default`, p.default, (v) => { p.default = v; commit(); }), { className: 'f wide' }), el('span', { className: 'wide' }), el('span', { className: 'wide' }), del('params', k)];
       }
       if (p.type === 'color') { // a picker to try; the default as a picker or typed in any form, saved as linear RGBA
         const pick = (id, label, c, on, when) => { // a picker is sRGB with no alpha: keep the alpha
@@ -1326,15 +1372,14 @@ function params() {
           onchange: (ev) => { const c = COLOR_FORMS[colorForm].parse(ev.target.value.trim()); if (!c) { note = `Not a color in ${COLOR_FORMS[colorForm].label} form: ${COLOR_FORMS[colorForm].hint}.`; return status(); } p.default = c; commit(); } });
         text.setAttribute('aria-label', `${k} default`);
         return [nameIn('params', k), pick(`p-val-${k}`, `${k} value`, now, (v) => { values[k] = v; live(); }, 'oninput'), sliderOut[k],
-          el('span', { className: 'cdef' }, pick(`p-pick-${k}`, `${k} default picker`, p.default, (v) => { p.default = v; commit(); }, 'onchange'), form, text), del('params', k)];
+          el('span', { className: 'cdef wide' }, pick(`p-pick-${k}`, `${k} default picker`, p.default, (v) => { p.default = v; commit(); }, 'onchange'), form, text), del('params', k)];
       }
-      const range = el('input', { id: `p-val-${k}`, type: 'range', min: p.min, max: p.max, step: (p.max - p.min) / 200 || 'any', value: now,
+      const range = el('input', { id: `p-val-${k}`, type: 'range', min: p.min, max: p.max, step: p.step ?? (p.type === 'int' ? 1 : (p.max - p.min) / 200 || 'any'), value: now,
         oninput: (ev) => { values[k] = Number(ev.target.value); live(); } });
       range.setAttribute('aria-label', `${k} value`);
-      const o = sliderOut[k] = el('output', { textContent: fmt(now) });
+      const o = sliderOut[k] = el('output', { textContent: withUnit(now, p.unit) });
       return [nameIn('params', k), range, o, num(k, 'default'), num(k, 'min'), num(k, 'max'), del('params', k)];
-    }),
-    el('div', { style: 'grid-column:1/-1' }, btn('+ Parameter', () => { r.params = { ...(r.params ?? {}), [fresh('p', taken)]: { default: 1, min: 0, max: 2 } }; commit(); })));
+  }
   const grid2 = el('div', { className: 'vtable' },
     el('span', { className: 'gh' }, 'Variables · named expressions, each sees the parameters and the variables above it'),
     ...Object.entries(V).filter(([k]) => !k.startsWith('//')).flatMap(([k, v]) => {
@@ -1359,12 +1404,43 @@ function params() {
       r.sets = { ...S, [chosenSet]: now }; commit();
     }, 'Store the value of every parameter now under this set'),
     chosenSet && btn('Remove set', () => { delete S[chosenSet]; if (!Object.keys(S).length) delete r.sets; chosenSet = ''; commit(); }));
-  $('#paneParams').replaceChildren(setBar, grid1, grid2);
+  // Draft f31: play a clip by setting its live parameters every frame, from its sampled keys.
+  const clips = out?.clips ?? [];
+  const pickClip = clips.length > 0 && el('select', { id: 'clip-pick', className: 'f', onchange: (ev) => { chosenClip = ev.target.value; } },
+    ...clips.map((c) => el('option', { value: c.name, textContent: `${c.name} · ${fmt(c.length)} s${c.loop ? ' · loop' : ''}`, selected: c.name === chosenClip })));
+  if (pickClip) pickClip.setAttribute('aria-label', 'Clip');
+  const clipBar = pickClip && el('div', { className: 'setbar' }, el('label', { htmlFor: 'clip-pick', textContent: 'Clip' }), pickClip,
+    btn(playing ? 'Stop' : 'Play', () => (playing ? stopClip() : playClip(clips.find((c) => c.name === chosenClip) ?? clips[0])), 'Play the clip: it sets its parameters as time runs'));
+  $('#paneParams').replaceChildren(...[setBar, clipBar].filter(Boolean), grid1, grid2);
+}
+let chosenClip = '', playing = null; // playing: { clip, start, saved }
+function playClip(clip) {
+  chosenClip = clip.name;
+  playing = { clip: structuredClone(clip), start: performance.now(), saved: structuredClone(values) };
+  params();
+  const frame = (now) => {
+    if (!playing) return;
+    const c = playing.clip, run = (now - playing.start) / 1000;
+    if (!c.loop && run >= c.length) return stopClip(false);
+    const t = run % c.length, n = c.times.length - 1, f = Math.min(n, (t / c.length) * n), k = Math.min(n - 1, Math.floor(f)), w = f - k;
+    for (const [p, a] of Object.entries(c.keys[k])) {
+      const b = c.keys[k + 1][p];
+      values[p] = typeof a === 'number' ? a + (b - a) * w : Array.isArray(a) ? a.map((x, i) => x + (b[i] - x) * w) : a;
+    }
+    live();
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}
+function stopClip(restore = true) {
+  if (restore && playing) { for (const k in values) delete values[k]; Object.assign(values, playing.saved); }
+  playing = null; live(); params();
 }
 // A slider moved: values only, not the document, so no undo step.
 function live() {
+  redraw();
   evaluate(); draw(); if (!dragging) placeGizmo(); props(); status();
-  for (const [k, o] of Object.entries(sliderOut)) { const v = out?.params?.[k]?.value; if (Array.isArray(v)) { o.style.background = hexOf(v); o.title = COLOR_FORMS.linear.show(v); } else o.textContent = typeof v === 'number' ? fmt(v) : String(v); }
+  for (const [k, o] of Object.entries(sliderOut)) { const v = out?.params?.[k]?.value; if (Array.isArray(v)) { o.style.background = hexOf(v); o.title = COLOR_FORMS.linear.show(v); } else o.textContent = typeof v === 'number' ? withUnit(v, out.params[k].unit) : String(v); }
   for (const [k, o] of Object.entries(varOut)) o.textContent = fmt(out?.vars?.[k]);
 }
 
@@ -1373,6 +1449,7 @@ function addShape(kind) {
   const r = R();
   r.meshes = [...(r.meshes ?? []), kind === 'box' ? { box: { size: [0.4, 0.4, 0.4] } }
     : kind === 'extrude' ? { extrude: { outline: [[-0.2, -0.2], [0.2, -0.2], [0.2, 0.2], [-0.2, 0.2]], holes: [circle(0.1)], depth: 0.05 } }
+    : kind === 'text' ? { text: { text: 'JIG', size: 0.2, depth: 0.02 } }
     : kind === 'lathe' ? { lathe: { profile: [[0, 0], [0.15, 0], [0.1, 0.25, 0, 0.08], [0.12, 0.4]] } }
     : { loft: { path: [[0, 0, 0], [0, 0.4, 0], [0.2, 0.7, 0]], sections: [{ t: 0, points: circle(0.1) }, { t: 1, points: circle(0.04) }] } }];
   const mesh = r.meshes.length - 1, at = out ? -out.floor : 0;
@@ -1502,10 +1579,14 @@ src.addEventListener('input', () => {
 });
 src.addEventListener('change', () => { try { JSON.parse(src.value); commit(); } catch { /* keep typing */ } });
 
-for (const b of document.querySelectorAll('[role=tab]')) b.onclick = () => {
-  for (const o of document.querySelectorAll('[role=tab]')) o.setAttribute('aria-selected', String(o === b));
-  $('#paneParams').hidden = b.dataset.tab !== 'params'; $('#paneSrc').hidden = b.dataset.tab !== 'src'; $('#paneKeys').hidden = b.dataset.tab !== 'keys';
-};
+const tabs = [...document.querySelectorAll('[role=tab]')];
+for (const b of tabs) {
+  b.onclick = () => { for (const o of tabs) { o.setAttribute('aria-selected', String(o === b)); o.tabIndex = o === b ? 0 : -1; $(`#${o.getAttribute('aria-controls')}`).hidden = o !== b; } };
+  b.onkeydown = (e) => { // arrow keys move between tabs (WAI-ARIA tabs pattern)
+    const d = { ArrowLeft: -1, ArrowRight: 1 }[e.key]; if (!d) return;
+    e.preventDefault(); e.stopPropagation(); const t = tabs[(tabs.indexOf(b) + d + tabs.length) % tabs.length]; t.click(); t.focus();
+  };
+}
 
 // ---------- menus ----------
 const menus = { add: [$('#addMenu'), $('#addBtn')], file: [$('#fileMenu'), $('#fileBtn')] };
