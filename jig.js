@@ -20,7 +20,7 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
   const rat = `/extensions/${EXT}`;
   const r = doc.extensions?.[EXT];
   need(isObj(r), rat, 'must be an object');
-  only(r, ['version', 'params', 'sets', 'vars', 'floor', 'meshes', 'models', 'skins', 'character', 'clips', 'baked_values', 'baked_set'], rat);
+  only(r, ['version', 'params', 'sets', 'vars', 'floor', 'meshes', 'models', 'skins', 'character', 'clips', 'poses', 'baked_values', 'baked_set'], rat);
   need(r.version === VERSION, `${rat}/version`, `must be "${VERSION}"`);
 
   need(r.params === undefined || isObj(r.params), `${rat}/params`, 'must be an object');
@@ -143,6 +143,9 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
     // Draft f19 (D-102): KHR_materials_transmission's and KHR_materials_ior's twins; ior is >= 1 or exactly 0, as the extension.
     if (x.transmissionFactor !== undefined) o.transmissionFactor = unit(num(x.transmissionFactor, scope, `${at}/transmissionFactor`));
     if (x.ior !== undefined) { const v = num(x.ior, scope, `${at}/ior`); o.ior = v === 0 ? 0 : Math.max(1, v); }
+    // Draft f33 (D-160): KHR_materials_sheen's and KHR_materials_diffuse_transmission's factor twins.
+    for (const k of ['sheenColorFactor', 'diffuseTransmissionColorFactor']) if (x[k] !== undefined) o[k] = color(x[k], 3, scope, `${at}/${k}`);
+    for (const k of ['sheenRoughnessFactor', 'diffuseTransmissionFactor']) if (x[k] !== undefined) o[k] = unit(num(x[k], scope, `${at}/${k}`));
     // Draft f11 (D-81): a texture slot's KHR_texture_transform, its values numbers or expressions.
     for (const [k, place] of Object.entries(TEXTURE_SLOTS)) {
       const t = x[k], tat = `${at}/${k}`;
@@ -163,13 +166,16 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
   // evaluates otherwise draws a finished material of its own (`placed`). `pending` holds the error of a material
   // that fails at the parameters, as it may need a copy's names.
   const pending = new Map();
+  // Draft f34 (D-162): a stub takes its material from a library document; it draws as a finished material (stubAt).
+  const isStub = (m) => isObj(m?.extensions?.[EXT]) && m.extensions[EXT].from !== undefined, stubUsed = new Set();
   const materials = (doc.materials ?? []).map((m, i) => {
+    if (isStub(m)) return null;
     try { return materialAt(m, i, scope); } catch (e) { pending.set(i, e); return null; }
   });
   // Draft f15 (D-92): a recipe mesh is evaluated in the scope of each copy that draws it, so it sees that copy's
   // indices and rows. meshes[i] is recipe mesh i at the first copy that draws it (at the parameters when none does);
   // a copy whose evaluated shape differs gets an entry after them. Equal evaluated shapes share one entry.
-  const recipeMeshes = list(r.meshes, `${rat}/meshes`), meshes = new Array(recipeMeshes.length), meshKey = new Map();
+  const recipeMeshes = r.meshes === undefined ? [] : list(r.meshes, `${rat}/meshes`) /* D-166: a library may have none */, meshes = new Array(recipeMeshes.length), meshKey = new Map();
   const intern = (m, key, slot) => {
     if (!meshKey.has(key)) meshKey.set(key, slot !== undefined && meshes[slot] === undefined ? (meshes[slot] = m, slot) : meshes.push(m) - 1);
     return meshKey.get(key);
@@ -177,7 +183,8 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
   let own;
   const meshAt = (i, s) => {
     const m = mesh(recipeMeshes[i], s, `${rat}/meshes/${i}`, materials.length), j = m.material;
-    if (j !== undefined && (materials[j] || pending.has(j))) {
+    if (j !== undefined && isStub(doc.materials[j])) { delete m.material; m.placed = stubAt(j, s); m.stub = j; stubUsed.add(j); } // stub: for the bake's variants (D-167)
+    else if (j !== undefined && (materials[j] || pending.has(j))) {
       const o = materialAt(doc.materials[j], j, s);
       if (pending.has(j)) { pending.delete(j); materials[j] = o; }
       else if (JSON.stringify(o) !== JSON.stringify(materials[j])) {
@@ -243,20 +250,42 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
     if (x.range !== undefined) { o.range = num(x.range, s, `${xat}/range`); need(o.range > 0, `${xat}/range`, `must be > 0, is ${o.range} (at ${at})`); }
     return addLight(o);
   };
+  // A document by `uri` as glTF's: a data: URI holding the JSON, or a file name looked up in `files`.
+  const resolve = (uri, at, label) => {
+    need(typeof uri === 'string' && uri !== '', at, 'must be a non-empty string');
+    const data = /^data:[^,]*?(;base64)?,(.*)$/s.exec(uri);
+    if (data) {
+      try { return { doc: JSON.parse(data[1] ? atob(data[2]) : decodeURIComponent(data[2])), label }; }
+      catch (e) { need(false, at, `is not a JSON document: ${e.message}`); }
+    }
+    need(Object.hasOwn(files, uri), at, `no file "${uri}" next to this document`);
+    return { doc: files[uri], label: uri, dir: uri.slice(0, uri.lastIndexOf('/') + 1) };
+  };
+  // Draft f34 (D-162..D-166): stub material j, in scope s, as the index of a finished material in `placed`: the
+  // library's material named `from.material`, whole, read at the stub's `values` over the library's defaults.
+  const stubAt = (j, s) => {
+    const x = doc.materials[j].extensions[EXT], at = `/materials/${j}/extensions/${EXT}`, fat = `${at}/from`;
+    only(x, ['from', 'values'], at);
+    need(isObj(x.from), fat, 'must be { "uri": …, "material": … }');
+    only(x.from, ['uri', 'material'], fat);
+    const lib = resolve(x.from.uri, `${fat}/uri`, `${fat}/uri`), name = x.from.material;
+    need(lib.doc !== doc && !stack.includes(lib.doc) && stack.length < 16, `${fat}/uri`, 'refers to itself, or nests deeper than 16');
+    need(typeof name === 'string' && name !== '', `${fat}/material`, 'must be a material name');
+    const names = Array.isArray(lib.doc?.materials) ? lib.doc.materials.map((m) => m?.name) : [], k = names.indexOf(name);
+    need(k >= 0, `${fat}/material`, `no material "${name}" in ${lib.label}`);
+    need(names.indexOf(name, k + 1) < 0, `${fat}/material`, `more than one material "${name}" in ${lib.label}`);
+    const vals = valuesOf(lib, x.values, s, `${at}/values`);
+    let sub;
+    try { sub = read(lib.doc, vals, { files, stack: [...stack, doc] }); } catch (e) { need(false, fat, `in ${lib.label}: ${e.message}`); }
+    return addPlaced(lift(sub.finished(k), (i) => sub.placedTextures[i], lib.dir ?? '', fat));
+  };
   const models = (r.models ?? []).map((m, k) => {
     const at = `${rat}/models/${k}`;
     need(isObj(m), at, 'must be an object');
     only(m, ['uri', 'document'], at);
     need((m.uri === undefined) !== (m.document === undefined), at, 'needs one of uri or document');
     if (m.document !== undefined) return { doc: m.document, label: `models/${k}` };
-    need(typeof m.uri === 'string' && m.uri !== '', `${at}/uri`, 'must be a non-empty string');
-    const data = /^data:[^,]*?(;base64)?,(.*)$/s.exec(m.uri);
-    if (data) {
-      try { return { doc: JSON.parse(data[1] ? atob(data[2]) : decodeURIComponent(data[2])), label: `models/${k}` }; }
-      catch (e) { need(false, `${at}/uri`, `is not a JSON document: ${e.message}`); }
-    }
-    need(Object.hasOwn(files, m.uri), `${at}/uri`, `no file "${m.uri}" next to this document`);
-    return { doc: files[m.uri], label: m.uri, dir: m.uri.slice(0, m.uri.lastIndexOf('/') + 1) };
+    return resolve(m.uri, `${at}/uri`, `models/${k}`);
   });
 
   need(doc.nodes === undefined || Array.isArray(doc.nodes), '/nodes', 'must be a list');
@@ -344,6 +373,10 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
     need(!missing.length, cat, `vrm1_humanoid needs the roles ${missing.join(', ')}`);
   }
 
+  // Draft f32 (D-156, D-158, D-159): poses turn named joints by eulers times a weight, after their own rotation; the sum
+  // over poses per node, as one euler. node index -> [x, y, z] degrees.
+  const turn = posesOf(r.poses, src, repeated, scope, rat);
+
   // Evaluate the tree with world matrices. A repeated node is evaluated once per copy, its index and row bound
   // for its subtree (D-44, D-46, D-75). `tree` holds one record per copy: { i, node, rep, shown, kids, world, name,
   // mesh, bound }; a repeat of 0 still evaluates copy 0, unshown, so its errors surface. `nodes[i]` is node i's
@@ -379,7 +412,9 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
     const rep = isObj(x) && x.repeat !== undefined ? repeat(x.repeat, s, `${xat}/repeat`) : null;
     return Array.from({ length: rep ? Math.max(1, rep.count) : 1 }, (_, k) => {
       const sk = repeatVars(rep?.vars, rep ? { ...s, [rep.index]: k, ...rep.rows?.[k] } : s, `${xat}/repeat/vars`), c = rep ? [...copy, k] : copy;
-      const n = nodeAt(src[i], sk, at), vis = shown && (!rep || k < rep.count) && n.visible;
+      const n = nodeAt(src[i], sk, at);
+      if (turn.has(i)) { n.rotation = qmul(n.rotation, eulerQuat(turn.get(i))); n.matrix = compose(n.translation, n.rotation, n.scale); }
+      const vis = shown && (!rep || k < rep.count) && n.visible;
       if (n.mesh !== undefined) n.mesh = meshAt(n.mesh, sk);
       nodes[i] ??= { ...n, repeated: repeated.has(i), scope: sk }; // scope: the first copy's, for editor drags
       const world = mul(parent, n.matrix);
@@ -421,23 +456,7 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
     need(Number.isInteger(x.model) && x.model >= 0 && x.model < models.length, `${xat}/model`, `must be a model index 0..${models.length - 1}`);
     const m = models[x.model];
     need(m.doc !== doc && !stack.includes(m.doc) && stack.length < 16, `${xat}/model`, 'places itself, or nests deeper than 16');
-    need(x.values === undefined || isObj(x.values), `${xat}/values`, 'must be an object');
-    const ps = m.doc?.extensions?.[EXT]?.params ?? {}, vals = {};
-    for (const [k, e] of Object.entries(x.values ?? {})) {
-      if (k.startsWith('//')) continue;
-      const kat = `${xat}/values/${k}`;
-      need(isObj(ps) && Object.hasOwn(ps, k), kat, `is not a parameter of ${m.label}`);
-      if (ps[k]?.type === 'color') { vals[k] = color(e, 4, s, kat); continue; } // a color expression or linear channels (D-78, D-91)
-      const opts = ps[k]?.type === 'choice' && Array.isArray(ps[k].options) ? ps[k].options : null;
-      if (opts?.includes(e)) { vals[k] = e; continue; } // draft f21: an option by name, or an expression giving its index
-      if (typeof s[e] === 'string') { // draft f23 (D-112): a row's text names the option
-        need(opts?.includes(s[e]), kat, `"${e}" is text ("${s[e]}"); ${opts ? `must be one of ${JSON.stringify(opts)}` : 'only a choice parameter takes text'}`);
-        vals[k] = s[e]; continue;
-      }
-      const v = num(e, s, kat);
-      if (opts) need(Number.isInteger(v) && v >= 0 && v < opts.length, kat, `must be one of ${JSON.stringify(opts)} or an index 0..${opts.length - 1}, is ${v}`);
-      vals[k] = ps[k]?.type === 'bool' ? v !== 0 : opts ? opts[v] : v;
-    }
+    const vals = valuesOf(m, x.values, s, `${xat}/values`);
     let sub;
     try { sub = read(m.doc, vals, { files, stack: [...stack, doc] }); } catch (e) { need(false, `${xat}/model`, `in ${m.label}: ${e.message}`); }
     for (const k of Object.keys(vals)) if (!sub.params[k].live) valueSinks.set(`${xat}/values/${k}`, x.values[k]); // draft f26: reaches a bake slot there
@@ -447,7 +466,7 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
     const dir = m.dir ?? '', sd = m.stripped;
     const own = ownTexture(sd, `${xat}/model`, `in ${m.label}: `); // a texture of the placed document itself
     // Its shapes join this document's, shared with equal shapes placed before (D-92).
-    const remap = sub.meshes.map(({ material, placed: pm, ...mesh }) => {
+    const remap = sub.meshes.map(({ material, placed: pm, stub: _, ...mesh }) => {
       if (pm !== undefined) mesh.placed = addPlaced(lift(structuredClone(sub.placed[pm]), (i) => sub.placedTextures[i], dir, `${xat}/model`));
       else if (material !== undefined) {
         const { extensions: { [EXT]: _, ...ext } = {}, ...rest } = structuredClone(sd.materials[material]);
@@ -477,6 +496,14 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
   src.forEach((n, i) => { if (!nodes[i] && !isBaked(n)) nodes[i] = nodeAt(n, scope, `/nodes/${i}`); });
   for (let i = 0; i < recipeMeshes.length; i++) if (meshes[i] === undefined) meshAt(i, scope); // drawn by no copy
   for (const e of pending.values()) throw e; // used by no copy, and wrong at the parameters
+  // Draft f34: material i as a finished glTF material whose textures index `placedTextures`, for a referring document.
+  const finished = (i) => {
+    if (isStub(doc.materials[i])) return structuredClone(placed[stubAt(i, scope)]);
+    own ??= strip(doc);
+    const { extensions: { [EXT]: _, ...ext } = {}, ...rest } = structuredClone(own.materials[i]);
+    return lift(slots({ ...rest, ...(Object.keys(ext).length && { extensions: ext }) }, materials[i] ?? {}), ownTexture(own), '', `/materials/${i}`);
+  };
+  (doc.materials ?? []).forEach((m, i) => { if (isStub(m) && !stubUsed.has(i)) stubAt(i, scope); }); // used by no copy: checked at the parameters
 
   // y of the floor in model space; hosts stand the model there. Default: the lowest point on the vertical line
   // through the origin, or 0 when no shape crosses that line. The default builds geometry, so it is worked out
@@ -490,7 +517,7 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
   for (const p of Object.values(params)) p.live ??= true;
   const clips = stack.length ? [] : clipsOf(r.clips, params, scope, rat); // draft f31: the outermost document's
   let low;
-  const out = { params, sets, vars, get floor() { return floor ?? (low ??= lowestOnAxis(meshes, instances)); }, materials, meshes, nodes, instances, tree, skins, skinBlend, character, clips, placed, placedTextures, lights };
+  const out = { params, sets, vars, get floor() { return floor ?? (low ??= lowestOnAxis(meshes, instances)); }, materials, meshes, nodes, instances, tree, skins, skinBlend, character, clips, placed, placedTextures, lights, finished };
   // Draft f28 (D-146): skinned shapes are built and weighted at the bind pose, every live parameter at its default,
   // and follow their joints from there. Done once, by the outermost document.
   if (!stack.length && !rest && skins.some((js) => js.length)) {
@@ -498,6 +525,43 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
     skinPose(out, live.length ? read(doc, { ...values, ...Object.fromEntries(live.map(([k, p]) => [k, p.default])) }, { files, stack, rest: true }) : out);
   }
   return out;
+}
+
+// Draft f32 (D-156, D-158, D-159): `poses`: name -> { weight, joints: { node name: euler } }. A joint is a node of this
+// document by its name (recipe template text, else glTF name), once, not repeated, with a recipe euler or rotation
+// (its core rotation is then the bake's cache); weight and eulers are expressions over the parameters and variables.
+function posesOf(ps, src, repeated, scope, rat) {
+  const turn = new Map();
+  if (ps === undefined) return turn;
+  need(isObj(ps), `${rat}/poses`, 'must be an object: pose name -> { weight, joints }');
+  const byName = new Map();
+  src.forEach((n, i) => {
+    if (isBaked(n)) return;
+    const name = n?.extensions?.[EXT]?.name ?? n?.name;
+    if (typeof name === 'string') byName.set(name, byName.has(name) ? -1 : i);
+  });
+  for (const [name, pose] of Object.entries(ps)) {
+    if (name.startsWith('//')) continue;
+    const at = `${rat}/poses/${name}`;
+    need(name !== '' && !name.includes('/'), at, 'a pose name is non-empty text without /');
+    need(isObj(pose), at, 'must be an object: { weight, joints }');
+    only(pose, ['weight', 'joints'], at);
+    need(pose.weight !== undefined, `${at}/weight`, 'is required: an expression over the parameters, 0 for off and 1 for the full pose');
+    const w = num(pose.weight, scope, `${at}/weight`);
+    need(isObj(pose.joints) && Object.keys(pose.joints).some((k) => !k.startsWith('//')), `${at}/joints`, 'must be an object: node name -> euler [x, y, z] degrees');
+    for (const [j, e] of Object.entries(pose.joints)) {
+      if (j.startsWith('//')) continue;
+      const jat = `${at}/joints/${j}`, i = byName.get(j);
+      need(i !== undefined, jat, 'no node has this name');
+      need(i !== -1, jat, 'several nodes have this name');
+      need(!repeated.has(i), jat, `node ${i} is repeated; a pose turns one node`);
+      const x = src[i].extensions?.[EXT];
+      need(x?.euler !== undefined || x?.rotation !== undefined, jat, `node ${i} needs a recipe euler or rotation: a pose makes its core rotation the bake's`);
+      const v = vec(e, 3, scope, jat), t = turn.get(i) ?? [0, 0, 0];
+      turn.set(i, t.map((c, a) => c + w * v[a]));
+    }
+  }
+  return turn;
 }
 
 // Draft f31 (D-152, D-153): clips drive live parameters over time. Each clip is sampled here, at `fps` (default 30)
@@ -680,6 +744,29 @@ function modelBounds(sub) {
   return Object.fromEntries(['x', 'y', 'z'].flatMap((a, k) => [[`model_${a}0`, f(lo[k])], [`model_${a}1`, f(hi[k])]]));
 }
 
+// Draft f10: `values` for another document's parameters (a placed model's, draft f34 a library material's),
+// each a number, expression, color or option of the referring document in scope s.
+function valuesOf(m, values, s, at) {
+  need(values === undefined || isObj(values), at, 'must be an object');
+  const ps = m.doc?.extensions?.[EXT]?.params ?? {}, vals = {};
+  for (const [k, e] of Object.entries(values ?? {})) {
+    if (k.startsWith('//')) continue;
+    const kat = `${at}/${k}`;
+    need(isObj(ps) && Object.hasOwn(ps, k), kat, `is not a parameter of ${m.label}`);
+    if (ps[k]?.type === 'color') { vals[k] = color(e, 4, s, kat); continue; } // a color expression or linear channels (D-78, D-91)
+    const opts = ps[k]?.type === 'choice' && Array.isArray(ps[k].options) ? ps[k].options : null;
+    if (opts?.includes(e)) { vals[k] = e; continue; } // draft f21: an option by name, or an expression giving its index
+    if (typeof s[e] === 'string') { // draft f23 (D-112): a row's text names the option
+      need(opts?.includes(s[e]), kat, `"${e}" is text ("${s[e]}"); ${opts ? `must be one of ${JSON.stringify(opts)}` : 'only a choice parameter takes text'}`);
+      vals[k] = s[e]; continue;
+    }
+    const v = num(e, s, kat);
+    if (opts) need(Number.isInteger(v) && v >= 0 && v < opts.length, kat, `must be one of ${JSON.stringify(opts)} or an index 0..${opts.length - 1}, is ${v}`);
+    vals[k] = ps[k]?.type === 'bool' ? v !== 0 : opts ? opts[v] : v;
+  }
+  return vals;
+}
+
 // A texture of a stripped document as { texture, image, sampler }, for `lift`.
 const ownTexture = (sd, at = '', pre = '') => (i) => {
   const { source, sampler, ...texture } = sd.textures?.[i] ?? {};
@@ -692,6 +779,12 @@ const ownTexture = (sd, at = '', pre = '') => (i) => {
 export async function loadFiles(doc, load, files = {}) {
   for (const m of doc?.extensions?.[EXT]?.models ?? []) {
     const u = m?.uri;
+    if (typeof u !== 'string' || u.startsWith('data:') || Object.hasOwn(files, u)) continue;
+    files[u] = JSON.parse(await load(u));
+    await loadFiles(files[u], load, files);
+  }
+  for (const m of Array.isArray(doc?.materials) ? doc.materials : []) { // draft f34: library materials
+    const u = m?.extensions?.[EXT]?.from?.uri;
     if (typeof u !== 'string' || u.startsWith('data:') || Object.hasOwn(files, u)) continue;
     files[u] = JSON.parse(await load(u));
     await loadFiles(files[u], load, files);
@@ -801,8 +894,8 @@ export function eulerQuat(deg) {
 
 function mesh(m, scope, at, materialCount) {
   need(isObj(m), at, 'must be an object');
-  only(m, ['box', 'loft', 'extrude', 'lathe', 'text', 'material', 'uv'], at);
-  need(Object.keys(m).filter((k) => !k.startsWith('//') && k !== 'material' && k !== 'uv').length === 1, at, 'must have one shape: box, loft, extrude, lathe or text');
+  only(m, ['box', 'loft', 'extrude', 'lathe', 'text', ...ROUND, 'material', 'uv'], at);
+  need(Object.keys(m).filter((k) => !k.startsWith('//') && k !== 'material' && k !== 'uv').length === 1, at, `must have one shape: box, loft, extrude, lathe, text, ${ROUND.join(', ')}`);
   if (m.uv !== undefined) { // draft f11 (D-80): texture coordinates as fractions of the shape, or in meters
     need(UV.includes(m.uv), `${at}/uv`, `must be one of ${UV.map((u) => `"${u}"`).join(', ')}`);
     return { ...mesh({ ...m, uv: undefined }, scope, at, materialCount), uv: m.uv };
@@ -815,6 +908,8 @@ function mesh(m, scope, at, materialCount) {
   if (m.extrude !== undefined) return extrude(m.extrude, scope, `${at}/extrude`);
   if (m.lathe !== undefined) return lathe(m.lathe, scope, `${at}/lathe`);
   if (m.text !== undefined) return text(m.text, scope, `${at}/text`);
+  const k = ROUND.find((r) => m[r] !== undefined);
+  if (k) return round(k, m[k], scope, `${at}/${k}`);
   const b = m.box;
   at += '/box';
   need(isObj(b), at, 'must be an object');
@@ -869,8 +964,10 @@ const KHR_LIGHTS = 'KHR_lights_punctual';
 const KHR_NV = 'KHR_node_visibility';
 const KHR_ES = 'KHR_materials_emissive_strength';
 // Recipe slots kept in a material extension: [extension, default]; the bake writes the extension only off the default.
-const EXT_SLOTS = { emissiveStrength: [KHR_ES, 1], transmissionFactor: ['KHR_materials_transmission', 0], ior: ['KHR_materials_ior', 1.5] };
-const MATERIAL_EXTS = [KHR_TT, ...Object.values(EXT_SLOTS).map(([e]) => e)];
+const EXT_SLOTS = { emissiveStrength: [KHR_ES, 1], transmissionFactor: ['KHR_materials_transmission', 0], ior: ['KHR_materials_ior', 1.5],
+  sheenColorFactor: ['KHR_materials_sheen', [0, 0, 0]], sheenRoughnessFactor: ['KHR_materials_sheen', 0],
+  diffuseTransmissionFactor: ['KHR_materials_diffuse_transmission', 0], diffuseTransmissionColorFactor: ['KHR_materials_diffuse_transmission', [1, 1, 1]] };
+const MATERIAL_EXTS = [KHR_TT, ...new Set(Object.values(EXT_SLOTS).map(([e]) => e))];
 const isBaked = (o) => o?.extensions?.[EXT]?.baked === true;
 
 // Remove the bake's cache: every item marked baked, and the core node slots that have a twin in JIG_recipe.
@@ -995,9 +1092,31 @@ export function bake(doc, values = {}, { uri, set, files, quick = false } = {}) 
 
   // Sets as KHR_materials_variants (draft f8): each set is a variant; a material whose recipe slots differ at a set's
   // values (over this bake's) gets a baked copy with them, mapped on every primitive that uses the material.
-  const names = Object.keys(out.sets), mapping = {};
+  const names = Object.keys(out.sets), mapping = {}, stubSets = {};
+  // A finished material with each texture index replaced by its { texture, image, sampler }, to compare across reads.
+  const full = (o, p) => {
+    const mat = structuredClone(o.placed[p]);
+    for (const slot of textureSlots(mat)) slot.index = o.placedTextures[slot.index];
+    return mat;
+  };
+  const shapes = (o) => { // every node drawing a shape, in tree order
+    const l = [];
+    (function all(recs) { for (const x of recs) { if (x.mesh !== undefined) l.push(x); all(x.kids ?? []); } })(o.tree);
+    return l;
+  };
   names.forEach((name, v) => {
-    const mats = read(d, { ...r.baked_values, ...out.sets[name] }, { files }).materials;
+    const so = read(d, { ...r.baked_values, ...out.sets[name] }, { files }), mats = so.materials;
+    // Draft f34 (D-167): a stub's material at the set's values, per baked mesh, matched node by node in tree order.
+    const a = shapes(out), b = shapes(so), sat = `/extensions/${EXT}/sets/${name}`;
+    a.forEach((x, k) => {
+      const m = out.meshes[x.mesh];
+      if (m.stub === undefined) return;
+      need(b.length === a.length && so.meshes[b[k].mesh].stub === m.stub, sat, 'changes which shapes are drawn, so a stub material cannot take its variant');
+      const want = full(so, so.meshes[b[k].mesh].placed), had = (stubSets[x.mesh] ??= {})[v];
+      if (JSON.stringify(want) === JSON.stringify(full(out, m.placed))) return;
+      need(had === undefined || JSON.stringify(had) === JSON.stringify(want), sat, 'gives copies that share a mesh different stub materials');
+      stubSets[x.mesh][v] = want;
+    });
     mats.forEach((m, i) => {
       if (!m || JSON.stringify(m) === JSON.stringify(out.materials[i])) return;
       const { extensions: { [EXT]: _, ...ext } = {}, ...rest } = authored[i];
@@ -1022,17 +1141,26 @@ export function bake(doc, values = {}, { uri, set, files, quick = false } = {}) 
     return i;
   };
   // Placed documents' materials (D-78): a baked material each, in order of first use.
-  const placedAt = {}, texAt = {};
-  const placedTexture = (i) => { // draft f11: a placed material's texture, with its image and sampler, as baked items
-    const { texture, image, sampler } = out.placedTextures[i];
-    return add('textures', { ...texture, source: add('images', image), ...(sampler && { sampler: add('samplers', sampler) }) });
+  const placedAt = {}, texAt = {}, stubVariantAt = {};
+  const texOf = (e) => { // draft f11: a placed material's texture, with its image and sampler, as baked items
+    const { texture, image, sampler } = e;
+    return (texAt[JSON.stringify(e)] ??= add('textures', { ...texture, source: add('images', image), ...(sampler && { sampler: add('samplers', sampler) }) }));
   };
-  const placedMaterial = (p) => {
-    const mat = structuredClone(out.placed[p]);
-    for (const slot of textureSlots(mat)) slot.index = (texAt[slot.index] ??= placedTexture(slot.index));
+  const finishedMaterial = (mat) => { // textures as entries (`full`) -> a baked material
+    for (const [k, place] of Object.entries(TEXTURE_SLOTS)) { const slot = place === 'pbr' ? mat.pbrMetallicRoughness?.[k] : mat[k]; if (isObj(slot?.index)) slot.index = texOf(slot.index); }
     return add('materials', mat);
   };
-  const matIndex = (m) => (m.placed === undefined ? m.material : (placedAt[m.placed] ??= placedMaterial(m.placed)));
+  const matIndex = (m) => (m.placed === undefined ? m.material : (placedAt[m.placed] ??= finishedMaterial(full(out, m.placed))));
+  // A baked mesh's KHR_materials_variants mappings: its own material's (draft f8), or its stub's (D-167).
+  const variantsOf = (mi) => {
+    const m = out.meshes[mi];
+    if (m.stub === undefined) return mapping[m.material];
+    const list = Object.entries(stubSets[mi] ?? {}).map(([v, mat]) => {
+      const named = mat.name === undefined ? mat : { ...mat, name: `${mat.name} (${names[v]})` }, key = JSON.stringify(named);
+      return { material: (stubVariantAt[key] ??= finishedMaterial(structuredClone(named))), variants: [+v] };
+    });
+    return list.length ? list : undefined;
+  };
   // Only meshes a drawn node draws unskinned are baked, hidden ones too (D-130), in recipe order; meshAt maps recipe
   // mesh to core mesh. A hidden shape bound to a joint is left out of its skin's mesh; its visible is bake (D-134).
   const drawn = [];
@@ -1051,9 +1179,9 @@ export function bake(doc, values = {}, { uri, set, files, quick = false } = {}) 
     const nor = add('accessors', { bufferView: view(normals, 34962), componentType: 5126, count: normals.length / 3, type: 'VEC3' });
     const tex = add('accessors', { bufferView: view(uvs, 34962), componentType: 5126, count: uvs.length / 2, type: 'VEC2' });
     const idx = add('accessors', { bufferView: view(indices, 34963), componentType: short ? 5123 : 5125, count: indices.length, type: 'SCALAR' });
-    const mat = matIndex(m);
+    const mat = matIndex(m), maps = variantsOf(mi);
     add('meshes', { primitives: [{ attributes: { POSITION: pos, NORMAL: nor, TEXCOORD_0: tex }, indices: idx, ...(mat !== undefined && { material: mat }),
-      ...(mapping[m.material] && { extensions: { [KHR_VARIANTS]: { mappings: mapping[m.material] } } }) }] });
+      ...(maps && { extensions: { [KHR_VARIANTS]: { mappings: maps } } }) }] });
   }
   out.materials.forEach((m, i) => { if (m) slots(d.materials[i], m); }); // the material cache (D-57)
   for (const e of MATERIAL_EXTS) if (JSON.stringify(d.materials ?? []).includes(`"${e}"`) && !d.extensionsUsed.includes(e)) d.extensionsUsed.push(e);
@@ -1131,9 +1259,9 @@ export function bake(doc, values = {}, { uri, set, files, quick = false } = {}) 
         JOINTS_0: acc(x.weights?.joints ?? new Uint16Array(4 * n).map((_, i) => (i % 4 ? 0 : joint)), 5123, 'VEC4'),
         WEIGHTS_0: acc(x.weights?.weights ?? new Float32Array(4 * n).map((_, i) => (i % 4 ? 0 : 1)), 5126, 'VEC4') };
       const idx = add('accessors', { bufferView: view(indices, 34963), componentType: short ? 5123 : 5125, count: indices.length, type: 'SCALAR' });
-      const mat = matIndex(out.meshes[x.mesh]), own = out.meshes[x.mesh].material;
+      const mat = matIndex(out.meshes[x.mesh]), maps = variantsOf(x.mesh);
       return { attributes, indices: idx, ...(mat !== undefined && { material: mat }),
-        ...(mapping[own] && { extensions: { [KHR_VARIANTS]: { mappings: mapping[own] } } }) };
+        ...(maps && { extensions: { [KHR_VARIANTS]: { mappings: maps } } }) };
     });
     const mesh = add('meshes', { primitives });
     d.scenes[d.scene].nodes.push(add('nodes', { name: `skin ${s}`, mesh, skin }));
@@ -1664,7 +1792,7 @@ const KAPPA = (4 * (Math.SQRT2 - 1)) / 3;
 // Draft f20 (D-105): { "squircle": [rx, ry, n] }, the same 4 points with handles k·r that put each quarter's
 // midpoint on the superellipse |u/rx|^n + |v/ry|^n = 1: k = (8·2^(−1/n) − 4) / 3, so n 2 gives KAPPA and n 1 a
 // diamond (k 0); k stops at 1 (n ≈ 5.2) so the curve stays inside its box.
-function roundSection(x, scope, at) {
+export function roundSection(x, scope = {}, at = '') {
   only(x, ['circle', 'ellipse', 'squircle', 'center'], at);
   const keys = Object.keys(x).filter((k) => !k.startsWith('//') && k !== 'center');
   need(keys.length === 1, at, 'must be { "circle": r }, { "ellipse": [rx, ry] } or { "squircle": [rx, ry, n] }');
@@ -1909,6 +2037,29 @@ function lathe(l, scope, at) {
   const open = (i, end) => poly[i][0] > 1e-9 && capKind(caps, end) === 'none';
   need(!m.thickness || open(0, 'start') || open(poly.length - 1, 'end'), `${at}/thickness`, 'needs an open end (r > 0, caps "none")');
   return m;
+}
+
+// Draft f35 (D-168..D-170): cylinder, cone, sphere and capsule, centred on the origin with their axis along +y, built
+// as the lathe they stand for (same triangles, uv, sides; caps on cylinder and cone). Sphere and capsule profiles are
+// smooth points with no handles ([r, y, 0, 0]): one ring per point, normals smooth across them.
+const ROUND = ['cylinder', 'cone', 'sphere', 'capsule'];
+function round(kind, o, scope, at) {
+  need(isObj(o), at, 'must be an object');
+  const flat = kind === 'cylinder' || kind === 'cone';
+  only(o, ['radius', ...(kind === 'sphere' ? [] : ['height']), 'sides', ...(flat ? ['caps'] : [])], at);
+  const sides = Math.min(256, Math.max(3, Math.round(o.sides === undefined ? 24 : num(o.sides, scope, `${at}/sides`))));
+  const [r0, r1] = kind === 'cone' ? vec(o.radius, 2, scope, `${at}/radius`) : Array(2).fill(num(o.radius, scope, `${at}/radius`));
+  if (kind === 'cone') need(r0 >= 0 && r1 >= 0 && r0 + r1 > 0, `${at}/radius`, `must be >= 0 and not both 0, is [${r0}, ${r1}]`);
+  else need(r0 > 0, `${at}/radius`, `must be > 0, is ${r0}`);
+  const h = kind === 'sphere' ? 2 * r0 : num(o.height, scope, `${at}/height`);
+  need(h > 0, `${at}/height`, `must be > 0, is ${h}`);
+  if (kind === 'capsule') need(h >= 2 * r0 - 1e-9, `${at}/height`, `must be >= 2 radius (${2 * r0}), is ${h}`);
+  if (flat) { const caps = capsOf(o.caps, `${at}/caps`); return { type: 'lathe', kind, profile: [[r0, -h / 2], [r1, h / 2]], sides, ...(caps && { caps }) }; }
+  // Arcs: a sphere sides/2 steps pole to pole, a capsule's ends sides/4 each, so both are as round as a ring.
+  const q = Math.max(1, Math.round(sides / 4)), mid = h / 2 - r0;
+  const arc = (y0, from, to) => Array.from({ length: q + 1 }, (_, k) => { const a = from + ((to - from) * k) / q; return [r0 * Math.sin(a), y0 - r0 * Math.cos(a), 0, 0]; });
+  const profile = [...arc(-mid, 0, Math.PI / 2), ...arc(mid, Math.PI / 2, Math.PI).slice(mid > 1e-9 ? 0 : 1)];
+  return { type: 'lathe', kind, profile: profile.map((p) => p.map((c) => (Math.abs(c) < 1e-12 ? 0 : c))), sides };
 }
 
 // The open profile as a polyline (the closing edge left out), the polyline indices of its inner corners, and
@@ -2576,13 +2727,16 @@ function pcg3d(x, y, z) {
 
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 // Material slots a recipe may set, and where glTF keeps them (D-6 amended).
-const MATERIAL_SLOTS = { baseColorFactor: 'pbr', metallicFactor: 'pbr', roughnessFactor: 'pbr', emissiveFactor: 'top', emissiveStrength: 'ext', transmissionFactor: 'ext', ior: 'ext' };
+const MATERIAL_SLOTS = { baseColorFactor: 'pbr', metallicFactor: 'pbr', roughnessFactor: 'pbr', emissiveFactor: 'top', emissiveStrength: 'ext', transmissionFactor: 'ext', ior: 'ext',
+  sheenColorFactor: 'ext', sheenRoughnessFactor: 'ext', diffuseTransmissionFactor: 'ext', diffuseTransmissionColorFactor: 'ext' };
 // Write evaluated material slots into their core glTF places; returns the material.
 function slots(core, m) {
   const pbr = Object.fromEntries(Object.entries(m).filter(([k]) => MATERIAL_SLOTS[k] === 'pbr'));
   if (Object.keys(pbr).length) core.pbrMetallicRoughness = { ...pbr, ...core.pbrMetallicRoughness };
   if (m.emissiveFactor) core.emissiveFactor = m.emissiveFactor;
-  for (const [k, [e, def]] of Object.entries(EXT_SLOTS)) if (m[k] !== undefined && m[k] !== def) core.extensions = { ...core.extensions, [e]: { [k]: m[k] } };
+  for (const [k, [e, def]] of Object.entries(EXT_SLOTS)) { // slots sharing an extension (sheen) go in one object
+    if (m[k] !== undefined && JSON.stringify(m[k]) !== JSON.stringify(def)) core.extensions = { ...core.extensions, [e]: { ...core.extensions?.[e], [k]: m[k] } };
+  }
   for (const [k, place] of Object.entries(TEXTURE_SLOTS)) {
     if (!m[k]) continue;
     const slot = place === 'pbr' ? core.pbrMetallicRoughness[k] : core[k];

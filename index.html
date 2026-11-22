@@ -69,6 +69,10 @@ kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); bor
 .ic { width: 11px; height: 11px; flex: none; border: 1.5px solid var(--mute); }
 .ic.box { border-radius: 2px; }
 .ic.loft { border-radius: 6px 6px 2px 2px; height: 13px; width: 8px; }
+.ic.cylinder { border-radius: 30% / 15%; height: 13px; width: 9px; }
+.ic.cone { border-radius: 50% 50% 2px 2px / 100% 100% 2px 2px; height: 12px; }
+.ic.sphere, .ic.capsule { border-radius: 50%; }
+.ic.capsule { height: 13px; width: 8px; }
 .ic.lathe { border-radius: 40% 40% 2px 2px; height: 13px; width: 10px; }
 .ic.text { border-width: 0 0 1.5px 1.5px; border-radius: 0; }
 .ic.extrude { border-radius: 2px; box-shadow: inset 0 0 0 3px var(--panel, transparent); }
@@ -197,6 +201,10 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
       <button type="button" role="menuitem" data-add="loft"><span class="ic loft"></span>Loft<small>path + sections</small></button>
       <button type="button" role="menuitem" data-add="extrude"><span class="ic extrude"></span>Extrude<small>outline + holes</small></button>
       <button type="button" role="menuitem" data-add="lathe"><span class="ic lathe"></span>Lathe<small>profile turned round y</small></button>
+      <button type="button" role="menuitem" data-add="cylinder"><span class="ic cylinder"></span>Cylinder<small>radius, height</small></button>
+      <button type="button" role="menuitem" data-add="cone"><span class="ic cone"></span>Cone<small>two radii, height</small></button>
+      <button type="button" role="menuitem" data-add="sphere"><span class="ic sphere"></span>Sphere<small>radius</small></button>
+      <button type="button" role="menuitem" data-add="capsule"><span class="ic capsule"></span>Capsule<small>radius, height</small></button>
       <button type="button" role="menuitem" data-add="text"><span class="ic text"></span>Text<small>stroke lettering</small></button>
     </div>
     <span class="seg" role="group" aria-label="Mode">
@@ -269,12 +277,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION } from './jig.js?v=5da7edf';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION } from './jig.js?v=3e22594';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=5da7edf', loft: 'examples/loft.gltf?v=5da7edf', star: 'examples/star.gltf?v=5da7edf', bench: 'examples/bench.gltf?v=5da7edf', lathe: 'examples/lathe.gltf?v=5da7edf', lantern: 'examples/lantern.gltf?v=5da7edf', paths: 'examples/paths.gltf?v=5da7edf', ends: 'examples/ends.gltf?v=5da7edf', cushion: 'examples/cushion.gltf?v=5da7edf',
-  sign: 'examples/sign.gltf?v=5da7edf', finger: 'examples/finger.gltf?v=5da7edf', hand: 'examples/hand.gltf?v=5da7edf', grandpa: 'examples/grandpa.gltf?v=5da7edf' };
+const examples = { box: 'examples/box.gltf?v=3e22594', loft: 'examples/loft.gltf?v=3e22594', star: 'examples/star.gltf?v=3e22594', bench: 'examples/bench.gltf?v=3e22594', lathe: 'examples/lathe.gltf?v=3e22594', lantern: 'examples/lantern.gltf?v=3e22594', paths: 'examples/paths.gltf?v=3e22594', ends: 'examples/ends.gltf?v=3e22594', cushion: 'examples/cushion.gltf?v=3e22594',
+  sign: 'examples/sign.gltf?v=3e22594', finger: 'examples/finger.gltf?v=3e22594', hand: 'examples/hand.gltf?v=3e22594', grandpa: 'examples/grandpa.gltf?v=3e22594' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -295,7 +303,7 @@ const withUnit = (v, unit) => (unit === '%' ? `${fmt(v * 100)} %` : unit === 'de
 const fmt = (v) => (Array.isArray(v) ? `vec4(${v.map(fmt).join(', ')})` : v === undefined || !Number.isFinite(+v) ? '' : String(+(+v).toFixed(3)));
 const R = () => doc.extensions[EXT];
 const meshOf = (i) => doc.nodes?.[i]?.extensions?.[EXT]?.mesh;
-const shapeKind = (m) => (m?.loft ? 'loft' : m?.extrude ? 'extrude' : m?.lathe ? 'lathe' : m?.text ? 'text' : 'box');
+const shapeKind = (m) => ['loft', 'extrude', 'lathe', 'text', 'cylinder', 'cone', 'sphere', 'capsule'].find((k) => m?.[k]) ?? 'box';
 const loftOf = (i) => R().meshes?.[meshOf(i)]?.loft;
 const latheOf = (i) => R().meshes?.[meshOf(i)]?.lathe;
 const extrudeOf = (i) => R().meshes?.[meshOf(i)]?.extrude;
@@ -473,6 +481,9 @@ function draw() {
       if (!on) t.emissiveIntensity = x.emissiveStrength ?? core.extensions?.KHR_materials_emissive_strength?.emissiveStrength ?? 1; // D-82
       t.transmission = x.transmissionFactor ?? core.extensions?.KHR_materials_transmission?.transmissionFactor ?? 0; // D-102
       t.ior = x.ior ?? core.extensions?.KHR_materials_ior?.ior ?? 1.5; // three.js clamps to 1..2.333
+      const sh = core.extensions?.KHR_materials_sheen ?? {}, sc = x.sheenColorFactor ?? sh.sheenColorFactor ?? [0, 0, 0]; // D-160
+      t.sheen = sc.some((c) => c > 0) ? 1 : 0; t.sheenColor.setRGB(...sc); t.sheenRoughness = x.sheenRoughnessFactor ?? sh.sheenRoughnessFactor ?? 0;
+      // shortcut: three.js has no diffuse transmission, so skin shows none of it here; hosts that support it do.
       // Draft f11: texture slots, with the recipe's KHR_texture_transform over the core one.
       const map = (slot, k, srgb) => textureOf(slot, pm !== undefined, x[k] ?? slot?.extensions?.KHR_texture_transform, srgb);
       t.map = map(pbr.baseColorTexture, 'baseColorTexture', true);
@@ -1021,7 +1032,10 @@ function materialSec(m) {
   const now = { // recipe, else core, else glTF's default
     baseColorFactor: pbr.baseColorFactor ?? [1, 1, 1, 1], metallicFactor: pbr.metallicFactor ?? 1, roughnessFactor: pbr.roughnessFactor ?? 1,
     emissiveFactor: mat.emissiveFactor ?? [0, 0, 0], emissiveStrength: ext.KHR_materials_emissive_strength?.emissiveStrength ?? 1,
-    transmissionFactor: ext.KHR_materials_transmission?.transmissionFactor ?? 0, ior: ext.KHR_materials_ior?.ior ?? 1.5, ...ext[EXT],
+    transmissionFactor: ext.KHR_materials_transmission?.transmissionFactor ?? 0, ior: ext.KHR_materials_ior?.ior ?? 1.5,
+    sheenColorFactor: ext.KHR_materials_sheen?.sheenColorFactor ?? [0, 0, 0], sheenRoughnessFactor: ext.KHR_materials_sheen?.sheenRoughnessFactor ?? 0,
+    diffuseTransmissionFactor: ext.KHR_materials_diffuse_transmission?.diffuseTransmissionFactor ?? 0,
+    diffuseTransmissionColorFactor: ext.KHR_materials_diffuse_transmission?.diffuseTransmissionColorFactor ?? [1, 1, 1], ...ext[EXT],
   };
   const val = (slot) => ev[slot] ?? now[slot];
   const num = (slot, label) => el('div', { className: 'vrow one' }, el('label', { htmlFor: `mat-${slot}`, textContent: label }),
@@ -1035,7 +1049,12 @@ function materialSec(m) {
     num('metallicFactor', 'Metallic'), num('roughnessFactor', 'Roughness'),
     colorRow('emissiveFactor', 'Emission', 3, now.emissiveFactor, val('emissiveFactor'), (v) => { x().emissiveFactor = v; }),
     num('emissiveStrength', 'Strength'), num('transmissionFactor', 'Glass'), num('ior', 'IOR'),
-    el('p', {}, 'Glass is transmission (0..1), light passing through; IOR bends it (1.5 is glass, 1.33 water).'));
+    el('p', {}, 'Glass is transmission (0..1), light passing through; IOR bends it (1.5 is glass, 1.33 water).'),
+    colorRow('sheenColorFactor', 'Sheen', 3, now.sheenColorFactor, val('sheenColorFactor'), (v) => { x().sheenColorFactor = v; }),
+    num('sheenRoughnessFactor', 'Sheen rough'),
+    num('diffuseTransmissionFactor', 'Through'),
+    colorRow('diffuseTransmissionColorFactor', 'Through color', 3, now.diffuseTransmissionColorFactor, val('diffuseTransmissionColorFactor'), (v) => { x().diffuseTransmissionColorFactor = v; }),
+    el('p', {}, 'Sheen is the soft rim of cloth. Through is diffuse transmission, light through thin skin or leaves; this viewer does not show it.'));
   return res;
 }
 // A color slot: a picker (sRGB, as the parameter pickers), the value as linear channels or an expression, and a
@@ -1450,6 +1469,10 @@ function addShape(kind) {
   r.meshes = [...(r.meshes ?? []), kind === 'box' ? { box: { size: [0.4, 0.4, 0.4] } }
     : kind === 'extrude' ? { extrude: { outline: [[-0.2, -0.2], [0.2, -0.2], [0.2, 0.2], [-0.2, 0.2]], holes: [circle(0.1)], depth: 0.05 } }
     : kind === 'text' ? { text: { text: 'JIG', size: 0.2, depth: 0.02 } }
+    : kind === 'cylinder' ? { cylinder: { radius: 0.15, height: 0.4 } }
+    : kind === 'cone' ? { cone: { radius: [0.15, 0], height: 0.4 } }
+    : kind === 'sphere' ? { sphere: { radius: 0.2 } }
+    : kind === 'capsule' ? { capsule: { radius: 0.1, height: 0.4 } }
     : kind === 'lathe' ? { lathe: { profile: [[0, 0], [0.15, 0], [0.1, 0.25, 0, 0.08], [0.12, 0.4]] } }
     : { loft: { path: [[0, 0, 0], [0, 0.4, 0], [0.2, 0.7, 0]], sections: [{ t: 0, points: circle(0.1) }, { t: 1, points: circle(0.04) }] } }];
   const mesh = r.meshes.length - 1, at = out ? -out.floor : 0;
