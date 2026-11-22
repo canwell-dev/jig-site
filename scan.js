@@ -10,8 +10,8 @@
 // 3. Sections: start with the two ends; add the ring the blend misses most until every ring is within tolerance.
 // 4. Points: every section gets the same N smooth points at the same angles (the fewest that stay within
 //    tolerance), so the loft blends point to point without twisting.
-import { loftCurve, loftFrame, outline, curveLength, roundSection } from './jig.js?v=c1f5acf';
-import { nodeOrigins, jointParts } from './glb.js?v=c1f5acf';
+import { loftCurve, loftFrame, outline, curveLength, roundSection } from './jig.js?v=b6c9e63';
+import { nodeOrigins, jointParts } from './glb.js?v=b6c9e63';
 
 const SLICES = 40; // rings along the curve
 const RES = 64;    // points per ring
