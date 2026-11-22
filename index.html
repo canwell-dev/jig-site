@@ -131,6 +131,8 @@ input.f.expr { color: var(--expr); border-color: color-mix(in srgb, var(--expr) 
 .setbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px 12px 0; }
 .setbar label { font: 11px var(--mono); color: var(--mute); text-transform: uppercase; letter-spacing: .05em; }
 .setbar .f { width: auto; min-width: 90px; }
+.scrub { display: inline-flex; gap: 6px; align-items: center; } .scrub input { width: 160px; }
+.sec .setbar { padding: 0; }
 .ptable { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(90px, 2fr) 54px 64px 64px 64px var(--xw); gap: 4px 6px; align-items: center; padding: 8px 12px; }
 .vtable { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(120px, 3fr) 64px var(--xw); gap: 4px 6px; align-items: center; padding: 0 12px 10px; }
 .ptable .hd, .vtable .hd { font: 11px var(--mono); color: var(--mute); text-transform: uppercase; letter-spacing: .05em; }
@@ -150,6 +152,7 @@ input.f.expr { color: var(--expr); border-color: color-mix(in srgb, var(--expr) 
 #hint b { color: var(--fg); font-weight: 500; }
 #err { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
 #err.bad { color: var(--err); cursor: pointer; }
+#propsBody p.bad { color: var(--err); }
 #err.ok::before { content: "● "; color: var(--ax1); }
 @media (max-width: 860px) {
   html, body { height: auto; }
@@ -210,6 +213,7 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
     <span class="seg" role="group" aria-label="Mode">
       <button class="btn" id="mObject" type="button" aria-pressed="true">Object</button>
       <button class="btn" id="mEdit" type="button" aria-pressed="false">Edit<kbd>Tab</kbd></button>
+      <button class="btn" id="mPose" type="button" aria-pressed="false" title="Pose mode: turn a skin's joints into poses, give them roles, scrub clips">Pose</button>
     </span>
     <span class="seg" role="group" aria-label="Tool" id="tools"></span>
     <span class="grow"></span>
@@ -251,7 +255,7 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
       <div class="keys">
         <div><span><kbd>Ctrl</kbd><kbd>Z</kbd></span><span>Undo (<kbd>Shift</kbd> to redo)</span></div>
         <div><span><kbd>Shift</kbd><kbd>A</kbd></span><span>Add a box or a loft</span></div>
-        <div><span><kbd>Tab</kbd></span><span>Edit the selected loft / back to Object</span></div>
+        <div><span><kbd>Tab</kbd></span><span>Edit the selected loft / back to Object (also from Pose)</span></div>
         <div><span><kbd>G</kbd><kbd>R</kbd><kbd>S</kbd></span><span>Move, rotate, scale gizmo</span></div>
         <div><span><kbd>Shift</kbd><kbd>D</kbd></span><span>Duplicate with its own mesh</span></div>
         <div><span><kbd>Alt</kbd><kbd>D</kbd></span><span>Duplicate sharing the mesh</span></div>
@@ -277,12 +281,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION } from './jig.js?v=3e22594';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION, VRM_BONES, VRM_REQUIRED } from './jig.js?v=c1f5acf';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=3e22594', loft: 'examples/loft.gltf?v=3e22594', star: 'examples/star.gltf?v=3e22594', bench: 'examples/bench.gltf?v=3e22594', lathe: 'examples/lathe.gltf?v=3e22594', lantern: 'examples/lantern.gltf?v=3e22594', paths: 'examples/paths.gltf?v=3e22594', ends: 'examples/ends.gltf?v=3e22594', cushion: 'examples/cushion.gltf?v=3e22594',
-  sign: 'examples/sign.gltf?v=3e22594', finger: 'examples/finger.gltf?v=3e22594', hand: 'examples/hand.gltf?v=3e22594', grandpa: 'examples/grandpa.gltf?v=3e22594' };
+const examples = { box: 'examples/box.gltf?v=c1f5acf', loft: 'examples/loft.gltf?v=c1f5acf', star: 'examples/star.gltf?v=c1f5acf', bench: 'examples/bench.gltf?v=c1f5acf', lathe: 'examples/lathe.gltf?v=c1f5acf', lantern: 'examples/lantern.gltf?v=c1f5acf', paths: 'examples/paths.gltf?v=c1f5acf', ends: 'examples/ends.gltf?v=c1f5acf', cushion: 'examples/cushion.gltf?v=c1f5acf',
+  sign: 'examples/sign.gltf?v=c1f5acf', finger: 'examples/finger.gltf?v=c1f5acf', hand: 'examples/hand.gltf?v=c1f5acf', grandpa: 'examples/grandpa.gltf?v=c1f5acf' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -292,6 +296,7 @@ let files = {}; // draft f10: documents the open one places by uri, by file name
 const values = {};                       // slider values, by parameter name (not stored in the document)
 let past = [stringify(doc)], future = [];
 let sel = null;                          // { node } | { node, point } | { node, section }
+let activePose = '', poseDrag = null; // Pose mode: the pose the gizmo writes into; the drag's start
 let mode = 'object', gizmo = 'translate', editTool = 'path', dragging = false, sketchDrag = null;
 
 const $ = (s) => document.querySelector(s);
@@ -320,6 +325,29 @@ const SLOT = { translate: 'translation', rotate: 'rotation', scale: 'scale' };
 const eulerSrc = (i) => doc.nodes[i]?.extensions?.[EXT]?.euler;
 const toDeg = (q) => { const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(...q).normalize(), 'ZYX'); return [e.x, e.y, e.z].map((r) => +((r * 180) / Math.PI).toFixed(2)); };
 const setEuler = (i, a) => { X(i).euler = a; delete X(i).rotation; delete doc.nodes[i].rotation; };
+// Pose mode (draft f30, f32): the skins' joints of this document (not of placed ones) as bones.
+const joints = () => new Set((R().skins ?? []).flatMap((s) => s.joints ?? []));
+const nameOf = (i) => doc.nodes[i]?.extensions?.[EXT]?.name ?? doc.nodes[i]?.name;
+const parentOf = (i) => doc.nodes.findIndex((n) => n.children?.includes(i));
+const jointAbove = (i) => { const js = joints(); while (i >= 0 && !js.has(i)) i = parentOf(i); return i < 0 ? null : i; };
+const childJoints = (i, js = joints()) => (doc.nodes[i].children ?? []).flatMap((c) => (js.has(c) ? [c] : childJoints(c, js)));
+const poses = () => (isObj(R().poses) ? Object.keys(R().poses).filter((k) => !k.startsWith('//')) : []);
+const quatOf = (deg) => new THREE.Quaternion().setFromEuler(new THREE.Euler(...deg.map((d) => (d * Math.PI) / 180), 'ZYX'));
+// Node i's turn in degrees: the sum over poses (but `skip`) of weight × euler (§3.6).
+function turnOf(i, skip) {
+  const scope = out.nodes[i]?.scope ?? {}, val = (v) => (isStr(v) ? +evalExpr(v, scope) : v), t = [0, 0, 0];
+  for (const p of poses()) {
+    const ps = R().poses[p], e = ps.joints?.[nameOf(i)];
+    if (p !== skip && Array.isArray(e)) { const w = val(ps.weight); e.forEach((c, a) => { t[a] += w * val(c); }); }
+  }
+  return t;
+}
+const weightOf = (p) => { try { return +evalExpr(R().poses[p].weight, out?.nodes?.find(Boolean)?.scope ?? {}); } catch { return NaN; } };
+// Editing a pose shows it alone at full weight: a weight that is one parameter is tried at 1, the others' at 0.
+function choosePose(p) {
+  activePose = p;
+  for (const q of poses()) { const w = R().poses[q].weight; if (isStr(w) && R().params?.[w]) values[w] = q === p ? 1 : 0; }
+}
 function el(tag, props = {}, ...kids) {
   const e = Object.assign(document.createElement(tag), props);
   e.append(...kids.filter((k) => k !== null && k !== undefined && k !== false));
@@ -581,6 +609,20 @@ function draw() {
     for (const g of grips) dot(g.p, sel.grip === g.grip, 11);
     helperLayer.add(group);
     edit = { flat: true, lathe: m.type === 'lathe', group, mesh: m, poly, dots, grips };
+  } else if (mode === 'pose') {
+    // Bones: a line from each joint to its child joints, a dot on each joint (picked in screen space).
+    const blue = new THREE.Color(css('--helper')), hot = new THREE.Color(css('--accent')), js = joints(), at = {};
+    for (const j of js) if (out.nodes[j]) { const w = mul(parentWorld(j), out.nodes[j].matrix); at[j] = new THREE.Vector3(w[12], w[13], w[14]); }
+    const pts = [];
+    for (const j in at) for (const c of childJoints(+j, js)) if (at[c]) pts.push(at[j], at[c]);
+    const bones = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: blue, depthTest: false, transparent: true }));
+    bones.renderOrder = 10; helperLayer.add(bones);
+    for (const j in at) {
+      const on = sel?.node === +j, d = new THREE.Points(new THREE.BufferGeometry().setFromPoints([at[j]]),
+        new THREE.PointsMaterial({ color: on ? hot : blue, size: on ? 12 : 8, sizeAttenuation: false, depthTest: false }));
+      d.renderOrder = 11; helperLayer.add(d);
+    }
+    edit = { joints: at };
   }
   model.updateMatrixWorld(true);
 }
@@ -666,6 +708,17 @@ function placeGizmo() {
     const src = (gizmo === 'rotate' && eulerSrc(sel.node)) || nodeSrc(sel.node, SLOT[gizmo]);
     if (gizmo === 'rotate' && !eulerSrc(sel.node) && src.some(isStr)) { locked = ['rotation']; return; }
     tc.setMode(gizmo);
+  } else if (mode === 'pose') {
+    // The joint turns in the active pose: own rotation · euler(other poses' turns + weight × this pose's euler).
+    if (!activePose) { locked = ['nopose']; return; }
+    const name = nameOf(sel.node), w = weightOf(activePose);
+    if (!isStr(name) || doc.nodes.some((_, k) => k !== sel.node && nameOf(k) === name)) { locked = ['noname']; return; }
+    if (!w) { locked = ['weight']; return; }
+    const q = new THREE.Quaternion().fromArray(n.rotation), all = turnOf(sel.node);
+    poseDrag = { own: q.clone().multiply(quatOf(all).invert()), all, other: turnOf(sel.node, activePose), w };
+    pivot.matrix.fromArray(parentWorld(sel.node));
+    proxy.position.fromArray(n.translation); proxy.quaternion.copy(q); proxy.scale.fromArray(n.scale);
+    tc.setMode('rotate'); tc.setSpace('local');
   } else if (sel.section !== undefined && edit?.frame) {
     // A section: G slides it along the path, R twists it, S scales its radius or points; a point of it moves in its plane.
     const inst = out.instances.find((i) => i.node === sel.node && !i.model), om = edit.mesh.sections[sel.section];
@@ -719,6 +772,13 @@ function onGizmo() {
       const deg = toDeg(proxy.quaternion.toArray()).map((d, k) => d + 360 * Math.round((was[k] - d) / 360));
       setEuler(sel.node, eu ? keep(eu, deg, 'rotation') : deg.map(r4));
     } else setNodeSlot(sel.node, slot, keep(src, slot === 'translation' ? proxy.position.toArray() : proxy.scale.toArray(), slot === 'translation' ? 'location' : 'scale'));
+  } else if (mode === 'pose' && poseDrag) {
+    // The whole turn the gizmo shows, each angle nearest its value at the drag's start; this pose's share of it.
+    const { own, all, other, w } = poseDrag, i = sel.node, js = R().poses[activePose].joints;
+    if (X(i).euler === undefined && X(i).rotation === undefined) setEuler(i, toDeg(own.toArray())); // a pose needs a recipe rotation (§3.6)
+    const deg = toDeg(own.clone().invert().multiply(proxy.quaternion).toArray()).map((d, k) => d + 360 * Math.round((all[k] - d) / 360));
+    const e = deg.map((d, k) => (d - other[k]) / w), src = js[nameOf(i)];
+    js[nameOf(i)] = Array.isArray(src) ? keep(src, e, `${activePose} turn`) : e.map((c) => +c.toFixed(2));
   } else if (sel.section !== undefined && sel.point !== undefined) {
     dragPoint(shapeSel(), sel.point, sel.dir ?? 0, [proxy.position.x, proxy.position.y]);
   } else if (sel.section !== undefined && secDrag) {
@@ -803,6 +863,14 @@ function pick(e) {
       }
     }
   }
+  if (mode === 'pose' && edit?.joints) { // a joint's dot, else the joint a clicked shape hangs from
+    let best = null;
+    for (const [j, p] of Object.entries(edit.joints)) {
+      const s = p.clone().applyMatrix4(helperLayer.matrixWorld).project(camera), d = Math.hypot((s.x + 1) / 2 * rect.width - q[0], (1 - s.y) / 2 * rect.height - q[1]);
+      if (d < 12 && (!best || d < best.d)) best = { j: +j, d };
+    }
+    if (best) return select({ node: best.j });
+  }
   const ray = new THREE.Raycaster();
   ray.setFromCamera(new THREE.Vector2((q[0] / rect.width) * 2 - 1, -(q[1] / rect.height) * 2 + 1), camera);
   const hit = ray.intersectObjects(meshLayer.children, false)[0];
@@ -810,6 +878,7 @@ function pick(e) {
   select(hit ? { node: hit.object.userData.node } : null);
 }
 function select(s) {
+  if (mode === 'pose' && s) { const j = jointAbove(s.node); s = j === null ? null : { node: j }; }
   sel = s;
   if (mode === 'edit' && (!sel || !editable(sel.node))) mode = 'object';
   update();
@@ -866,7 +935,78 @@ const sec = (...kids) => el('div', { className: 'sec' }, ...kids);
 const h3 = (text, ...extra) => el('h3', {}, text, ...extra);
 const btn = (text, onclick, title = '') => el('button', { type: 'button', className: 'btn', textContent: text, onclick, title });
 
+// Pose mode's panel: the poses and the active one's weight, the selected joint's role and turn, the character.
+function posePanel() {
+  const r = R(), names = poses(), kids = [];
+  const pick = el('select', { id: 'posePick', className: 'f', onchange: (e) => { choosePose(e.target.value); update(); } },
+    ...names.map((p) => el('option', { value: p, textContent: p, selected: p === activePose })));
+  pick.setAttribute('aria-label', 'Pose');
+  const addPose = () => {
+    const j = sel?.node ?? [...joints()].find((k) => isStr(nameOf(k)));
+    if (j === undefined) { note = 'Name a joint first: a pose turns joints by name.'; return status(); }
+    const p = fresh('pose', new Set([...names, ...Object.keys(r.params ?? {}), ...Object.keys(r.vars ?? {})]));
+    r.params = { ...(r.params ?? {}), [p]: { default: 0, min: 0, max: 1, live: true } };
+    r.poses = { ...(r.poses ?? {}), [p]: { weight: p, joints: { [nameOf(j)]: [0, 0, 0] } } };
+    if (X(j).euler === undefined && X(j).rotation === undefined) setEuler(j, toDeg(nodeSrc(j, 'rotation').map(Number)));
+    choosePose(p); note = `Added pose ${p}, weighed by a new parameter ${p} (default 0). Turn joints with the gizmo.`; commit();
+  };
+  const ps = r.poses?.[activePose], pose = sec(h3('Pose'),
+    el('div', { className: 'setbar' }, names.length ? pick : el('span', {}, 'No poses yet.'), btn('+ Pose', addPose, 'A new pose and a parameter that weighs it'),
+      ps && btn('Remove', () => { delete r.poses[activePose]; if (!poses().length) delete r.poses; activePose = poses()[0] ?? ''; commit(); }, `Remove pose ${activePose} (its weight parameter stays)`)));
+  if (ps) {
+    const wp = isStr(ps.weight) && r.params?.[ps.weight];
+    pose.append(el('div', { className: 'vrow one' }, el('label', { htmlFor: 'poseW', textContent: 'Weight' }), field('poseW', ps.weight, weightOf(activePose), (v) => { ps.weight = v; }, 'Pose weight')),
+      wp && el('div', { className: 'vrow one' }, el('label', { htmlFor: 'poseTry', textContent: 'Try' }),
+        Object.assign(el('input', { id: 'poseTry', type: 'range', min: wp.min ?? 0, max: wp.max ?? 1, step: 0.01, value: out?.params?.[ps.weight]?.value ?? 0, oninput: (e) => { values[ps.weight] = +e.target.value; live(); } }), { ariaLabel: `${ps.weight} value` })),
+      el('p', {}, `Turns ${Object.keys(ps.joints ?? {}).filter((k) => !k.startsWith('//')).join(', ') || 'no joints'}. Shown alone at full weight while you edit it; the document keeps its defaults.`));
+  }
+  kids.push(pose);
+  const ch = r.character;
+  if (sel) {
+    const i = sel.node, name = nameOf(i), turn = ps?.joints?.[name], x = doc.nodes[i].extensions?.[EXT] ?? {};
+    const js = sec(h3(`Joint · ${name ?? `node ${i}`}`));
+    if (ch?.scheme === 'vrm1_humanoid') {
+      const owner = (b) => doc.nodes.findIndex((n) => n.extensions?.[EXT]?.role === b);
+      const role = el('select', { id: 'role', className: 'f', onchange: (e) => {
+        const b = e.target.value, k = owner(b);
+        if (k >= 0 && k !== i) delete doc.nodes[k].extensions[EXT].role; // a role stands on one joint: it moves here
+        if (b) X(i).role = b; else delete X(i).role;
+        commit();
+      } }, el('option', { value: '', textContent: '— none —' }),
+      ...VRM_BONES.map((b) => { const k = owner(b); return el('option', { value: b, selected: x.role === b, textContent: `${b}${VRM_REQUIRED.includes(b) ? ' *' : ''}${k >= 0 && k !== i ? ` · on ${nameOf(k) ?? `node ${k}`}` : ''}` }); }));
+      role.setAttribute('aria-label', 'Humanoid role');
+      js.append(el('div', { className: 'vrow one' }, el('label', { htmlFor: 'role', textContent: 'Role' }), role));
+    } else if (ch) {
+      const role = el('input', { id: 'role', className: 'f', value: x.role ?? '', autocomplete: 'off', spellcheck: false, onchange: (e) => { const v = e.target.value.trim(); if (v) X(i).role = v; else delete X(i).role; commit(); } });
+      role.setAttribute('aria-label', 'Role');
+      js.append(el('div', { className: 'vrow one' }, el('label', { htmlFor: 'role', textContent: 'Role' }), role));
+    }
+    if (ps) js.append(Array.isArray(turn)
+      ? vecRow(`Turn °`, 'turn', turn, undefined, (a) => { ps.joints[name] = a; })
+      : el('p', {}, `Not in ${activePose}: drag the gizmo to add it.`),
+    Array.isArray(turn) && btn(`Take out of ${activePose}`, () => clearTurn(i), 'Del'));
+    kids.push(js);
+  }
+  const c = sec(h3('Character'));
+  if (!ch) c.append(el('p', {}, 'No character: the joints have no roles, so a host cannot retarget humanoid animation onto them.'),
+    btn('Make a VRM 1.0 humanoid', () => { r.character = { scheme: 'vrm1_humanoid', meta: { name: fileName.replace(/\.gltf$/, ''), authors: ['unknown'], licenseUrl: 'https://vrm.dev/licenses/1.0/' } }; note = 'Give the 15 required roles (marked *); until then the document reads as an error. Edit meta (authors) in Source.'; commit(); }));
+  else {
+    const missing = ch.scheme === 'vrm1_humanoid' ? VRM_REQUIRED.filter((b) => !doc.nodes.some((n) => n.extensions?.[EXT]?.role === b)) : [];
+    c.append(el('p', {}, `Scheme ${ch.scheme}. ${doc.nodes.filter((n) => n.extensions?.[EXT]?.role).length} joints have a role.`),
+      missing.length ? el('p', { className: 'bad' }, `Missing required roles: ${missing.join(', ')}.`) : ch.scheme === 'vrm1_humanoid' && el('p', {}, 'All 15 required roles are given.'));
+  }
+  kids.push(c);
+  $('#propsBody').replaceChildren(...kids);
+}
+function clearTurn(i) {
+  const js = R().poses?.[activePose]?.joints, name = nameOf(i);
+  if (!js?.[name]) return;
+  if (Object.keys(js).filter((k) => !k.startsWith('//')).length < 2) { note = 'A pose turns at least one joint: remove the pose instead.'; return status(); }
+  delete js[name]; note = `Took ${name} out of ${activePose}.`; commit();
+}
+
 function props() {
+  if (mode === 'pose') return posePanel();
   const body = $('#propsBody'), kids = [];
   if (!sel || !doc.nodes?.[sel.node]) {
     const r = R();
@@ -1425,14 +1565,24 @@ function params() {
     chosenSet && btn('Remove set', () => { delete S[chosenSet]; if (!Object.keys(S).length) delete r.sets; chosenSet = ''; commit(); }));
   // Draft f31: play a clip by setting its live parameters every frame, from its sampled keys.
   const clips = out?.clips ?? [];
-  const pickClip = clips.length > 0 && el('select', { id: 'clip-pick', className: 'f', onchange: (ev) => { chosenClip = ev.target.value; } },
+  const pickClip = clips.length > 0 && el('select', { id: 'clip-pick', className: 'f', onchange: (ev) => { chosenClip = ev.target.value; scrubT = 0; params(); $('#clip-pick').focus(); } },
     ...clips.map((c) => el('option', { value: c.name, textContent: `${c.name} · ${fmt(c.length)} s${c.loop ? ' · loop' : ''}`, selected: c.name === chosenClip })));
   if (pickClip) pickClip.setAttribute('aria-label', 'Clip');
   const clipBar = pickClip && el('div', { className: 'setbar' }, el('label', { htmlFor: 'clip-pick', textContent: 'Clip' }), pickClip,
-    btn(playing ? 'Stop' : 'Play', () => (playing ? stopClip() : playClip(clips.find((c) => c.name === chosenClip) ?? clips[0])), 'Play the clip: it sets its parameters as time runs'));
+    btn(playing ? 'Stop' : 'Play', () => (playing ? stopClip() : playClip(clips.find((c) => c.name === chosenClip) ?? clips[0])), 'Play the clip: it sets its parameters as time runs'),
+    scrub());
   $('#paneParams').replaceChildren(...[setBar, clipBar].filter(Boolean), grid1, grid2);
+  // A time slider: the clip held at one moment (try values; Play or a set puts them back).
+  function scrub() {
+    const c = clips.find((x) => x.name === chosenClip) ?? clips[0];
+    const out = el('output', { textContent: `${fmt(scrubT)} s` });
+    const r = el('input', { id: 'clip-t', type: 'range', min: 0, max: c.length, step: c.length / Math.max(1, c.times.length - 1), value: Math.min(scrubT, c.length),
+      oninput: (e) => { if (playing) stopClip(false); chosenClip = c.name; scrubT = +e.target.value; clipAt(c, scrubT); out.textContent = `${fmt(scrubT)} s`; live(); } });
+    r.setAttribute('aria-label', `${c.name} time`);
+    return el('span', { className: 'scrub' }, r, out);
+  }
 }
-let chosenClip = '', playing = null; // playing: { clip, start, saved }
+let chosenClip = '', playing = null, scrubT = 0; // playing: { clip, start, saved }
 function playClip(clip) {
   chosenClip = clip.name;
   playing = { clip: structuredClone(clip), start: performance.now(), saved: structuredClone(values) };
@@ -1441,15 +1591,19 @@ function playClip(clip) {
     if (!playing) return;
     const c = playing.clip, run = (now - playing.start) / 1000;
     if (!c.loop && run >= c.length) return stopClip(false);
-    const t = run % c.length, n = c.times.length - 1, f = Math.min(n, (t / c.length) * n), k = Math.min(n - 1, Math.floor(f)), w = f - k;
-    for (const [p, a] of Object.entries(c.keys[k])) {
-      const b = c.keys[k + 1][p];
-      values[p] = typeof a === 'number' ? a + (b - a) * w : Array.isArray(a) ? a.map((x, i) => x + (b[i] - x) * w) : a;
-    }
+    clipAt(c, run % c.length);
     live();
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
+}
+// A clip's parameter values at time t, between its sampled keys.
+function clipAt(c, t) {
+  const n = c.times.length - 1, f = Math.min(n, (t / c.length) * n), k = Math.min(n - 1, Math.floor(f)), w = f - k;
+  for (const [p, a] of Object.entries(c.keys[k])) {
+    const b = c.keys[k + 1][p];
+    values[p] = typeof a === 'number' ? a + (b - a) * w : Array.isArray(a) ? a.map((x, i) => x + (b[i] - x) * w) : a;
+  }
 }
 function stopClip(restore = true) {
   if (restore && playing) { for (const k in values) delete values[k]; Object.assign(values, playing.saved); }
@@ -1486,7 +1640,7 @@ function addShape(kind) {
 }
 const circle = (r, n = 8) => Array.from({ length: n }, (_, i) => [r4(r * Math.cos((2 * Math.PI * i) / n)), r4(r * Math.sin((2 * Math.PI * i) / n))]);
 function duplicate(linked) {
-  if (!sel) return;
+  if (!sel || mode === 'pose') return;
   const i = sel.node, n = structuredClone(doc.nodes[i]);
   delete n.children;
   const x = ((n.extensions ??= {})[EXT] ??= {});
@@ -1528,6 +1682,7 @@ function delSection(j) {
 }
 function del() {
   if (!sel) return;
+  if (mode === 'pose') return clearTurn(sel.node);
   if (mode === 'edit' && sel.grip) return;
   if (mode === 'edit' && sel.point !== undefined) return loftOf(sel.node) && sel.section === undefined ? delPoint(sel.point) : removePoint(sel.point);
   if (mode === 'edit' && sel.section !== undefined) return delSection(sel.section);
@@ -1540,13 +1695,15 @@ function toolbar() {
   $('#mObject').setAttribute('aria-pressed', String(mode === 'object'));
   $('#mEdit').setAttribute('aria-pressed', String(mode === 'edit'));
   $('#mEdit').disabled = !(sel && editable(sel.node));
+  $('#mPose').setAttribute('aria-pressed', String(mode === 'pose'));
+  $('#mPose').disabled = !joints().size;
   const tb = (id, text, key, on, click) => { const b = el('button', { type: 'button', className: 'btn', id, onclick: click }, text, el('kbd', { textContent: key })); b.setAttribute('aria-pressed', String(on)); return b; };
-  $('#tools').replaceChildren(...(mode === 'object'
+  $('#tools').replaceChildren(...(mode === 'pose' ? [] : mode === 'object'
     ? [tb('gT', 'Move', 'G', gizmo === 'translate', () => setGizmo('translate')), tb('gR', 'Rotate', 'R', gizmo === 'rotate', () => setGizmo('rotate')), tb('gS', 'Scale', 'S', gizmo === 'scale', () => setGizmo('scale'))]
     : !loftOf(sel.node) ? [] : [tb('ePath', 'Path', '', editTool === 'path', () => { editTool = 'path'; sel = { node: sel.node }; update(); }), tb('eSec', 'Sections', '', editTool === 'sections', () => { editTool = 'sections'; sel = { node: sel.node }; update(); })]));
   if (secGizmo()) $('#tools').append(tb('gT', 'Slide', 'G', gizmo === 'translate', () => setGizmo('translate')), tb('gR', 'Twist', 'R', gizmo === 'rotate', () => setGizmo('rotate')), tb('gS', 'Scale', 'S', gizmo === 'scale', () => setGizmo('scale')));
   $('#tools').querySelectorAll('kbd:empty').forEach((k) => k.remove());
-  $('#vpMode').textContent = mode === 'object' ? 'Object mode' : `Edit mode · ${loftOf(sel.node) ? (editTool === 'path' ? 'Path' : 'Sections') : latheOf(sel.node) ? 'Profile' : extrudeOf(sel.node) ? 'Extrude' : 'Box'}`;
+  $('#vpMode').textContent = mode === 'pose' ? `Pose mode · ${activePose || 'no pose'}` : mode === 'object' ? 'Object mode' : `Edit mode · ${loftOf(sel.node) ? (editTool === 'path' ? 'Path' : 'Sections') : latheOf(sel.node) ? 'Profile' : extrudeOf(sel.node) ? 'Extrude' : 'Box'}`;
   $('#vpSel').textContent = sel ? `${doc.nodes[sel.node]?.extensions?.[EXT]?.name ?? doc.nodes[sel.node]?.name ?? `node ${sel.node}`}${sel.point !== undefined ? ` · point ${sel.point}` : ''}${sel.section !== undefined ? ` · section ${sel.section}` : ''}` : 'nothing selected';
 }
 function setGizmo(g) { gizmo = g; update(); }
@@ -1556,7 +1713,11 @@ function hint() {
   if (note) return note;
   const lockMsg = locked[0] === 'rotation' ? 'Rotation is a quaternion holding expressions, so the gizmo is off. Edit it in Properties.'
     : locked[0] === 'matrix' ? 'This node uses a matrix. Edit it in Source.'
-    : locked[0] === 'on' ? 'This node is placed on a loft (on). Edit t and u in Source.' : '';
+    : locked[0] === 'on' ? 'This node is placed on a loft (on). Edit t and u in Source.'
+    : locked[0] === 'nopose' ? 'No pose to turn the joint in: press + Pose in Properties.'
+    : locked[0] === 'noname' ? 'A pose turns joints by name: give this joint a name of its own (Object mode, Properties).'
+    : locked[0] === 'weight' ? `The weight of ${activePose} is 0 here, so a turn would not show: raise it in Properties.` : '';
+  if (mode === 'pose') return lockMsg || (sel ? `<b>Drag</b> the rings to turn ${nameOf(sel.node) ?? 'the joint'} in ${activePose || 'a pose'} · <b>Del</b> takes it out of the pose · <b>Esc</b> deselect` : '<b>Click</b> a joint or a shape to select its joint · drag to orbit');
   if (mode === 'edit') return lockMsg || (!loftOf(sel.node) && !latheOf(sel.node)
     ? `<b>Click</b> a grip${extrudeOf(sel.node) ? ' or a point of the loop' : ''} to select it · drag the arrow · <b>Tab</b> back`
     : latheOf(sel.node)
@@ -1586,6 +1747,9 @@ function update() {
   if (sel?.point !== undefined && !(Array.isArray(ptsOf()) && sel.point < ptsOf().length)) { const { point, dir, ...rest } = sel; sel = rest; }
   if (sel?.dir && !(ptsOf()[sel.point]?.length >= 4)) { const { dir, ...rest } = sel; sel = rest; }
   if (mode === 'edit' && !(sel && editable(sel.node))) mode = 'object';
+  if (mode === 'pose' && !joints().size) mode = 'object';
+  if (mode === 'pose' && sel && !joints().has(sel.node)) sel = null;
+  if (mode === 'pose' && !poses().includes(activePose)) activePose = poses()[0] ?? '';
   const focus = document.activeElement?.id;
   evaluate(); draw(); if (!dragging) placeGizmo();
   outliner(); props(); params(); toolbar(); status();
@@ -1689,6 +1853,11 @@ $('#open').onchange = async (e) => { const f = e.target.files[0]; e.target.value
 $('#undo').onclick = undo; $('#redo').onclick = redo;
 $('#mObject').onclick = () => { mode = 'object'; if (sel) sel = { node: sel.node }; update(); };
 $('#mEdit').onclick = () => { if (sel && editable(sel.node)) { mode = 'edit'; update(); } };
+$('#mPose').onclick = () => {
+  if (!joints().size || mode === 'pose') return;
+  mode = 'pose'; if (sel) sel = jointAbove(sel.node) === null ? null : { node: jointAbove(sel.node) };
+  choosePose(poses().includes(activePose) ? activePose : poses()[0] ?? ''); update();
+};
 
 function view(dir) {
   const d = camera.position.distanceTo(orbit.target);
@@ -1719,6 +1888,7 @@ addEventListener('keydown', (e) => {
   if (anyMenu()) return; // menu keys are handled by the menu
   if (e.key === 'Escape') { return select(mode === 'edit' && (sel.point !== undefined || sel.section !== undefined || sel.grip) ? { node: sel.node } : null); }
   if (e.shiftKey && k === 'a') { e.preventDefault(); return openMenu('add', true); }
+  if (e.key === 'Tab' && mode === 'pose') { e.preventDefault(); return $('#mObject').click(); }
   if (e.key === 'Tab' && sel && editable(sel.node)) { e.preventDefault(); mode = mode === 'edit' ? 'object' : 'edit'; sel = { node: sel.node }; return update(); }
   if (e.shiftKey && k === 'd') { e.preventDefault(); return duplicate(false); }
   if (e.altKey && k === 'd') { e.preventDefault(); return duplicate(true); }

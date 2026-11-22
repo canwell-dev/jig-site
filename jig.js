@@ -955,9 +955,9 @@ function animatable(g, at) {
 }
 const VRMC = 'VRMC_vrm', VRM_LICENSE = 'https://vrm.dev/licenses/1.0/';
 // VRM 1.0 humanoid bones (draft f30, D-149); the first 15 are required.
-const VRM_REQUIRED = ['hips', 'spine', 'head', 'leftUpperLeg', 'leftLowerLeg', 'leftFoot', 'rightUpperLeg', 'rightLowerLeg', 'rightFoot',
+export const VRM_REQUIRED = ['hips', 'spine', 'head', 'leftUpperLeg', 'leftLowerLeg', 'leftFoot', 'rightUpperLeg', 'rightLowerLeg', 'rightFoot',
   'leftUpperArm', 'leftLowerArm', 'leftHand', 'rightUpperArm', 'rightLowerArm', 'rightHand'];
-const VRM_BONES = [...VRM_REQUIRED, 'chest', 'upperChest', 'neck', 'leftEye', 'rightEye', 'jaw', 'leftToes', 'rightToes', 'leftShoulder', 'rightShoulder',
+export const VRM_BONES = [...VRM_REQUIRED, 'chest', 'upperChest', 'neck', 'leftEye', 'rightEye', 'jaw', 'leftToes', 'rightToes', 'leftShoulder', 'rightShoulder',
   ...['left', 'right'].flatMap((s) => [`${s}ThumbMetacarpal`, `${s}ThumbProximal`, `${s}ThumbDistal`,
     ...['Index', 'Middle', 'Ring', 'Little'].flatMap((f) => [`${s}${f}Proximal`, `${s}${f}Intermediate`, `${s}${f}Distal`])])];
 const KHR_LIGHTS = 'KHR_lights_punctual';
