@@ -1,0 +1,663 @@
+{
+  "asset": { "version": "2.0", "generator": "JIG 0.1 reference baker" },
+  "extensionsUsed": [
+    "JIG_recipe",
+    "KHR_physics_rigid_bodies",
+    "KHR_implicit_shapes",
+    "OMI_physics_body",
+    "OMI_physics_shape",
+    "OMI_physics_joint",
+    "JIG_placement"
+  ],
+  "materials": [
+    {
+      "name": "paint",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.86, 0.85, 0.8, 1],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.5
+      }
+    },
+    {
+      "name": "brass",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [0.8, 0.6, 0.25, 1],
+        "metallicFactor": 1,
+        "roughnessFactor": 0.35
+      },
+      "extensions": {
+        "JIG_recipe": {
+          "physics": {
+            "density": 8500,
+            "static_friction": 0.7,
+            "dynamic_friction": 0.6,
+            "restitution": 0.2
+          }
+        }
+      }
+    }
+  ],
+  "extensions": {
+    "JIG_recipe": {
+      "version": "0.1",
+      "params": {
+        "width": { "default": 0.9, "min": 0.6, "max": 1.2, "unit": "m" },
+        "height": { "default": 2.1, "min": 1.8, "max": 2.6, "unit": "m" },
+        "wall": { "default": 0.2, "min": 0.08, "max": 0.6, "unit": "m" },
+        "open": { "default": 0, "min": 0, "max": 100, "unit": "deg", "live": true }
+      },
+      "vars": { "lining": 0.04, "leaf": 0.04 },
+      "placement": { "mounts": ["wall"], "tags": ["door"], "wall_gap": 0 },
+      "physics": {},
+      "clips": { "open": { "length": 1.5, "values": { "open": "90 * smoothstep(0, 1, u)" } } },
+      "meshes": [
+        { "box": { "size": ["lining", "height", "wall"] }, "material": 0 },
+        { "box": { "size": ["width + 2 * lining", "lining", "wall"] }, "material": 0 },
+        { "box": { "size": ["width - 0.006", "height - 0.01", "leaf"] }, "material": 0 },
+        { "cylinder": { "radius": 0.01, "height": 0.12 }, "material": 1 }
+      ],
+      "baked_values": { "width": 0.9, "height": 2.1, "wall": 0.2, "open": 0 }
+    },
+    "KHR_implicit_shapes": {
+      "shapes": [
+        { "type": "box", "box": { "size": [0.04, 2.1, 0.2] } },
+        { "type": "box", "box": { "size": [0.98, 0.04, 0.2] } },
+        { "type": "box", "box": { "size": [0.894, 2.0900000000000003, 0.04] } },
+        {
+          "type": "cylinder",
+          "cylinder": { "height": 0.12, "radiusTop": 0.01, "radiusBottom": 0.01 }
+        }
+      ]
+    },
+    "KHR_physics_rigid_bodies": {
+      "physicsMaterials": [
+        {
+          "staticFriction": 0.6,
+          "dynamicFriction": 0.6,
+          "restitution": 0,
+          "frictionCombine": "average",
+          "restitutionCombine": "average"
+        },
+        {
+          "staticFriction": 0.7,
+          "dynamicFriction": 0.6,
+          "restitution": 0.2,
+          "frictionCombine": "average",
+          "restitutionCombine": "average"
+        }
+      ],
+      "physicsJoints": [
+        {
+          "limits": [
+            { "angularAxes": [0], "min": 0, "max": 0 },
+            { "angularAxes": [1], "min": -1.7453292519943295, "max": 0 },
+            { "angularAxes": [2], "min": 0, "max": 0 },
+            { "linearAxes": [0], "min": 0, "max": 0 },
+            { "linearAxes": [1], "min": 0, "max": 0 },
+            { "linearAxes": [2], "min": 0, "max": 0 }
+          ],
+          "drives": [
+            {
+              "type": "angular",
+              "mode": "force",
+              "axis": 1,
+              "stiffness": 2,
+              "damping": 1
+            }
+          ]
+        }
+      ]
+    },
+    "OMI_physics_shape": {
+      "shapes": [
+        { "type": "box", "box": { "size": [0.04, 2.1, 0.2] } },
+        { "type": "box", "box": { "size": [0.98, 0.04, 0.2] } },
+        { "type": "box", "box": { "size": [0.894, 2.0900000000000003, 0.04] } },
+        {
+          "type": "cylinder",
+          "cylinder": { "height": 0.12, "radiusTop": 0.01, "radiusBottom": 0.01 }
+        }
+      ]
+    },
+    "OMI_physics_body": {
+      "physicsMaterials": [
+        {
+          "staticFriction": 0.6,
+          "dynamicFriction": 0.6,
+          "restitution": 0,
+          "frictionCombine": "average",
+          "restitutionCombine": "average"
+        },
+        {
+          "staticFriction": 0.7,
+          "dynamicFriction": 0.6,
+          "restitution": 0.2,
+          "frictionCombine": "average",
+          "restitutionCombine": "average"
+        }
+      ]
+    },
+    "OMI_physics_joint": {
+      "physicsJoints": [
+        {
+          "limits": [
+            { "angularAxes": [0], "min": 0, "max": 0 },
+            { "angularAxes": [1], "min": -1.7453292519943295, "max": 0 },
+            { "angularAxes": [2], "min": 0, "max": 0 },
+            { "linearAxes": [0], "min": 0, "max": 0 },
+            { "linearAxes": [1], "min": 0, "max": 0 },
+            { "linearAxes": [2], "min": 0, "max": 0 }
+          ],
+          "drives": [
+            {
+              "type": "angular",
+              "mode": "force",
+              "axis": 1,
+              "stiffness": 2,
+              "damping": 1
+            }
+          ]
+        }
+      ]
+    },
+    "JIG_placement": { "mounts": ["wall"], "tags": ["door"], "wall_gap": 0 }
+  },
+  "scene": 0,
+  "scenes": [{ "nodes": [0] }],
+  "nodes": [
+    {
+      "name": "door",
+      "children": [1, 2, 3, 4, 7, 10, 12],
+      "extensions": { "JIG_recipe": {} }
+    },
+    {
+      "name": "jamb {s}",
+      "extensions": {
+        "JIG_recipe": {
+          "repeat": { "count": 2, "index": "s" },
+          "mesh": 0,
+          "translation": ["(2 * s - 1) * (width + lining) / 2", "height / 2", 0]
+        }
+      },
+      "children": [8, 9]
+    },
+    {
+      "name": "head",
+      "extensions": {
+        "JIG_recipe": { "mesh": 1, "translation": [0, "height + lining / 2", 0] },
+        "KHR_physics_rigid_bodies": { "collider": { "geometry": { "shape": 1 }, "physicsMaterial": 0 } },
+        "OMI_physics_body": { "collider": { "shape": 1, "physicsMaterial": 0 } }
+      },
+      "mesh": 1,
+      "translation": [0, 2.12, 0]
+    },
+    {
+      "name": "hole",
+      "extensions": {
+        "JIG_recipe": {
+          "translation": [0, "(height + lining) / 2", 0],
+          "opening": {
+            "size": ["width + 2 * lining", "height + lining", "wall + 0.02"],
+            "passage": true
+          }
+        },
+        "JIG_placement": { "opening": { "size": [0.98, 2.14, 0.22], "passage": true } }
+      },
+      "translation": [0, 1.07, 0]
+    },
+    {
+      "name": "hinge",
+      "children": [5, 11],
+      "extensions": {
+        "JIG_recipe": {
+          "translation": ["-width / 2", 0, "(wall - leaf) / 2"],
+          "euler": [0, "-open", 0],
+          "joint": {
+            "hinge": { "axis": "y", "limits": [-100, 0] },
+            "drive": { "turn_y": { "stiffness": 2, "damping": 1 } }
+          }
+        },
+        "KHR_physics_rigid_bodies": {
+          "motion": {
+            "isKinematic": false,
+            "mass": 45.159831350267616,
+            "centerOfMass": [0.4526656855958318, 1.0496492518952854, 0.00028059848377177076],
+            "inertiaDiagonal": [16.33051737318956, 3.038972625853069, 19.356524723458453],
+            "inertiaOrientation": [
+              -0.000019166403539027402,
+              -0.0007900258004234666,
+              0.00022485943922620296,
+              0.9999996624650013
+            ]
+          }
+        },
+        "OMI_physics_body": {
+          "motion": {
+            "type": "dynamic",
+            "mass": 45.159831350267616,
+            "centerOfMass": [0.4526656855958318, 1.0496492518952854, 0.00028059848377177076],
+            "inertiaDiagonal": [16.33051737318956, 3.038972625853069, 19.356524723458453],
+            "inertiaOrientation": [
+              -0.000019166403539027402,
+              -0.0007900258004234666,
+              0.00022485943922620296,
+              0.9999996624650013
+            ]
+          }
+        }
+      },
+      "translation": [-0.45, 0, 0.08],
+      "rotation": [0, 0, 0, 1]
+    },
+    {
+      "name": "leaf",
+      "children": [6],
+      "extensions": {
+        "JIG_recipe": { "mesh": 2, "translation": ["width / 2", "height / 2", 0] },
+        "KHR_physics_rigid_bodies": { "collider": { "geometry": { "shape": 2 }, "physicsMaterial": 0 } },
+        "OMI_physics_body": { "collider": { "shape": 2, "physicsMaterial": 0 } }
+      },
+      "mesh": 2,
+      "translation": [0.45, 1.05, 0]
+    },
+    {
+      "name": "handle",
+      "extensions": {
+        "JIG_recipe": {
+          "mesh": 3,
+          "translation": ["width / 2 - 0.07", "1.0 - height / 2", "leaf / 2 + 0.02"],
+          "euler": [0, 0, 90]
+        },
+        "KHR_physics_rigid_bodies": { "collider": { "geometry": { "shape": 3 }, "physicsMaterial": 1 } },
+        "OMI_physics_body": { "collider": { "shape": 3, "physicsMaterial": 1 } }
+      },
+      "mesh": 3,
+      "translation": [0.38, -0.050000000000000044, 0.04],
+      "rotation": [0, 0, 0.7071067811865475, 0.7071067811865476]
+    },
+    {
+      "name": "stand here",
+      "extensions": {
+        "JIG_recipe": {
+          "translation": [0, 0, "wall / 2 + 0.5"],
+          "euler": [0, 180, 0],
+          "use": { "role": "pass", "pose": "stand", "clip": "open" }
+        },
+        "JIG_placement": { "use": { "role": "pass", "pose": "stand", "clip": "open" } }
+      },
+      "translation": [0, 0, 0.6],
+      "rotation": [0, 1, 0, 6.123233995736766e-17]
+    },
+    {
+      "name": "jamb {s}",
+      "mesh": 0,
+      "translation": [-0.47000000000000003, 1.05, 0],
+      "extensions": {
+        "JIG_recipe": { "baked": true },
+        "KHR_physics_rigid_bodies": { "collider": { "geometry": { "shape": 0 }, "physicsMaterial": 0 } },
+        "OMI_physics_body": { "collider": { "shape": 0, "physicsMaterial": 0 } }
+      }
+    },
+    {
+      "name": "jamb {s}",
+      "mesh": 0,
+      "translation": [0.47000000000000003, 1.05, 0],
+      "extensions": {
+        "JIG_recipe": { "baked": true },
+        "KHR_physics_rigid_bodies": { "collider": { "geometry": { "shape": 0 }, "physicsMaterial": 0 } },
+        "OMI_physics_body": { "collider": { "shape": 0, "physicsMaterial": 0 } }
+      }
+    },
+    {
+      "name": "joint anchor",
+      "translation": [-0.45, 0, 0.08],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "joint",
+      "extensions": {
+        "KHR_physics_rigid_bodies": { "joint": { "connectedNode": 10, "joint": 0, "enableCollision": false } },
+        "OMI_physics_joint": { "connectedNode": 10, "joint": 0, "enableCollision": false },
+        "JIG_recipe": { "baked": true }
+      }
+    },
+    {
+      "name": "swing of hinge",
+      "translation": [-0.103393634, 1.05, 0.51850932],
+      "extensions": {
+        "JIG_placement": {
+          "clearance": {
+            "size": [1.1007872622217347, 2.0899999141693115, 0.9170186389432072],
+            "purpose": "movement",
+            "level": "required"
+          },
+          "inferred": true,
+          "from": 4
+        },
+        "JIG_recipe": { "baked": true }
+      }
+    }
+  ],
+  "animations": [
+    {
+      "name": "open",
+      "samplers": [{ "input": 16, "output": 17, "interpolation": "LINEAR" }],
+      "channels": [{ "sampler": 0, "target": { "node": 4, "path": "rotation" } }],
+      "extras": { "loop": false },
+      "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [
+        {
+          "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 },
+          "indices": 3,
+          "material": 0
+        }
+      ],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "primitives": [
+        {
+          "attributes": { "POSITION": 4, "NORMAL": 5, "TEXCOORD_0": 6 },
+          "indices": 7,
+          "material": 0
+        }
+      ],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "primitives": [
+        {
+          "attributes": { "POSITION": 8, "NORMAL": 9, "TEXCOORD_0": 10 },
+          "indices": 11,
+          "material": 0
+        }
+      ],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "primitives": [
+        {
+          "attributes": { "POSITION": 12, "NORMAL": 13, "TEXCOORD_0": 14 },
+          "indices": 15,
+          "material": 1
+        }
+      ],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "min": [-0.019999999552965164, -1.0499999523162842, -0.10000000149011612],
+      "max": [0.019999999552965164, 1.0499999523162842, 0.10000000149011612],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC2",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "min": [-0.49000000953674316, -0.019999999552965164, -0.10000000149011612],
+      "max": [0.49000000953674316, 0.019999999552965164, 0.10000000149011612],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 5,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 6,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC2",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 7,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 8,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "min": [-0.44699999690055847, -1.0449999570846558, -0.019999999552965164],
+      "max": [0.44699999690055847, 1.0449999570846558, 0.019999999552965164],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 9,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 10,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC2",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 11,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 12,
+      "componentType": 5126,
+      "count": 98,
+      "type": "VEC3",
+      "min": [-0.009999999776482582, -0.05999999865889549, -0.009999999776482582],
+      "max": [0.009999999776482582, 0.05999999865889549, 0.009999999776482582],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 13,
+      "componentType": 5126,
+      "count": 98,
+      "type": "VEC3",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 14,
+      "componentType": 5126,
+      "count": 98,
+      "type": "VEC2",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 15,
+      "componentType": 5123,
+      "count": 276,
+      "type": "SCALAR",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 16,
+      "componentType": 5126,
+      "count": 46,
+      "type": "SCALAR",
+      "min": [0],
+      "max": [1.5],
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "bufferView": 17,
+      "componentType": 5126,
+      "count": 46,
+      "type": "VEC4",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 288,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 576,
+      "byteLength": 192,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 768,
+      "byteLength": 72,
+      "target": 34963,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 840,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1128,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1416,
+      "byteLength": 192,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1608,
+      "byteLength": 72,
+      "target": 34963,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1680,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1968,
+      "byteLength": 288,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2256,
+      "byteLength": 192,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2448,
+      "byteLength": 72,
+      "target": 34963,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2520,
+      "byteLength": 1176,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 3696,
+      "byteLength": 1176,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 4872,
+      "byteLength": 784,
+      "target": 34962,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 5656,
+      "byteLength": 552,
+      "target": 34963,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 6208,
+      "byteLength": 184,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 6392,
+      "byteLength": 736,
+      "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 7128,
+      "uri": "data:application/octet-stream;base64,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",
+      "extensions": { "JIG_recipe": { "baked": true } }
+    }
+  ]
+}

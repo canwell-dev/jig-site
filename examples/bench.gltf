@@ -1,6 +1,15 @@
 {
   "asset": { "version": "2.0", "generator": "JIG 0.1 reference baker" },
-  "extensionsUsed": ["JIG_recipe", "KHR_materials_variants"],
+  "extensionsUsed": [
+    "JIG_recipe",
+    "KHR_materials_variants",
+    "KHR_physics_rigid_bodies",
+    "KHR_implicit_shapes",
+    "OMI_physics_body",
+    "OMI_physics_shape",
+    "JIG_placement",
+    "OMI_seat"
+  ],
   "extensions": {
     "JIG_recipe": {
       "version": "0.1",
@@ -44,7 +53,10 @@
         "fh": "seat_height - seat",
         "fr": "min(fh * 0.12, fa * 0.3)",
         "fk": "0.5523 * fr",
-        "fy": "fh * 0.76"
+        "fy": "fh * 0.76",
+        "// places": "a seat per 0.55 m of width; a person sits with their feet in front of the seat",
+        "seats": "max(1, floor(width / 0.55))",
+        "feet": "seat_depth / 2 + 0.15"
       },
       "floor": 0,
       "meshes": [
@@ -98,9 +110,65 @@
         "metal": [0.033, 0.038, 0.043, 1],
         "wear": 0,
         "cast_frames": true
-      }
+      },
+      "placement": { "mounts": ["floor"], "tags": ["bench", "seating"] },
+      "physics": {}
     },
-    "KHR_materials_variants": { "variants": [{ "name": "oak" }, { "name": "painted" }, { "name": "picnic" }] }
+    "KHR_materials_variants": { "variants": [{ "name": "oak" }, { "name": "painted" }, { "name": "picnic" }] },
+    "KHR_implicit_shapes": {
+      "shapes": [
+        { "type": "box", "box": { "size": [1.6, 0.04, 0.42] } },
+        { "type": "box", "box": { "size": [0.05, 0.42, 0.05] } },
+        { "type": "box", "box": { "size": [1.49, 0.09, 0.025] } },
+        { "type": "box", "box": { "size": [1.49, 0.12, 0.025] } }
+      ]
+    },
+    "KHR_physics_rigid_bodies": {
+      "physicsMaterials": [
+        {
+          "staticFriction": 0.5,
+          "dynamicFriction": 0.4,
+          "restitution": 0.3,
+          "frictionCombine": "average",
+          "restitutionCombine": "average"
+        },
+        {
+          "staticFriction": 0.7,
+          "dynamicFriction": 0.6,
+          "restitution": 0.2,
+          "frictionCombine": "average",
+          "restitutionCombine": "average"
+        }
+      ]
+    },
+    "OMI_physics_shape": {
+      "shapes": [
+        { "type": "box", "box": { "size": [1.6, 0.04, 0.42] } },
+        { "type": "convex", "convex": { "mesh": 3 } },
+        { "type": "box", "box": { "size": [0.05, 0.42, 0.05] } },
+        { "type": "box", "box": { "size": [1.49, 0.09, 0.025] } },
+        { "type": "box", "box": { "size": [1.49, 0.12, 0.025] } }
+      ]
+    },
+    "OMI_physics_body": {
+      "physicsMaterials": [
+        {
+          "staticFriction": 0.5,
+          "dynamicFriction": 0.4,
+          "restitution": 0.3,
+          "frictionCombine": "average",
+          "restitutionCombine": "average"
+        },
+        {
+          "staticFriction": 0.7,
+          "dynamicFriction": 0.6,
+          "restitution": 0.2,
+          "frictionCombine": "average",
+          "restitutionCombine": "average"
+        }
+      ]
+    },
+    "JIG_placement": { "mounts": ["floor"], "tags": ["bench", "seating"] }
   },
   "materials": [
     {
@@ -110,7 +178,17 @@
         "metallicFactor": 0,
         "roughnessFactor": 0.8
       },
-      "extensions": { "JIG_recipe": { "baseColorFactor": "mix(wood, grime, wear * 0.3)" } }
+      "extensions": {
+        "JIG_recipe": {
+          "baseColorFactor": "mix(wood, grime, wear * 0.3)",
+          "physics": {
+            "density": 700,
+            "static_friction": 0.5,
+            "dynamic_friction": 0.4,
+            "restitution": 0.3
+          }
+        }
+      }
     },
     {
       "name": "metal",
@@ -119,7 +197,17 @@
         "metallicFactor": 0.6,
         "roughnessFactor": 0.5
       },
-      "extensions": { "JIG_recipe": { "baseColorFactor": "metal" } }
+      "extensions": {
+        "JIG_recipe": {
+          "baseColorFactor": "metal",
+          "physics": {
+            "density": 7200,
+            "static_friction": 0.7,
+            "dynamic_friction": 0.6,
+            "restitution": 0.2
+          }
+        }
+      }
     },
     {
       "name": "trim",
@@ -128,7 +216,17 @@
         "metallicFactor": 0,
         "roughnessFactor": 0.7
       },
-      "extensions": { "JIG_recipe": { "baseColorFactor": "mix(trim, grime, wear * 0.3)" } }
+      "extensions": {
+        "JIG_recipe": {
+          "baseColorFactor": "mix(trim, grime, wear * 0.3)",
+          "physics": {
+            "density": 700,
+            "static_friction": 0.5,
+            "dynamic_friction": 0.4,
+            "restitution": 0.3
+          }
+        }
+      }
     },
     {
       "name": "wood (oak)",
@@ -195,17 +293,21 @@
     }
   ],
   "scene": 0,
-  "scenes": [{ "nodes": [0, 1, 4, 7] }],
+  "scenes": [{ "nodes": [0, 1, 4, 7, 11, 12, 13] }],
   "nodes": [
     {
       "name": "seat",
-      "extensions": { "JIG_recipe": { "mesh": 0, "translation": [0, "seat_height - seat / 2", 0] } },
+      "extensions": {
+        "JIG_recipe": { "mesh": 0, "translation": [0, "seat_height - seat / 2", 0] },
+        "KHR_physics_rigid_bodies": { "collider": { "geometry": { "shape": 0 }, "physicsMaterial": 0 } },
+        "OMI_physics_body": { "collider": { "shape": 0, "physicsMaterial": 0 } }
+      },
       "mesh": 0,
       "translation": [0, 0.43, 0]
     },
     {
       "name": "leg pair",
-      "children": [2, 3, 10, 12, 14, 16],
+      "children": [2, 3, 10, 15, 17, 19],
       "extensions": {
         "JIG_recipe": {
           "repeat": { "count": "legs", "index": "i" },
@@ -235,7 +337,7 @@
     },
     {
       "name": "backrest",
-      "children": [5, 6, 21],
+      "children": [5, 6, 24],
       "extensions": {
         "JIG_recipe": {
           "repeat": { "count": "backrest", "index": "b" },
@@ -297,72 +399,178 @@
       }
     },
     {
+      "extensions": {
+        "JIG_recipe": {
+          "name": "seat place {i}",
+          "repeat": { "count": "seats", "index": "i" },
+          "translation": ["(i - (seats - 1) / 2) * width / seats", 0, "feet"],
+          "use": {
+            "role": "sit",
+            "group": "bench",
+            "pose": "sit",
+            "seat": {
+              "back": [0, "seat_height", "inset - seat_depth / 2 - feet"],
+              "knee": [0, "seat_height", "seat_depth / 2 - feet"],
+              "foot": [0, 0, 0]
+            }
+          }
+        }
+      },
+      "children": [25, 26]
+    },
+    {
+      "name": "sit space",
+      "extensions": {
+        "JIG_recipe": {
+          "translation": [0, 0.6, "feet - 0.1"],
+          "clearance": { "size": ["width", 1.2, 0.5], "purpose": "use" }
+        },
+        "JIG_placement": {
+          "clearance": { "size": [1.6, 1.2, 0.5], "purpose": "use", "level": "required" }
+        }
+      },
+      "translation": [0, 0.6, 0.26]
+    },
+    {
+      "name": "seat top",
+      "extensions": {
+        "JIG_recipe": {
+          "translation": [0, "seat_height", 0],
+          "support": { "size": ["span", "seat_depth"] }
+        },
+        "JIG_placement": { "support": { "size": [1.49, 0.42] } }
+      },
+      "translation": [0, 0.45, 0]
+    },
+    {
       "name": "cast frame",
       "mesh": 3,
       "rotation": [0, 0.7071067811865475, 0, 0.7071067811865476],
-      "extensions": { "JIG_recipe": { "baked": true } }
+      "extensions": {
+        "JIG_recipe": { "baked": true },
+        "KHR_physics_rigid_bodies": {
+          "collider": { "geometry": { "mesh": 3, "convexHull": true }, "physicsMaterial": 1 }
+        },
+        "OMI_physics_body": { "collider": { "shape": 1, "physicsMaterial": 1 } }
+      }
     },
     {
       "name": "leg pair",
       "translation": [-0.745, 0, 0],
-      "children": [11],
+      "children": [14],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
       "name": "cast frame",
       "mesh": 3,
       "rotation": [0, 0.7071067811865475, 0, 0.7071067811865476],
-      "extensions": { "JIG_recipe": { "baked": true } }
+      "extensions": {
+        "JIG_recipe": { "baked": true },
+        "KHR_physics_rigid_bodies": {
+          "collider": { "geometry": { "mesh": 3, "convexHull": true }, "physicsMaterial": 1 }
+        },
+        "OMI_physics_body": { "collider": { "shape": 1, "physicsMaterial": 1 } }
+      }
     },
     {
       "name": "leg pair",
-      "children": [13],
+      "children": [16],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
       "name": "cast frame",
       "mesh": 3,
       "rotation": [0, 0.7071067811865475, 0, 0.7071067811865476],
-      "extensions": { "JIG_recipe": { "baked": true } }
+      "extensions": {
+        "JIG_recipe": { "baked": true },
+        "KHR_physics_rigid_bodies": {
+          "collider": { "geometry": { "mesh": 3, "convexHull": true }, "physicsMaterial": 1 }
+        },
+        "OMI_physics_body": { "collider": { "shape": 1, "physicsMaterial": 1 } }
+      }
     },
     {
       "name": "leg pair",
       "translation": [0.745, 0, 0],
-      "children": [15],
+      "children": [18],
       "extensions": { "JIG_recipe": { "baked": true } }
     },
     {
       "name": "back post",
       "mesh": 1,
       "translation": [-0.745, 0.21, 0],
-      "extensions": { "JIG_recipe": { "baked": true } }
+      "extensions": {
+        "JIG_recipe": { "baked": true },
+        "KHR_physics_rigid_bodies": { "collider": { "geometry": { "shape": 1 }, "physicsMaterial": 1 } },
+        "OMI_physics_body": { "collider": { "shape": 2, "physicsMaterial": 1 } }
+      }
     },
     {
       "name": "back post",
       "mesh": 1,
       "translation": [0.745, 0.21, 0],
-      "extensions": { "JIG_recipe": { "baked": true } }
+      "extensions": {
+        "JIG_recipe": { "baked": true },
+        "KHR_physics_rigid_bodies": { "collider": { "geometry": { "shape": 1 }, "physicsMaterial": 1 } },
+        "OMI_physics_body": { "collider": { "shape": 2, "physicsMaterial": 1 } }
+      }
     },
     {
       "name": "back slat",
       "mesh": 2,
       "translation": [0, 0.12997523833531888, 0.037500000000000006],
       "rotation": [0, 0, 0.0009438032264140914, 0.9999995546176357],
-      "extensions": { "JIG_recipe": { "baked": true } }
+      "extensions": {
+        "JIG_recipe": { "baked": true },
+        "KHR_physics_rigid_bodies": { "collider": { "geometry": { "shape": 2 }, "physicsMaterial": 0 } },
+        "OMI_physics_body": { "collider": { "shape": 3, "physicsMaterial": 0 } }
+      }
     },
     {
       "name": "back slat",
       "mesh": 4,
       "translation": [0, 0.29539856934221465, 0.037500000000000006],
       "rotation": [0, 0, 0.0011588441650539126, 0.9999993285398752],
-      "extensions": { "JIG_recipe": { "baked": true } }
+      "extensions": {
+        "JIG_recipe": { "baked": true },
+        "KHR_physics_rigid_bodies": { "collider": { "geometry": { "shape": 3 }, "physicsMaterial": 0 } },
+        "OMI_physics_body": { "collider": { "shape": 4, "physicsMaterial": 0 } }
+      }
     },
     {
       "name": "backrest",
       "translation": [0, 0.45, -0.155],
       "rotation": [-0.08715574274765817, 0, 0, 0.9961946980917455],
-      "children": [17, 18, 19, 20],
+      "children": [20, 21, 22, 23],
       "extensions": { "JIG_recipe": { "baked": true } }
+    },
+    {
+      "name": "seat place 0",
+      "extensions": {
+        "JIG_placement": { "use": { "role": "sit", "group": "bench", "pose": "sit" } },
+        "OMI_seat": {
+          "back": [0, 0.45, -0.515],
+          "foot": [0, 0, 0],
+          "knee": [0, 0.45, -0.15],
+          "angle": 1.5707963267948966
+        },
+        "JIG_recipe": { "baked": true }
+      },
+      "translation": [-0.4, 0, 0.36]
+    },
+    {
+      "name": "seat place 1",
+      "extensions": {
+        "JIG_placement": { "use": { "role": "sit", "group": "bench", "pose": "sit" } },
+        "OMI_seat": {
+          "back": [0, 0.45, -0.515],
+          "foot": [0, 0, 0],
+          "knee": [0, 0.45, -0.15],
+          "angle": 1.5707963267948966
+        },
+        "JIG_recipe": { "baked": true }
+      },
+      "translation": [0.4, 0, 0.36]
     }
   ],
   "meshes": [

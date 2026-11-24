@@ -83,6 +83,7 @@ kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); bor
 .vp-tag b { color: var(--fg); font-weight: 500; }
 .vp-views { position: absolute; right: 10px; top: 10px; display: flex; gap: 4px; flex-wrap: wrap; justify-content: end; }
 .vp-views .btn { background: color-mix(in srgb, var(--panel) 85%, transparent); padding: 2px 8px; font-size: 12px; }
+.vp-views .btn[aria-pressed="true"] { background: var(--accent); } /* the overlay toggles (drafts f36, f37) */
 #bot { grid-area: bot; border-top: 1px solid var(--line); }
 .tabs { display: flex; gap: 0; background: var(--chip); border-bottom: 1px solid var(--line); }
 .tabs button { border: 0; background: none; padding: 6px 14px; cursor: pointer; font: 500 11px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--mute); border-bottom: 2px solid transparent; }
@@ -104,6 +105,9 @@ kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); bor
 .srow { display: grid; grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) 46px var(--xw); gap: 4px; align-items: center; }
 .stab { display: grid; grid-template-columns: 28px repeat(4, minmax(0, 1fr)) var(--xw); gap: 4px; align-items: center; }
 .stab small { color: var(--mute); font: 11px var(--mono); }
+.dent { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) 62px var(--xw); gap: 4px; align-items: center; margin-bottom: 4px; }
+.ptable .pdet { grid-column: 1 / -1; display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 4px; padding: 4px 0 8px 12px; border-left: 2px solid var(--chip); }
+.pname { display: flex; gap: 2px; min-width: 0; } .pname .f { min-width: 0; }
 .srow small, .prow small { color: var(--mute); font: 11px var(--mono); }
 .idx { font: 11px var(--mono); padding: 2px 0; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); cursor: pointer; }
 .idx.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
@@ -208,6 +212,7 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
       <button type="button" role="menuitem" data-add="cone"><span class="ic cone"></span>Cone<small>two radii, height</small></button>
       <button type="button" role="menuitem" data-add="sphere"><span class="ic sphere"></span>Sphere<small>radius</small></button>
       <button type="button" role="menuitem" data-add="capsule"><span class="ic capsule"></span>Capsule<small>radius, height</small></button>
+      <button type="button" role="menuitem" data-add="empty"><span class="ic empty"></span>Empty<small>a node to group or place under</small></button>
       <button type="button" role="menuitem" data-add="text"><span class="ic text"></span>Text<small>stroke lettering</small></button>
     </div>
     <span class="seg" role="group" aria-label="Mode">
@@ -233,6 +238,8 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
       <button class="btn" type="button" data-view="side" title="Side (3)">Side</button>
       <button class="btn" type="button" data-view="top" title="Top (7)">Top</button>
       <button class="btn" type="button" data-view="frame" title="Frame selection (F)">Frame</button>
+      <button class="btn" type="button" id="showPlace" aria-pressed="false" title="Show use points, clearances, openings and supports (draft f36)">Placement</button>
+      <button class="btn" type="button" id="showPhys" aria-pressed="false" title="Show colliders, centres of mass and joints (draft f37)">Physics</button>
     </div>
   </section>
 
@@ -281,12 +288,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION, VRM_BONES, VRM_REQUIRED } from './jig.js?v=b6c9e63';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION, VRM_BONES, VRM_REQUIRED } from './jig.js?v=f3fd7a1';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=b6c9e63', loft: 'examples/loft.gltf?v=b6c9e63', star: 'examples/star.gltf?v=b6c9e63', bench: 'examples/bench.gltf?v=b6c9e63', lathe: 'examples/lathe.gltf?v=b6c9e63', lantern: 'examples/lantern.gltf?v=b6c9e63', paths: 'examples/paths.gltf?v=b6c9e63', ends: 'examples/ends.gltf?v=b6c9e63', cushion: 'examples/cushion.gltf?v=b6c9e63',
-  sign: 'examples/sign.gltf?v=b6c9e63', finger: 'examples/finger.gltf?v=b6c9e63', hand: 'examples/hand.gltf?v=b6c9e63', grandpa: 'examples/grandpa.gltf?v=b6c9e63', head: 'examples/head.gltf?v=b6c9e63' };
+const examples = { box: 'examples/box.gltf?v=f3fd7a1', loft: 'examples/loft.gltf?v=f3fd7a1', star: 'examples/star.gltf?v=f3fd7a1', bench: 'examples/bench.gltf?v=f3fd7a1', lathe: 'examples/lathe.gltf?v=f3fd7a1', lantern: 'examples/lantern.gltf?v=f3fd7a1', paths: 'examples/paths.gltf?v=f3fd7a1', ends: 'examples/ends.gltf?v=f3fd7a1', cushion: 'examples/cushion.gltf?v=f3fd7a1',
+  sign: 'examples/sign.gltf?v=f3fd7a1', chest: 'examples/chest.gltf?v=f3fd7a1', door: 'examples/door.gltf?v=f3fd7a1', finger: 'examples/finger.gltf?v=f3fd7a1', hand: 'examples/hand.gltf?v=f3fd7a1', grandpa: 'examples/grandpa.gltf?v=f3fd7a1', head: 'examples/head.gltf?v=f3fd7a1', plan: 'examples/plan.gltf?v=f3fd7a1' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -297,6 +304,8 @@ const values = {};                       // slider values, by parameter name (no
 let past = [stringify(doc)], future = [];
 let sel = null;                          // { node } | { node, point } | { node, section }
 let activePose = '', poseDrag = null; // Pose mode: the pose the gizmo writes into; the drag's start
+let showPlace = new URLSearchParams(location.search).has('place'); // draft f36: the placement overlay (?place)
+let showPhys = new URLSearchParams(location.search).has('physics'); // draft f37: the physics overlay (?physics)
 let mode = 'object', gizmo = 'translate', editTool = 'path', dragging = false, sketchDrag = null;
 
 const $ = (s) => document.querySelector(s);
@@ -311,9 +320,11 @@ const meshOf = (i) => doc.nodes?.[i]?.extensions?.[EXT]?.mesh;
 const shapeKind = (m) => ['loft', 'extrude', 'lathe', 'text', 'cylinder', 'cone', 'sphere', 'capsule'].find((k) => m?.[k]) ?? 'box';
 const loftOf = (i) => R().meshes?.[meshOf(i)]?.loft;
 const latheOf = (i) => R().meshes?.[meshOf(i)]?.lathe;
-const extrudeOf = (i) => R().meshes?.[meshOf(i)]?.extrude;
+const extrudeOf = (i) => { const e = R().meshes?.[meshOf(i)]?.extrude; return e?.outline?.project === undefined ? e : undefined; }; // §5.10: a projected outline has no points
 // Edit mode: every shape (a lathe's or extrude's round forms and arc items are edited in the JSON).
-const editable = (i) => meshOf(i) !== undefined && !!R().meshes?.[meshOf(i)] && !R().meshes[meshOf(i)].text; // text: in Properties or the JSON
+const editable = (i) => (meshOf(i) !== undefined && !!R().meshes?.[meshOf(i)] && !R().meshes[meshOf(i)].text && !(R().meshes[meshOf(i)].extrude && !extrudeOf(i))) || hasHandles(i); // text and projections: in Properties or the JSON
+// Placement items and joints have handles in Edit mode too (draft f36, f37).
+const hasHandles = (i) => { const x = doc.nodes[i]?.extensions?.[EXT]; return !!(x && (x.clearance || x.opening || x.support || x.use?.seat || x.joint)); };
 // shortcut: a path with a corner radius, an arc or a spiral (D-99) has no point editor; edit its JSON
 const plainPath = (l) => l?.path.every((p) => Array.isArray(p) && p.length === 3);
 const X = (i) => ((doc.nodes[i].extensions ??= {})[EXT] ??= {});
@@ -484,6 +495,93 @@ function bufferGeometry({ positions, normals, uvs, indices }) {
   return g;
 }
 const v3 = (a) => new THREE.Vector3(...a);
+// Draft f36 (sketch): use points as a footprint and an arrow along the node's +z; clearances, openings and supports
+// as boxes and a plane in the node's frame, coloured by kind.
+const PLACE_COLORS = { use: 0x2f9e44, movement: 0xe8590c, access: 0x1c7ed6, maintenance: 0x9c36b5, opening: 0x495057, support: 0xf59f00 };
+// Viewer only: the grandpa as the person at a use point, read with the parameter named after the pose at 1 (his
+// `sit` parameter drives his `sit` pose); plain colours, no textures. pose -> Promise<{ parts, hips }>.
+const people = new Map();
+function person(pose) {
+  if (!people.has(pose)) people.set(pose, (async () => {
+    const url = new URL('examples/grandpa.gltf?v=f3fd7a1', location.href), gd = JSON.parse(await (await fetch(url)).text());
+    const o = read(gd, gd.extensions[EXT].params?.[pose] ? { [pose]: 1 } : {}, { files: await loadFiles(gd, async (f) => (await fetch(new URL(f, url))).text()) });
+    const hipsNode = o.character?.roles.find((r) => r.role === 'hips')?.node;
+    let hips = [0, 0, 0];
+    (function find(recs) { for (const r of recs) { if (r.i === hipsNode && !r.foreign) hips = [r.world[12], r.world[13], r.world[14]]; find(r.kids); } })(o.tree);
+    const geos = new Map(), colorOf = (m) => {
+      const f = m.placed !== undefined ? o.placed[m.placed].pbrMetallicRoughness?.baseColorFactor : o.materials[m.material]?.baseColorFactor ?? gd.materials?.[m.material]?.pbrMetallicRoughness?.baseColorFactor;
+      return new THREE.Color().setRGB(...(f ?? [0.8, 0.8, 0.8]).slice(0, 3)); // a 4th argument would be a colour space
+    };
+    const parts = o.instances.map((x) => ({
+      geo: x.deformed ? bufferGeometry(x.deformed) : (geos.get(x.mesh) ?? geos.set(x.mesh, bufferGeometry(geometry(o.meshes[x.mesh]))).get(x.mesh)),
+      color: colorOf(o.meshes[x.mesh]), matrix: x.matrix }));
+    return { parts, hips };
+  })().catch((e) => { console.warn(`no person for pose ${pose}: ${e.message}`); return null; }));
+  return people.get(pose);
+}
+// Draft f37 (sketch): each collider's edges (hulls show their mesh), coloured by its body's motion, triggers dashed;
+// a dot at each moving body's centre of mass; a joint's free and limited axes as short lines from its origin.
+const MOTION_COLORS = { static: 0x868e96, dynamic: 0x1c7ed6, kinematic: 0xae3ec9 };
+function physicsOverlay() {
+  for (const b of out.physics.bodies) {
+    const c = MOTION_COLORS[b.motion];
+    for (const k of b.colliders) {
+      const g = k.shape.type === 'sphere' ? new THREE.SphereGeometry(k.shape.radius, 16, 8) : k.shape.type === 'cylinder' ? new THREE.CylinderGeometry(k.shape.radiusTop, k.shape.radiusBottom, k.shape.height, 16)
+        : k.shape.type === 'capsule' ? new THREE.CapsuleGeometry(k.shape.radius, k.shape.height - 2 * k.shape.radius, 4, 16) : bufferGeometry(k.geo);
+      const mat = k.trigger ? new THREE.LineDashedMaterial({ color: c, dashSize: 0.02, gapSize: 0.015, depthTest: false }) : new THREE.LineBasicMaterial({ color: c, depthTest: false });
+      const l = new THREE.LineSegments(new THREE.EdgesGeometry(g, 20), mat);
+      if (k.trigger) l.computeLineDistances();
+      g.dispose();
+      l.matrixAutoUpdate = false; l.matrix.fromArray(k.world); l.renderOrder = 7; helperLayer.add(l);
+    }
+    if (b.motion !== 'static' && b.colliders.length) {
+      const p = v3(b.com).applyMatrix4(new THREE.Matrix4().fromArray(b.world));
+      const d = new THREE.Points(new THREE.BufferGeometry().setFromPoints([p]), new THREE.PointsMaterial({ color: c, size: 10, sizeAttenuation: false, depthTest: false }));
+      d.renderOrder = 8; helperLayer.add(d);
+    }
+    if (b.joint) {
+      const g = new THREE.Group(), axes = [[1, 0, 0], [0, 1, 0], [0, 0, 1]], col = [0xe03131, 0x2f9e44, 0x1971c2];
+      g.matrixAutoUpdate = false; g.matrix.fromArray(b.world);
+      b.joint.turn.forEach((v, a) => { if (v !== false) { const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints([v3(axes[a]).multiplyScalar(-0.15), v3(axes[a]).multiplyScalar(0.15)]), new THREE.LineBasicMaterial({ color: col[a], depthTest: false })); l.renderOrder = 9; g.add(l); } });
+      b.joint.slide.forEach((v, a) => { if (v !== false) g.add(new THREE.ArrowHelper(v3(axes[a]), new THREE.Vector3(), 0.2, col[a], 0.05, 0.03)); });
+      helperLayer.add(g);
+    }
+  }
+}
+function placementOverlay() {
+  for (const it of out.placement.items) {
+    const g = new THREE.Group();
+    g.matrixAutoUpdate = false; g.matrix.fromArray(it.world);
+    const solid = (geo, c, opacity) => { const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide })); m.renderOrder = 5; return m; };
+    const edges = (geo, c) => { const l = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: c })); l.renderOrder = 6; return l; };
+    const box = (size, c, opacity) => { const geo = new THREE.BoxGeometry(...size); g.add(solid(geo, c, opacity), edges(geo, c)); };
+    if (it.clearance) box(it.clearance.size, PLACE_COLORS[it.clearance.purpose], it.clearance.level === 'required' ? 0.16 : 0.07);
+    if (it.opening) box(it.opening.size, PLACE_COLORS.opening, it.opening.passage ? 0.12 : 0.25);
+    if (it.support) {
+      const geo = new THREE.PlaneGeometry(...it.support.size).rotateX(-Math.PI / 2);
+      g.add(solid(geo, PLACE_COLORS.support, 0.3), edges(geo, PLACE_COLORS.support));
+      if (it.support.clear_height) g.add(edges(new THREE.BoxGeometry(it.support.size[0], it.support.clear_height, it.support.size[1]).translate(0, it.support.clear_height / 2, 0), PLACE_COLORS.support));
+    }
+    if (it.use) { // feet at the origin, facing +z
+      const c = PLACE_COLORS.use, foot = solid(new THREE.CircleGeometry(0.2, 32).rotateX(-Math.PI / 2), c, 0.35);
+      const arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0.005, 0), 0.35, c, 0.1, 0.07);
+      g.add(foot, arrow);
+      const s = it.use.seat;
+      if (s) { const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints([v3(s.back), v3(s.knee), v3(s.foot)]), new THREE.LineBasicMaterial({ color: c })); l.renderOrder = 6; g.add(l); }
+      if (it.use.pose) person(it.use.pose).then((who) => { // a figure in the pose, once it has loaded
+        if (!who || !showPlace || g.parent !== helperLayer) return;
+        // its hips a little above the seat, nearly halfway from its back to the knees; or standing, feet on the point
+        const at = s ? [0, 1, 2].map((a) => s.back[a] + 0.45 * (s.knee[a] - s.back[a]) + (a === 1 ? 0.08 : 0) - who.hips[a]) : [0, 0, 0];
+        for (const { geo, color, matrix } of who.parts) {
+          const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, roughness: 0.8 }));
+          m.matrixAutoUpdate = false; m.matrix.fromArray(matrix).premultiply(new THREE.Matrix4().makeTranslation(...at)); g.add(m);
+        }
+        model.updateMatrixWorld(true); redraw();
+      });
+    }
+    helperLayer.add(g);
+  }
+}
 function draw() {
   redraw();
   for (const g of [...geos, ...mats]) { g.dispose(); for (const k of ['map', 'normalMap', 'roughnessMap', 'aoMap', 'emissiveMap']) g[k]?.dispose(); }
@@ -545,6 +643,8 @@ function draw() {
     lit(rec.kids);
   });
   lit(out.tree);
+  if (showPlace) placementOverlay();
+  if (showPhys && out.physics) physicsOverlay();
   if (!dragging && !sketchDrag) model.position.y = -out.floor; // hold still while dragging, so the handle stays under the pointer
   const inst = sel && out.instances.find((i) => i.node === sel.node && !i.model);
   if (mode === 'edit' && inst && out.meshes[inst.mesh].type === 'loft') {
@@ -624,7 +724,61 @@ function draw() {
     }
     edit = { joints: at };
   }
+  itemEdit = mode === 'edit' && sel ? itemGrips(sel.node) : null;
   model.updateMatrixWorld(true);
+}
+// Handles of a node's placement items and joint limits, in the node's frame (its first shown copy): a grip on each
+// face of a clearance or opening, each edge of a support, the seat's points, and a joint's limits (a turn's ends on
+// an arc round its axis, a slide's along it). Limits count from rest; the handles show them in the frame of now.
+let itemEdit = null;
+const REF = [[0, 1, 0], [0, 0, 1], [1, 0, 0]]; // the zero direction of a turn about x, y, z
+function itemGrips(i) {
+  const it = out.placement?.items.find((x) => x.node === i && !x.foreign && !x.inferred), body = out.physics?.bodies.find((b) => b.node === i);
+  if (!it && !body?.joint) return null;
+  const group = new THREE.Group(), grips = [], blue = new THREE.Color(css('--helper')), hot = new THREE.Color(css('--accent'));
+  group.matrixAutoUpdate = false; group.matrix.fromArray(it?.world ?? body.world);
+  const line = (pts, loop) => { const l = new (loop ? THREE.LineLoop : THREE.Line)(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: blue, depthTest: false, transparent: true })); l.renderOrder = 10; group.add(l); };
+  for (const k of ['clearance', 'opening']) if (it?.[k]) {
+    const half = it[k].size.map((c) => c / 2);
+    for (const a of [0, 1, 2]) for (const sg of [1, -1]) grips.push({ grip: `item:${k}:${'xyz'[a]}${sg > 0 ? '+' : '-'}`, p: v3([0, 1, 2].map((b) => (b === a ? sg * half[a] : 0))), axis: a });
+  }
+  if (it?.support) {
+    const [hx, hz] = it.support.size.map((c) => c / 2);
+    grips.push(...[[0, 1], [0, -1], [2, 1], [2, -1]].map(([a, sg]) => ({ grip: `item:support:${'xyz'[a]}${sg > 0 ? '+' : '-'}`, p: v3(a ? [0, 0, sg * hz] : [sg * hx, 0, 0]), axis: a })));
+  }
+  if (it?.use?.seat) for (const k of ['back', 'knee', 'foot']) grips.push({ grip: `item:seat:${k}`, p: v3(it.use.seat[k]), axis: 'all' });
+  if (body?.joint) {
+    const r = 0.25;
+    for (const kind of ['turn', 'slide']) body.joint[kind].forEach((lim, a) => {
+      if (!Array.isArray(lim)) return;
+      if (kind === 'slide') { const at = (v) => v3([0, 1, 2].map((b) => (b === a ? v : 0))); line([at(lim[0]), at(lim[1])]); lim.forEach((v, e) => grips.push({ grip: `item:slide:${a}:${e}`, p: at(v), axis: a })); return; }
+      const ref = v3(REF[a]), side = v3([0, 1, 2].map((b) => (b === a ? 1 : 0))).cross(ref), at = (deg) => ref.clone().multiplyScalar(r * Math.cos((deg * Math.PI) / 180)).addScaledVector(side, r * Math.sin((deg * Math.PI) / 180));
+      line(Array.from({ length: 33 }, (_, n) => at(lim[0] + ((lim[1] - lim[0]) * n) / 32)));
+      line([at(lim[0]), v3([0, 0, 0]), at(lim[1])]);
+      lim.forEach((v, e) => grips.push({ grip: `item:turn:${a}:${e}`, p: at(v), axis: `plane${a}` }));
+    });
+  }
+  if (!grips.length) return null;
+  for (const g of grips) { const d = new THREE.Points(new THREE.BufferGeometry().setFromPoints([g.p]), new THREE.PointsMaterial({ color: sel.grip === g.grip ? hot : blue, size: sel.grip === g.grip ? 15 : 11, sizeAttenuation: false, depthTest: false })); d.renderOrder = 11; group.add(d); }
+  helperLayer.add(group);
+  return { group, grips };
+}
+// A handle dragged to p (in the node's frame). Expressions keep their form (dragTo).
+function dragItem(grip, p) {
+  const [, kind, a, b] = grip.split(':'), x = X(sel.node);
+  if (kind === 'clearance' || kind === 'opening' || kind === 'support') {
+    const src = x[kind].size; if (!Array.isArray(src)) return;
+    const ax = 'xyz'.indexOf(a[0]), sg = a[1] === '+' ? 1 : -1, k = kind === 'support' ? ax / 2 : ax;
+    src[k] = dragTo(src[k], Math.max(0.001, 2 * sg * p.getComponent(ax)), `${kind} size ${a[0]}`);
+  } else if (kind === 'seat') x.use.seat[a] = keep(x.use.seat[a] ?? [0, 0, 0], p.toArray(), `seat ${a}`);
+  else {
+    const ax = +a, e = +b, j = x.joint, side = v3([0, 1, 2].map((c) => (c === ax ? 1 : 0))).cross(v3(REF[ax]));
+    const v = kind === 'slide' ? p.getComponent(ax) : (Math.atan2(p.dot(side), p.dot(v3(REF[ax]))) * 180) / Math.PI;
+    const set = (lim) => { const l = [...lim]; l[e] = dragTo(l[e], v, `${kind} ${'xyz'[ax]} ${e ? 'max' : 'min'}`); return l; };
+    if (j.hinge || j.slider) { const h = j.hinge ?? j.slider; h.limits = set(h.limits); }
+    else if (j.ball) j.ball = { limits: set(j.ball.limits) };
+    else { j[kind] = [...j[kind]]; j[kind][ax] = set(j[kind][ax]); }
+  }
 }
 
 // A box or extrude grip dragged to p (in the shape's axes): the box symmetric about its centre.
@@ -735,6 +889,14 @@ function placeGizmo() {
       if (gizmo === 'scale') tc.showZ = false;
       secDrag = { frame: edit.frame.clone(), twist: om.twist, points: structuredClone(om.points), src: structuredClone(loftOf(sel.node).sections[sel.section]) };
     }
+  } else if (sel.grip?.startsWith('item:') && itemEdit) {
+    const o = itemEdit.grips.find((g) => g.grip === sel.grip);
+    if (!o) return;
+    pivot.matrix.copy(itemEdit.group.matrix);
+    proxy.position.copy(o.p); proxy.quaternion.identity(); proxy.scale.set(1, 1, 1);
+    tc.setMode('translate'); tc.setSpace('local');
+    if (typeof o.axis === 'number') { tc.showX = o.axis === 0; tc.showY = o.axis === 1; tc.showZ = o.axis === 2; }
+    else if (o.axis.startsWith('plane')) { const a = +o.axis.slice(5); tc.showX = a !== 0; tc.showY = a !== 1; tc.showZ = a !== 2; }
   } else if ((sel.point !== undefined || sel.grip) && edit?.flat) {
     // In the shape's own axes: a point moves in its plane, a grip along its axis.
     const o = sel.grip ? edit.grips.find((g) => g.grip === sel.grip) : edit.dots.find((d) => d.j === sel.point && d.dir === (sel.dir ?? 0));
@@ -783,6 +945,8 @@ function onGizmo() {
     dragPoint(shapeSel(), sel.point, sel.dir ?? 0, [proxy.position.x, proxy.position.y]);
   } else if (sel.section !== undefined && secDrag) {
     dragSection(loftOf(sel.node).sections[sel.section], tc.mode);
+  } else if (sel.grip?.startsWith('item:')) {
+    dragItem(sel.grip, proxy.position);
   } else if (sel.grip) {
     dragGrip(R().meshes[meshOf(sel.node)], sel.grip, proxy.position);
   } else if (sel.point !== undefined && (latheOf(sel.node) || extrudeOf(sel.node))) {
@@ -808,6 +972,11 @@ function segDist(q, a, b) {
 }
 function pick(e) {
   const rect = canvas.getBoundingClientRect(), q = [e.clientX - rect.left, e.clientY - rect.top];
+  if (mode === 'edit' && itemEdit) {
+    let best = null;
+    for (const o of itemEdit.grips) { const p = o.p.clone().applyMatrix4(itemEdit.group.matrixWorld).project(camera), d = Math.hypot((p.x + 1) / 2 * rect.width - q[0], (1 - p.y) / 2 * rect.height - q[1]); if (d < 12 && (!best || d < best.d)) best = { ...o, d }; }
+    if (best) { sel = { node: sel.node, grip: best.grip }; return update(); }
+  }
   if (mode === 'edit' && edit) {
     const scr = (v) => { const p = v.clone().applyMatrix4(edit.group.matrixWorld).project(camera); return [(p.x + 1) / 2 * rect.width, (1 - p.y) / 2 * rect.height]; };
     if (edit.flat) {
@@ -931,9 +1100,55 @@ function vecRow(label, id, src, ev, set, cls = '') {
   return el('div', { className: `vrow ${cls}` }, el('label', { htmlFor: `${id}0`, textContent: label }),
     ...src.map((v, k) => field(`${id}${k}`, v, ev?.[k], (x) => { const a = [...src]; a[k] = x; set(a); }, `${label} ${'xyzw'[k]}`, k < 3 ? k : undefined)));
 }
+const put = (parent, ...kids) => parent.append(...kids.filter((k) => k !== null && k !== undefined && k !== false)); // append, skipping left-out kids as el() does
 const sec = (...kids) => el('div', { className: 'sec' }, ...kids);
 const h3 = (text, ...extra) => el('h3', {}, text, ...extra);
 const btn = (text, onclick, title = '') => el('button', { type: 'button', className: 'btn', textContent: text, onclick, title });
+// A labelled row of inputs (the first input's id is the label's target).
+const row = (label, ...inputs) => el('div', { className: `vrow ${['', 'one', 'two', ''][inputs.length] ?? ''}` }, el('label', { htmlFor: inputs[0]?.id ?? '', textContent: label }), ...inputs);
+// An optional key of o as a field: emptying it removes the key, so its default (the placeholder) applies.
+function optField(id, o, key, label, ev, def) {
+  const f = field(id, o[key], ev, (v) => { o[key] = v; }, label);
+  if (def !== undefined) f.placeholder = String(def);
+  f.addEventListener('change', () => { if (f.value.trim() === '' && key in o) { delete o[key]; commit(); } });
+  return f;
+}
+// A select over [value, text] pairs (or plain values); set gets the chosen value as text.
+function choose(id, label, opts, value, set) {
+  const s = el('select', { id, className: 'f', onchange: (e) => { set(e.target.value); commit(); } },
+    ...opts.map((o) => { const [v, t] = Array.isArray(o) ? o : [o, o]; return el('option', { value: v, textContent: t, selected: String(v) === String(value) }); }));
+  s.setAttribute('aria-label', label);
+  return s;
+}
+const check = (id, label, checked, set) => { const e = el('input', { id, type: 'checkbox', checked: !!checked, onchange: (ev) => { set(ev.target.checked); commit(); } }); e.setAttribute('aria-label', label); return e; };
+// Caps as two selects, start and end (D-90, D-100): written in the shortest form that says the same.
+function capsRow(o, kinds) {
+  const c = o.caps, at = (end) => (isObj(c) ? c[end] ?? 'flat' : (c ?? 'both') === 'both' || c === end ? 'flat' : 'none');
+  const set = (end, v) => {
+    const s = { start: at('start'), end: at('end'), [end]: v };
+    if (s.start === 'flat' && s.end === 'flat') delete o.caps;
+    else if (s.start === 'none' && s.end === 'none') o.caps = 'none';
+    else if (s.start !== 'dome' && s.end !== 'dome') o.caps = s.start === 'flat' ? 'start' : 'end';
+    else o.caps = s;
+    if (o.cap_depth !== undefined && s.start !== 'dome' && s.end !== 'dome') delete o.cap_depth;
+  };
+  return el('div', { className: 'vrow two' }, el('span', { className: 'lbl', textContent: 'Caps s, e' }),
+    choose('capStart', 'Start cap', kinds, at('start'), (v) => set('start', v)), choose('capEnd', 'End cap', kinds, at('end'), (v) => set('end', v)));
+}
+// Dents (D-139): one row each, t or d, u, radius, depth, falloff; an oval radius or a repeat in the JSON.
+function dentsSec(o) {
+  const ds = o.dents ?? [];
+  return sec(h3(`Dents · ${ds.length}`),
+    ...ds.map((d, j) => el('div', { className: 'dent' },
+      field(`dent${j}-t`, d.t ?? d.d, undefined, (x) => { if (d.d === undefined) d.t = x; else d.d = x; }, `Dent ${j} ${d.d === undefined ? 't' : 'd'}`),
+      field(`dent${j}-u`, d.u ?? 0, undefined, (x) => { d.u = x; }, `Dent ${j} u`),
+      Array.isArray(d.radius) ? el('small', { textContent: 'oval' }) : field(`dent${j}-r`, d.radius, undefined, (x) => { d.radius = x; }, `Dent ${j} radius`),
+      field(`dent${j}-depth`, d.depth, undefined, (x) => { d.depth = x; }, `Dent ${j} depth`),
+      choose(`dent${j}-f`, `Dent ${j} falloff`, ['smooth', 'sphere', 'linear'], d.falloff ?? 'smooth', (v) => { if (v === 'smooth') delete d.falloff; else d.falloff = v; }),
+      el('button', { type: 'button', className: 'x', textContent: '×', title: 'Remove dent', ariaLabel: `Remove dent ${j}`, onclick: () => { ds.splice(j, 1); if (!ds.length) delete o.dents; commit(); } }))),
+    ds.length > 0 && el('small', { textContent: 't (or d), u, radius, depth (negative bulges), falloff. A repeat or an oval radius: edit the JSON.' }),
+    btn('+ Dent', () => { (o.dents ??= []).push({ t: 0.5, u: 0, radius: 0.03, depth: 0.01 }); commit(); }, 'A round pit; a negative depth bulges'));
+}
 
 // Pose mode's panel: the poses and the active one's weight, the selected joint's role and turn, the character.
 function posePanel() {
@@ -989,10 +1204,16 @@ function posePanel() {
   }
   const c = sec(h3('Character'));
   if (!ch) c.append(el('p', {}, 'No character: the joints have no roles, so a host cannot retarget humanoid animation onto them.'),
-    btn('Make a VRM 1.0 humanoid', () => { r.character = { scheme: 'vrm1_humanoid', meta: { name: fileName.replace(/\.gltf$/, ''), authors: ['unknown'], licenseUrl: 'https://vrm.dev/licenses/1.0/' } }; note = 'Give the 15 required roles (marked *); until then the document reads as an error. Edit meta (authors) in Source.'; commit(); }));
+    btn('Make a VRM 1.0 humanoid', () => { r.character = { scheme: 'vrm1_humanoid', meta: { name: fileName.replace(/\.gltf$/, ''), authors: ['unknown'], licenseUrl: 'https://vrm.dev/licenses/1.0/' } }; note = 'Give the 15 required roles (marked *); until then the document reads as an error.'; commit(); }),
+    btn('Name my own scheme', () => { r.character = { scheme: 'custom' }; note = 'Any scheme: give each joint a role of your own (D-149).'; commit(); }));
   else {
     const missing = ch.scheme === 'vrm1_humanoid' ? VRM_REQUIRED.filter((b) => !doc.nodes.some((n) => n.extensions?.[EXT]?.role === b)) : [];
-    c.append(el('p', {}, `Scheme ${ch.scheme}. ${doc.nodes.filter((n) => n.extensions?.[EXT]?.role).length} joints have a role.`),
+    const meta = ch.meta ?? {}, metaIn = (key, label, list) => el('input', { id: `meta-${key}`, className: 'f', value: list ? (meta[key] ?? []).join(', ') : meta[key] ?? '', autocomplete: 'off', spellcheck: false, ariaLabel: label,
+      onchange: (e) => { const t = e.target.value.trim(); if (!t) delete meta[key]; else meta[key] = list ? t.split(',').map((x) => x.trim()).filter(Boolean) : t; if (Object.keys(meta).length) ch.meta = meta; else delete ch.meta; commit(); } });
+    const scheme = el('input', { id: 'scheme', className: 'f', value: ch.scheme, autocomplete: 'off', spellcheck: false, ariaLabel: 'Naming scheme', onchange: (e) => { const t = e.target.value.trim(); if (t) { ch.scheme = t; commit(); } } });
+    c.append(row('Scheme', scheme), row('Name', metaIn('name', 'Avatar name')), row('Authors', metaIn('authors', 'Authors, comma separated', true)), row('Licence', metaIn('licenseUrl', 'Licence URL')),
+      btn('Remove character', () => { delete r.character; commit(); }, 'The joints keep their roles in the file'),
+      el('p', {}, `Scheme ${ch.scheme}. ${doc.nodes.filter((n) => n.extensions?.[EXT]?.role).length} joints have a role.`),
       missing.length ? el('p', { className: 'bad' }, `Missing required roles: ${missing.join(', ')}.`) : ch.scheme === 'vrm1_humanoid' && el('p', {}, 'All 15 required roles are given.'));
   }
   kids.push(c);
@@ -1013,7 +1234,7 @@ function props() {
     kids.push(sec(el('h2', {}, 'Document'), el('p', {}, `${doc.nodes?.length ?? 0} nodes, ${r.meshes?.length ?? 0} meshes, ${Object.keys(r.params ?? {}).length} parameters. Click an object or press Shift A to add one.`)),
       sec(h3('Floor'), el('div', { className: 'vrow one' }, el('label', { htmlFor: 'floor', textContent: 'y' }),
         field('floor', r.floor ?? 0, out?.floor, (v) => { r.floor = v; }, 'Floor y')),
-      el('p', {}, 'Where the model stands. Without it, the lowest point on the vertical line through the origin.')));
+      el('p', {}, 'Where the model stands. Without it, the lowest point on the vertical line through the origin.')), modelsSec(), placementDocSec(), physicsDocSec());
     body.replaceChildren(...kids);
     return;
   }
@@ -1051,8 +1272,9 @@ function props() {
       el('p', {}, `Copies 0 to count − 1; expressions in this node and below see ${rep.index} as the copy number.${shown !== undefined && n.extensions[EXT].mesh !== undefined ? ` ${shown} drawn now.` : ''} A count of 0 hides it: use a bool parameter for an optional part.`)));
   }
 
+  kids.push(...nodeSecs(i), placeSec(i), ...itemSecs(i), ...physSecs(i));
   if (mi !== undefined) {
-    const users = doc.nodes.filter((_, k) => meshOf(k) === mi).length;
+    const users =doc.nodes.filter((_, k) => meshOf(k) === mi).length;
     const pickMesh = el('select', { id: 'meshPick', className: 'f', onchange: (e) => { X(i).mesh = +e.target.value; commit(); } },
       ...R().meshes.map((m, k) => el('option', { value: k, textContent: `mesh ${k} · ${shapeKind(m)}`, selected: k === mi })));
     pickMesh.setAttribute('aria-label', 'Mesh');
@@ -1071,6 +1293,14 @@ function props() {
         ...[['size', 'Size'], ['depth', 'Depth'], ['stroke', 'Stroke']].map(([k, label]) => el('div', { className: 'vrow one' }, el('label', { htmlFor: `text_${k}`, textContent: label }),
           field(`text_${k}`, m.text[k] ?? '', om?.[k], (v) => { m.text[k] = v; }, label))));
     }
+    const rk = ['cylinder', 'cone', 'sphere', 'capsule'].find((k) => m[k]), rs = m[rk]; // D-168
+    if (rk === 'cone') put(ms, el('div', { className: 'vrow two' }, el('span', { className: 'lbl', textContent: 'Radius b, t' }),
+      ...[0, 1].map((j) => field(`radius${j}`, rs.radius?.[j] ?? 0, undefined, (v) => { rs.radius = [...(rs.radius ?? [0, 0])]; rs.radius[j] = v; }, `Radius ${j ? 'top' : 'bottom'}`))));
+    else if (rk) put(ms, row('Radius', field('radius', rs.radius, undefined, (v) => { rs.radius = v; }, 'Radius')));
+    if (rk && rk !== 'sphere') put(ms, row('Height', field('height', rs.height, undefined, (v) => { rs.height = v; }, 'Height')));
+    if (rk) put(ms, row('Sides', optField('sides', rs, 'sides', 'Sides', undefined, 24)));
+    if (rk === 'cylinder' || rk === 'cone') put(ms, capsRow(rs, ['flat', 'none']));
+    put(ms, row('UV', choose('uv', 'Surface coordinates', [['fit', 'fit (0..1)'], ['meters', 'meters (tiles)']], m.uv ?? 'fit', (v) => { if (v === 'fit') delete m.uv; else m.uv = v; })));
     kids.push(ms, materialSec(m));
     if (m.loft) kids.push(...loftProps(m.loft, om));
     if (m.extrude) kids.push(...extrudeProps(m.extrude, om));
@@ -1081,6 +1311,288 @@ function props() {
   body.replaceChildren(...kids);
 }
 
+// Node keys past the transform (§6): parent, visible, on, light, skin joint, blend. A move to another parent keeps
+// the local transform (the slots may be expressions, so no world-keeping inverse).
+const subtree = (i) => [i, ...(doc.nodes[i].children ?? []).flatMap(subtree)];
+function reparent(i, p) {
+  const old = parentOf(i), list = old >= 0 ? doc.nodes[old].children : doc.scenes[doc.scene ?? 0].nodes;
+  list.splice(list.indexOf(i), 1);
+  if (old >= 0 && !list.length) delete doc.nodes[old].children;
+  (p >= 0 ? (doc.nodes[p].children ??= []) : doc.scenes[doc.scene ?? 0].nodes).push(i);
+}
+// ---------- placement (§6.5) and physics (§6.6) ----------
+const listIn = (id, label, arr, set, placeholder = '') => el('input', { id, className: 'f', value: (arr ?? []).join(', '), placeholder, spellcheck: false, autocomplete: 'off', ariaLabel: label,
+  onchange: (e) => { set(e.target.value.split(',').map((t) => t.trim()).filter(Boolean)); commit(); } });
+const xBtn = (title, onclick) => el('button', { type: 'button', className: 'x', textContent: '×', title, ariaLabel: title, onclick });
+function placementDocSec() {
+  const r = R(), pl = r.placement;
+  if (!pl) return sec(h3('Placement'), btn('Say where it goes', () => { r.placement = { mounts: ['floor'] }; commit(); }, 'Mounts, tags and a wall gap for room builders (§6.5)'));
+  const MOUNTS = ['floor', 'wall', 'ceiling', 'surface'];
+  return sec(h3('Placement', xBtn('Remove placement', () => { delete r.placement; commit(); })),
+    el('div', { className: 'acts' }, ...MOUNTS.map((m) => el('label', {}, check(`mount-${m}`, `Mounts on ${m}`, pl.mounts?.includes(m), (v) => {
+      const ms = new Set(pl.mounts ?? []); if (v) ms.add(m); else ms.delete(m); if (ms.size) pl.mounts = MOUNTS.filter((x) => ms.has(x)); else delete pl.mounts; }), ` ${m}`))),
+    row('Tags', listIn('tags', 'Tags, comma separated', pl.tags, (a) => { if (a.length) pl.tags = a; else delete pl.tags; }, 'bench, seat')),
+    row('Wall gap', optField('wallGap', pl, 'wall_gap', 'Wall gap (m)', undefined, 0)),
+    el('small', { textContent: 'Its back is −z, the side that goes against a wall. Select a node to give it a use point, clearance, opening or support.' }));
+}
+function filterRows(o, id) { // KHR filter: systems, and collide_with or not_collide_with
+  const f = o.filter ?? {}, not = f.not_collide_with !== undefined, put = (k, a) => { const g = (o.filter ??= {}); if (a.length) g[k] = a; else delete g[k]; if (!Object.keys(g).length) delete o.filter; };
+  return [row('Systems', listIn(`${id}-sys`, 'Collision systems', f.systems, (a) => put('systems', a), 'none')),
+    el('div', { className: 'vrow two' }, choose(`${id}-with`, 'Collides with or not with', [['with', 'collides with'], ['not', 'not with']], not ? 'not' : 'with', (v) => {
+      const a = f.collide_with ?? f.not_collide_with ?? []; const g = (o.filter ??= {}); delete g.collide_with; delete g.not_collide_with; if (a.length) g[v === 'not' ? 'not_collide_with' : 'collide_with'] = a; else if (!Object.keys(g).length) delete o.filter; }),
+      listIn(`${id}-list`, 'Systems it collides with (or not)', f.collide_with ?? f.not_collide_with, (a) => put(not ? 'not_collide_with' : 'collide_with', a), 'every system'), el('span'))];
+}
+const MOTIONS = ['static', 'dynamic', 'kinematic'];
+function physicsDocSec() {
+  const r = R(), ph = r.physics;
+  if (!ph) return sec(h3('Physics'), btn('Switch colliders on', () => { r.physics = {}; showPhys = true; $('#showPhys').setAttribute('aria-pressed', 'true'); commit(); }, 'Every shape gets a collider; the model is a static body (§6.6)'));
+  return sec(h3('Physics', xBtn('Switch physics off', () => {
+      if (doc.nodes.some((n) => ['collider', 'body', 'joint', 'density'].some((k) => n.extensions?.[EXT]?.[k] !== undefined))) { note = 'Nodes still hold physics keys (collider, body, joint, density): remove them first.'; return status(); }
+      delete r.physics; commit(); })),
+    row('Motion', choose('physMotion', 'Root body motion', MOTIONS, ph.motion ?? 'static', (v) => { if (v === 'static') delete ph.motion; else ph.motion = v; })),
+    row('Mass kg', optField('physMass', ph, 'mass', 'Mass (kg)', undefined, 'from density')),
+    ...filterRows(ph, 'physF'),
+    el('small', { textContent: 'The root body. Every shape is a collider unless its node says otherwise; a node with a body or joint starts a body of its own.' }));
+}
+function matPhysics(mat, x) {
+  const ph = mat.extensions?.[EXT]?.physics ?? {}, put = (k, v) => { (x().physics ??= {})[k] = v; };
+  const f = (k, label, def) => { const e = field(`mphys-${k}`, ph[k], undefined, (v) => put(k, v), label); e.placeholder = String(def);
+    e.addEventListener('change', () => { const o = mat.extensions?.[EXT]?.physics; if (e.value.trim() !== '' || o?.[k] === undefined) return; delete o[k]; if (!Object.keys(o).length) delete mat.extensions[EXT].physics; commit(); }); return e; };
+  const comb = (k, label) => choose(`mphys-${k}`, label, ['average', 'minimum', 'maximum', 'multiply'], ph[k] ?? 'average', (v) => { if (v === 'average') { const o = mat.extensions?.[EXT]?.physics; if (o) { delete o[k]; if (!Object.keys(o).length) delete mat.extensions[EXT].physics; } } else put(k, v); });
+  return el('div', {}, el('h3', {}, 'Physical material'),
+    row('Density', f('density', 'Density (kg/m³)', 600)),
+    el('div', { className: 'vrow' }, el('span', { className: 'lbl', textContent: 'Friction s, d; bounce' }), f('static_friction', 'Static friction', 0.6), f('dynamic_friction', 'Dynamic friction', 0.6), f('restitution', 'Restitution', 0)),
+    el('div', { className: 'vrow two' }, el('span', { className: 'lbl', textContent: 'Combine f, b' }), comb('friction_combine', 'Friction combine'), comb('restitution_combine', 'Restitution combine')));
+}
+// A node's placement items (D-173..D-177), one of each per node.
+const ITEM_NEW = { use: { role: 'sit' }, clearance: { size: [0.6, 1, 0.6], purpose: 'use' }, opening: { size: [0.9, 2, 0.3] }, support: { size: [0.4, 0.4] } };
+function itemSecs(i) {
+  const x = doc.nodes[i].extensions?.[EXT] ?? {}, res = [];
+  const head = (k, title) => h3(title, xBtn(`Remove the ${k}`, () => { delete X(i)[k]; commit(); }));
+  const vec = (label, id, o, k, n, def) => vecRow(label, id, o[k] ?? Array(n).fill(def), undefined, (a) => { o[k] = a; }, n === 2 ? 'two' : '');
+  if (x.use) {
+    const u = x.use, txt = (k, label, ph) => el('input', { id: `use-${k}`, className: 'f', value: u[k] ?? '', placeholder: ph, spellcheck: false, autocomplete: 'off', ariaLabel: label,
+      onchange: (e) => { const t = e.target.value.trim(); if (t) u[k] = t; else delete u[k]; commit(); } });
+    const clips = Object.keys(R().clips ?? {}).filter((k) => !k.startsWith('//'));
+    const S = sec(head('use', 'Use point'), row('Role', txt('role', 'Use role', 'sit')), row('Group', txt('group', 'Use group', 'none')), row('Pose', txt('pose', 'Host pose name', 'none')),
+      row('Clip', choose('use-clip', 'Clip while used', [['', 'none'], ...clips], u.clip ?? '', (v) => { if (v) u.clip = v; else delete u.clip; })));
+    if (!u.seat) put(S, btn('+ Seat', () => { u.seat = { back: [0, 0.45, -0.2], knee: [0, 0.45, 0.25], foot: [0, 0, 0.35] }; commit(); }, 'Where back, knees and feet go (OMI_seat)'));
+    else put(S, h3('Seat', xBtn('Remove the seat', () => { delete u.seat; commit(); })), vec('Back', 'seatBack', u.seat, 'back', 3, 0), vec('Knee', 'seatKnee', u.seat, 'knee', 3, 0), vec('Foot', 'seatFoot', u.seat, 'foot', 3, 0),
+      row('Angle °', optField('seatAngle', u.seat, 'angle', 'Back to thigh angle (degrees)', undefined, 90)));
+    put(S, el('small', { textContent: "A person's feet at the node's origin, facing +z. Drag the seat points in the 3D view (Edit mode)." }));
+    res.push(S);
+  }
+  if (x.clearance) {
+    const c = x.clearance;
+    res.push(sec(head('clearance', 'Clearance'), vec('Size', 'clrSize', c, 'size', 3, 0.5),
+      row('Purpose', choose('clrPurpose', 'Clearance purpose', ['use', 'movement', 'access', 'maintenance'], c.purpose, (v) => { c.purpose = v; })),
+      row('Level', choose('clrLevel', 'Clearance level', ['required', 'recommended'], c.level ?? 'required', (v) => { if (v === 'required') delete c.level; else c.level = v; })),
+      el('small', { textContent: 'A box centred on the node that stays free. Drag its faces in the 3D view (Edit mode).' })));
+  }
+  if (x.opening) {
+    const o = x.opening;
+    res.push(sec(head('opening', 'Wall opening'), vec('Size', 'opSize', o, 'size', 3, 0.5),
+      row('Passage', check('opPass', 'People pass through', o.passage, (v) => { if (v) o.passage = true; else delete o.passage; }))));
+  }
+  if (x.support) {
+    const o = x.support;
+    res.push(sec(head('support', 'Support'), vec('Size x z', 'supSize', o, 'size', 2, 0.4),
+      row('Clear h', optField('supH', o, 'clear_height', 'Free height above (m)', undefined, 'open')),
+      el('small', { textContent: "A flat area through the node's origin, facing +y, others may stand things on." })));
+  }
+  const free = Object.keys(ITEM_NEW).filter((k) => !x[k]);
+  if (free.length) res.push(sec(el('div', { className: 'acts' }, ...free.map((k) => btn(`+ ${k === 'use' ? 'Use point' : k[0].toUpperCase() + k.slice(1)}`, () => { X(i)[k] = structuredClone(ITEM_NEW[k]); if (!showPlace) $('#showPlace').click(); commit(); }, `A ${k} in this node's frame (§6.5)`)))));
+  return res;
+}
+// A node's physics keys (D-178..D-184), when the document has physics.
+const AX3 = ['x', 'y', 'z'];
+function jointAxes(j) { // turn, slide: false | true | [min, max] per axis, from the shorthands
+  const turn = [false, false, false], slide = [false, false, false];
+  if (j.hinge) turn[AX3.indexOf(j.hinge.axis)] = j.hinge.limits ?? true;
+  else if (j.slider) slide[AX3.indexOf(j.slider.axis)] = j.slider.limits ?? true;
+  else if (j.ball) turn.fill(j.ball.limits ?? true);
+  else if (!j.fixed) { (j.turn ?? []).forEach((v, a) => { turn[a] = v; }); (j.slide ?? []).forEach((v, a) => { slide[a] = v; }); }
+  return { turn, slide };
+}
+function physSecs(i) {
+  if (!R().physics) return [];
+  const x = doc.nodes[i].extensions?.[EXT] ?? {}, res = [], SHAPES = ['box', 'sphere', 'cylinder', 'cone', 'capsule'];
+  const col = x.collider, kind = col === false ? 'none' : isObj(col) ? SHAPES.find((k) => col[k]) : col ?? 'auto';
+  const C = sec(h3('Collider'), row('Shape', choose('collider', 'Collider', [['auto', 'auto (its mesh)'], ['hull', 'convex hull'], ['box', 'bounding box'], ['none', 'none'], ...SHAPES.map((k) => [`shape:${k}`, `a ${k}`])],
+    isObj(col) ? `shape:${kind}` : kind, (v) => {
+      if (v === 'auto') delete X(i).collider; else if (v === 'none') X(i).collider = false; else if (!v.startsWith('shape:')) X(i).collider = v;
+      else { const k = v.slice(6); X(i).collider = { [k]: k === 'box' ? { size: [0.4, 0.4, 0.4] } : k === 'sphere' ? { radius: 0.2 } : k === 'cone' ? { radius: [0.2, 0], height: 0.4 } : { radius: 0.15, height: 0.4 } }; }
+    })));
+  if (isObj(col)) {
+    const sh = col[kind];
+    if (kind === 'box') put(C, vecRow('Size', 'colSize', sh.size, undefined, (a) => { sh.size = a; }));
+    else if (kind === 'cone') put(C, el('div', { className: 'vrow two' }, el('span', { className: 'lbl', textContent: 'Radius b, t' }), ...[0, 1].map((j) => field(`colR${j}`, sh.radius?.[j] ?? 0, undefined, (v) => { sh.radius = [...(sh.radius ?? [0, 0])]; sh.radius[j] = v; }, `Collider radius ${j ? 'top' : 'bottom'}`))));
+    else put(C, row('Radius', field('colR', sh.radius, undefined, (v) => { sh.radius = v; }, 'Collider radius')));
+    if (kind !== 'box' && kind !== 'sphere') put(C, row('Height', field('colH', sh.height, undefined, (v) => { sh.height = v; }, 'Collider height')));
+    put(C, row('Trigger', check('colTrig', 'Trigger: reports overlaps, does not collide', col.trigger, (v) => { if (v) col.trigger = true; else delete col.trigger; })), ...filterRows(col, 'colF'));
+  }
+  put(C, row('Density', optField('density', X(i), 'density', 'Density (kg/m³), inherited below', undefined, 'material')));
+  res.push(C);
+  // Body and joint
+  const B = sec(h3('Body'));
+  if (!x.body && !x.joint) put(B, el('div', { className: 'acts' }, btn('+ Body', () => { X(i).body = {}; commit(); }, 'A body of its own: the colliders below belong to it'),
+    btn('+ Joint', () => { X(i).joint = { hinge: { axis: 'x' } }; commit(); }, 'A body joined to the body above, at this node')));
+  if (x.body || x.joint) {
+    const b = x.body ?? {}, own = () => (X(i).body ??= {});
+    put(B, row('Motion', choose('bodyMotion', 'Body motion', MOTIONS, b.motion ?? 'dynamic', (v) => { if (v === 'dynamic') { delete own().motion; if (!Object.keys(X(i).body).length && x.joint) delete X(i).body; } else own().motion = v; })),
+      row('Mass kg', Object.assign(field('bodyMass', b.mass, undefined, (v) => { own().mass = v; }, 'Body mass (kg)'), { placeholder: 'from density' })),
+      x.body && btn('Remove body', () => { delete X(i).body; commit(); }, x.joint ? 'The joint still starts a body' : 'Its colliders join the body above'));
+  }
+  res.push(B);
+  if (x.joint) res.push(jointSec(i, x.joint));
+  return res;
+}
+function jointSec(i, j) {
+  const KINDS = ['fixed', 'hinge', 'slider', 'ball', 'axes'], kind = KINDS.find((k) => j[k] !== undefined) ?? 'axes';
+  const S = sec(h3('Joint', xBtn('Remove the joint', () => { delete X(i).joint; commit(); })),
+    row('Kind', choose('jointKind', 'Joint kind', [['fixed', 'fixed'], ['hinge', 'hinge (turns)'], ['slider', 'slider (slides)'], ['ball', 'ball'], ['axes', 'per axis']], kind, (v) => {
+      const keep = { ...(j.collide !== undefined && { collide: j.collide }) }, ax = jointAxes(j);
+      X(i).joint = v === 'fixed' ? { fixed: true, ...keep } : v === 'hinge' ? { hinge: { axis: 'x' }, ...keep } : v === 'slider' ? { slider: { axis: 'y' }, ...keep } : v === 'ball' ? { ball: true, ...keep } : { turn: ax.turn, slide: ax.slide, ...keep };
+    })));
+  const lim = (id, label, get, set) => { // [min, max] as two fields; both empty = free
+    const v = get(), mk = (k) => { const f = field(`${id}${k}`, Array.isArray(v) ? v[k] : undefined, undefined, (x) => { const a = Array.isArray(get()) ? [...get()] : [0, 0]; a[k] = x; set(a); }, `${label} ${k ? 'max' : 'min'}`); f.placeholder = 'free'; return f; };
+    return el('div', { className: 'vrow two' }, el('span', { className: 'lbl', textContent: label }), mk(0), mk(1));
+  };
+  if (kind === 'hinge' || kind === 'slider') {
+    const h = j[kind];
+    put(S, row('Axis', choose('jointAxis', 'Joint axis', AX3, h.axis, (v) => { h.axis = v; delete j.drive; })),
+      lim('jointLim', kind === 'hinge' ? 'Limits °' : 'Limits m', () => h.limits, (a) => { h.limits = a; }),
+      Array.isArray(h.limits) && btn('Free', () => { delete h.limits; commit(); }, 'No limits'));
+  } else if (kind === 'ball') {
+    put(S, lim('jointLim', 'Limits °', () => j.ball.limits, (a) => { j.ball = { limits: a }; }), isObj(j.ball) && btn('Free', () => { j.ball = true; commit(); }, 'No limits'));
+  } else if (kind === 'axes') {
+    for (const k of ['turn', 'slide']) AX3.forEach((a, n) => {
+      const v = j[k]?.[n] ?? false, set = (x) => { j[k] = [...(j[k] ?? [false, false, false])]; j[k][n] = x; };
+      put(S, el('div', { className: 'vrow' }, el('span', { className: 'lbl', textContent: `${k} ${a}` }),
+        choose(`j-${k}${a}`, `${k} ${a}`, ['locked', 'free', 'range'], v === false ? 'locked' : v === true ? 'free' : 'range', (s) => { set(s === 'locked' ? false : s === 'free' ? true : [0, k === 'turn' ? 45 : 0.1]); }),
+        ...(Array.isArray(v) ? [0, 1].map((m) => field(`j-${k}${a}${m}`, v[m], undefined, (x) => { const r = [...v]; r[m] = x; set(r); }, `${k} ${a} ${m ? 'max' : 'min'}`)) : [el('span'), el('span')])));
+    });
+  }
+  // Drives (D-183): one per axis that moves
+  const ax = jointAxes(j), moving = ['turn', 'slide'].flatMap((k) => AX3.filter((_, n) => ax[k][n] !== false).map((a) => `${k}_${a}`));
+  for (const name of moving) {
+    const d = j.drive?.[name];
+    if (!d) { put(S, btn(`+ Drive ${name}`, () => { ((j.drive ??= {})[name] = { stiffness: 100, damping: 10, target: 0 }); commit(); }, 'A spring or a motor on this axis')); continue; }
+    const f = (k, def) => optField(`drv-${name}-${k}`, d, k, `${name} ${k}`, undefined, def);
+    put(S, h3(`Drive ${name}`, xBtn(`Remove drive ${name}`, () => { delete j.drive[name]; if (!Object.keys(j.drive).length) delete j.drive; commit(); })),
+      el('div', { className: 'vrow' }, el('span', { className: 'lbl', textContent: 'Stiff, damp, target' }), f('stiffness', 0), f('damping', 0), f('target', 0)),
+      el('div', { className: 'vrow' }, el('span', { className: 'lbl', textContent: 'Vel, max F, mode' }), f('velocity', 0), f('max_force', '∞'),
+        choose(`drv-${name}-mode`, `${name} mode`, ['force', 'acceleration'], d.mode ?? 'force', (v) => { if (v === 'force') delete d.mode; else d.mode = v; })));
+  }
+  put(S, row('Collide', check('jointCollide', 'The two bodies collide', j.collide, (v) => { if (v) j.collide = true; else delete j.collide; })),
+    el('small', { textContent: 'At the node origin, limits counted from the rest pose (every live parameter at its default). Degrees and metres.' }));
+  return S;
+}
+// Placed documents (§6.2): the recipe's models, by uri (fetched beside this document, or a file you pick) or embedded.
+// files holds each fetched document by uri, as loadFiles fills it.
+async function fetchFile(uri) {
+  if (uri.startsWith('data:') || Object.hasOwn(files, uri)) return;
+  await loadFiles({ extensions: { [EXT]: { models: [{ uri }] } } }, async (u) => { const res = await fetch(new URL(u, docBase ?? location.href)); if (!res.ok) throw new Error(`${res.status}`); return res.text(); }, files)
+    .catch((e) => { note = `Could not load ${uri}: ${e.message}. Use "From file…" for a file on your computer.`; });
+}
+function pickFile(accept, then) {
+  const inp = el('input', { type: 'file', accept, onchange: async () => { const f = inp.files[0]; if (f) then(f); } });
+  inp.click();
+}
+const docOf = (m) => (isObj(m?.document) ? m.document : files[m?.uri]);
+function modelsSec() {
+  const r = R(), ms = r.models ?? [];
+  const uriIn = (m, j) => el('input', { id: `model-${j}`, className: 'f', value: m.document ? '(embedded)' : m.uri ?? '', disabled: !!m.document, spellcheck: false, autocomplete: 'off', ariaLabel: `Model ${j} file`,
+    onchange: async (e) => { const u = e.target.value.trim(); if (!u) return; m.uri = u; await fetchFile(u); commit(); } });
+  return sec(h3(`Models · ${ms.length}`),
+    ...ms.map((m, j) => el('div', { className: 'vrow two' }, el('span', { className: 'lbl', textContent: `model ${j}` }), uriIn(m, j),
+      el('button', { type: 'button', className: 'x', textContent: '×', title: 'Remove this model', ariaLabel: `Remove model ${j}`, onclick: () => {
+        if (doc.nodes.some((n) => n.extensions?.[EXT]?.model === j)) { note = `Model ${j} is placed by a node: take it off there first.`; return status(); }
+        ms.splice(j, 1); doc.nodes.forEach((n) => { const x = n.extensions?.[EXT]; if (x?.model > j) x.model--; }); if (!ms.length) delete r.models; commit(); } }))),
+    el('div', { className: 'acts' },
+      btn('+ Model by name', async () => { const u = `part${ms.length}.gltf`; (r.models ??= []).push({ uri: u }); note = `Type the file name of model ${ms.length}: it is looked up beside this document.`; commit(); }, 'A JIG document beside this one, by file name'),
+      btn('From file…', () => pickFile('.gltf,model/gltf+json', async (f) => { files[f.name] = JSON.parse(await f.text()); await loadFiles(files[f.name], async (u) => { throw new Error(`${u} is not loaded`); }, files).catch((e) => { note = e.message; }); (r.models ??= []).push({ uri: f.name }); commit(); }), 'A JIG document on your computer; saved by its file name')),
+    el('p', {}, 'Other JIG documents a node places with its own parameter values. Select a node to place one.'));
+}
+function placeSec(i) {
+  const x = doc.nodes[i].extensions?.[EXT] ?? {}, ms = R().models ?? [];
+  const S = sec(h3('Placed model'), row('Model', choose('modelPick', 'Placed model', [['', 'none'], ...ms.map((m, j) => [j, `model ${j} · ${m.uri ?? 'embedded'}`])], x.model ?? '', (v) => {
+    if (v === '') { delete X(i).model; delete X(i).values; delete X(i).model_visible; } else { X(i).model = +v; delete X(i).values; }
+  })));
+  if (x.model === undefined) { if (!ms.length) put(S, el('small', { textContent: 'Add a model on the document panel (click empty space) to place it here.' })); return S; }
+  const P = docOf(ms[x.model])?.extensions?.[EXT]?.params ?? {}, V = x.values ?? {};
+  put(S, row('Shown', optField('modelVisible', X(i), 'model_visible', 'Model visible (0 hides the placed model alone)', undefined, 1)),
+    ...Object.entries(P).filter(([k, p]) => isObj(p) && !k.startsWith('//')).map(([k, p]) => {
+      const set = (v) => { (X(i).values ??= {})[k] = v; };
+      const f = p.type === 'choice' ? choose(`val-${k}`, k, [['', `default (${p.default})`], ...p.options], V[k] ?? '', (v) => { const vs = X(i).values; if (v !== '') set(v); else if (vs) { delete vs[k]; if (!Object.keys(vs).length) delete X(i).values; } })
+        : p.type === 'color' ? colorRow(`val-${k}`, k, 4, V[k] ?? p.default, V[k] ?? p.default, set)
+        : valField(k, V[k], p.type === 'bool' ? (p.default ? 1 : 0) : p.default, set);
+      return p.type === 'color' ? f : row(k, f);
+    }),
+    el('small', { textContent: `Its parameters, as numbers or expressions of this document; empty keeps its default. Children see model_x0 … model_z1, its bounds.${Object.keys(P).length ? '' : ' (Its file is not loaded, so its parameters are unknown.)'}` }));
+  return S;
+  function valField(k, v, def, set) { // empty: the key goes, and values with it once empty
+    const f = field(`val-${k}`, v, undefined, set, k); f.placeholder = String(def);
+    f.addEventListener('change', () => { const vs = X(i).values; if (f.value.trim() !== '' || vs?.[k] === undefined) return; delete vs[k]; if (!Object.keys(vs).length) delete X(i).values; commit(); });
+    return f;
+  }
+}
+function nodeSecs(i) {
+  const x = doc.nodes[i].extensions?.[EXT] ?? {}, res = [], inTree = new Set(subtree(i)), label = (k) => nameOf(k) ?? `node ${k}`;
+  res.push(sec(h3('Node'),
+    row('Parent', choose('parent', 'Parent', [[-1, `scene ${doc.scene ?? 0}`], ...doc.nodes.map((_, k) => k).filter((k) => !inTree.has(k)).map((k) => [k, label(k)])], parentOf(i), (v) => reparent(i, +v))),
+    row('Visible', optField('visible', X(i), 'visible', 'Visible (0 hides it and its subtree)', undefined, 1)),
+    el('small', { textContent: 'Visible: a number or expression, 0 hides this node and everything under it. A new parent keeps the local transform.' })));
+  // On a loft (D-106)
+  const lofts = (R().meshes ?? []).map((m, k) => [k, m]).filter(([, m]) => m.loft).map(([k]) => [k, `mesh ${k} · loft`]);
+  if (x.on) {
+    const on = x.on, byD = on.d !== undefined;
+    res.push(sec(h3('On a loft', el('button', { type: 'button', className: 'x', textContent: '×', title: 'Take it off the loft', ariaLabel: 'Take it off the loft', onclick: () => { delete X(i).on; commit(); } })),
+      row('Loft', choose('onMesh', 'Loft', lofts, on.mesh, (v) => { on.mesh = +v; })),
+      el('div', { className: 'vrow two' }, choose('onBy', 'Along by', [['t', 't (0..1)'], ['d', 'd (metres)']], byD ? 'd' : 't', (v) => { const val = on.t ?? on.d; delete on.t; delete on.d; on[v] = val; }),
+        field('onAt', on.t ?? on.d, undefined, (v) => { on[byD ? 'd' : 't'] = v; }, 'Along'), optField('onU', on, 'u', 'Round (u)', undefined, 'curve')),
+      el('small', { textContent: "At the parent's origin. With u (0..1 round the ring) it sits on the surface, z outward; without, on the curve." })));
+  } else if (lofts.length) res.push(sec(btn('Place on a loft', () => { X(i).on = { mesh: lofts[0][0], t: 0.5 }; commit(); }, 'Sit this node on a loft, at t along it (D-106)')));
+  // Light (D-113, D-119)
+  const lights = doc.extensions?.KHR_lights_punctual?.lights ?? [];
+  const L = sec(h3('Light'), row('Light', choose('light', 'Light', [['', 'none'], ...lights.map((l, k) => [k, l.name ?? `light ${k} · ${l.type}`]), ['new', '+ New point light']], x.light ?? '', (v) => {
+    if (v === 'new') {
+      ((doc.extensions ??= {}).KHR_lights_punctual ??= { lights: [] }).lights.push({ type: 'point', intensity: 10 });
+      if (!doc.extensionsUsed.includes('KHR_lights_punctual')) doc.extensionsUsed.push('KHR_lights_punctual');
+      X(i).light = doc.extensions.KHR_lights_punctual.lights.length - 1;
+    } else if (v === '') { delete X(i).light; delete doc.nodes[i].extensions?.KHR_lights_punctual; } else X(i).light = +v;
+  })));
+  const lt = lights[x.light];
+  if (isObj(lt)) {
+    const tw = () => ((lt.extensions ??= {})[EXT] ??= {}), t = lt.extensions?.[EXT] ?? {};
+    put(L, row('Type', choose('lightType', 'Light type', ['point', 'spot', 'directional'], lt.type, (v) => { lt.type = v; if (v === 'spot') lt.spot ??= {}; else delete lt.spot; if (v === 'directional') { delete lt.range; delete t.range; } })),
+      colorRow('lightColor', 'Color', 3, t.color ?? lt.color ?? [1, 1, 1], t.color ?? lt.color ?? [1, 1, 1], (v) => { tw().color = v; }),
+      row('Intensity', field('lightI', t.intensity ?? lt.intensity ?? 1, undefined, (v) => { tw().intensity = v; }, 'Intensity')),
+      lt.type !== 'directional' && row('Range', Object.assign(field('lightR', t.range, undefined, (v) => { tw().range = v; }, 'Range'), { placeholder: '∞' })),
+      lt.type === 'spot' && el('div', { className: 'vrow two' }, el('span', { className: 'lbl', textContent: 'Cone in, out' }),
+        field('spotIn', lt.spot.innerConeAngle ?? 0, undefined, (v) => { if (isStr(v)) return; lt.spot.innerConeAngle = v; }, 'Inner cone (radians)'),
+        field('spotOut', lt.spot.outerConeAngle ?? Math.PI / 4, undefined, (v) => { if (isStr(v)) return; lt.spot.outerConeAngle = v; }, 'Outer cone (radians)')),
+      el('small', { textContent: `Shines along the node's −z. Candela for point and spot, lux for directional; cone angles in radians.` }));
+  }
+  res.push(L);
+  // Skin (D-76, D-143..D-145): a joint of a skin, and a shape's blend under one
+  const skins = R().skins ?? [], k = skins.findIndex((s) => s.joints?.includes(i)), under = jointAbove(i);
+  const S = sec(h3('Skin'));
+  if (k >= 0) put(S, el('p', {}, `Joint of skin ${k} (${skins[k].joints.length} joints).`),
+    row('Skin blend', optField('skinBlend', skins[k], 'blend', `Skin ${k} blend width`, undefined, 0)),
+    btn('Not a joint', () => { skins[k].joints.splice(skins[k].joints.indexOf(i), 1); if (!skins[k].joints.length) { skins.splice(k, 1); if (!skins.length) delete R().skins; } commit(); }, 'Take this node out of its skin'));
+  else put(S, row('Joint of', choose('skinPick', 'Make a joint of', [['', '—'], ...skins.map((_, j) => [j, `skin ${j}`]), ['new', '+ New skin']], '', (v) => {
+    if (v === 'new') (R().skins ??= []).push({ joints: [i] }); else if (v !== '') skins[+v].joints.push(i);
+  })));
+  if (under !== null && meshOf(i) !== undefined) put(S, 
+    row('Blend', optField('blend', X(i), 'blend', 'Blend width (metres, 0 rigid)', undefined, 'skin')),
+    row('Follows', el('input', { id: 'blendJoints', className: 'f', value: (x.blend_joints ?? []).join(', '), placeholder: 'every joint', spellcheck: false, autocomplete: 'off', ariaLabel: 'Blend joints (node indices)',
+      onchange: (e) => { const a = e.target.value.split(/[\s,]+/).filter(Boolean).map(Number); if (a.length && a.every(Number.isInteger)) X(i).blend_joints = a; else delete X(i).blend_joints; commit(); } })),
+    el('small', { textContent: `Bound to ${label(under)}. Follows: node indices of the joints this shape may bend with.` }));
+  res.push(S);
+  return res;
+}
+
 function loftProps(l, om) {
   const i = sel.node;
   const blend = el('select', { id: 'blend', className: 'f', onchange: (e) => { l.blend = e.target.value; if (l.blend === 'linear') delete l.blend; commit(); } },
@@ -1089,7 +1601,12 @@ function loftProps(l, om) {
   const settings = sec(h3('Loft'),
     el('div', { className: 'vrow two' }, el('span', { className: 'lbl', textContent: 'Sides, steps' }),
       field('sides', l.sides ?? 24, om?.sides, (v) => { l.sides = v; }, 'Sides'), field('steps', l.steps ?? 48, om?.steps, (v) => { l.steps = v; }, 'Steps')),
-    el('div', { className: 'vrow one' }, el('label', { htmlFor: 'blend', textContent: 'Blend' }), blend));
+    el('div', { className: 'vrow one' }, el('label', { htmlFor: 'blend', textContent: 'Blend' }), blend),
+    row('Closed', check('closed', 'Closed: the curve runs back to its first point', l.closed, (v) => { if (v) { l.closed = true; delete l.caps; delete l.cap_depth; } else delete l.closed; })),
+    !l.closed && capsRow(l, ['flat', 'dome', 'none']),
+    isObj(l.caps) && Object.values(l.caps).includes('dome') && row('Dome', optField('capDepth', l, 'cap_depth', 'Dome depth', undefined, 1)),
+    row('Wall', optField('thickness', l, 'thickness', 'Wall thickness', undefined, 'solid')),
+    el('small', { textContent: 'Wall: a thickness makes a hollow shell; it needs an end with cap none.' }));
   const enter = (s) => { mode = 'edit'; sel = { node: i, ...s }; update(); };
   const path = !plainPath(l) ? sec(h3(`Path · ${l.path.length} items`), el('small', { textContent: 'Corner radii, arcs or spirals: edit the JSON.' })) : sec(h3(`Path · ${l.path.length} points`),
     ...l.path.map((p, j) => el('div', { className: 'prow' },
@@ -1110,7 +1627,7 @@ function loftProps(l, om) {
       l.sections.push({ t: 0.5, points: s2.points.map((p) => p.map(r4)), ...(s2.twist ? { twist: r4(s2.twist) } : {}) });
       editTool = 'sections'; mode = 'edit'; sel = { node: i, section: l.sections.length - 1 }; commit();
     }));
-  const res = [settings, path, sections];
+  const res = [settings, path, sections, dentsSec(l)];
   const s = l.sections[sel.section];
   if (s && l.sections.every((x) => plainPoints(x.points))) res.push(...shapePanel(`Section ${sel.section}`, 'Adding or removing a point does it in every section.'));
   else if (s) res.push(roundPanel(l, s, om));
@@ -1141,6 +1658,10 @@ function extrudeProps(e, om) {
     el('div', { className: 'vrow two' }, el('span', { className: 'lbl', textContent: 'Depth, bevel' }),
       field('depth', e.depth, om?.depth, (v) => { e.depth = v; }, 'Depth'),
       field('bevel', e.bevel ?? 0, om?.bevel ?? 0, (v) => { if (v === 0) delete e.bevel; else e.bevel = v; }, 'Bevel')));
+  if (e.outline?.project !== undefined) { // §5.10: a projected outline
+    const p = e.outline.project ?? {};
+    return [settings, sec(h3('Projected outline'), el('p', {}, `The region node ${p.of} covers, seen along [${(p.direction ?? []).join(', ')}]${p.cut !== undefined ? `, cut ${p.cut} back` : ''}${p.line !== undefined ? `, as a line ${p.line} wide` : ''}${p.key ? `; parts hidden for "${p.key}" count when their visible_for names it` : ''}. Edit it in the JSON.`))];
+  }
   const loops = sec(h3(`Loops · ${1 + (e.holes ?? []).length}`),
     el('div', { className: 'acts' }, ...[0, ...(e.holes ?? []).map((_, j) => j + 1)].map((j) => {
       const b = btn(loopName(j), () => { sel = { node: sel.node, loop: j }; update(); }, `Edit the ${loopName(j).toLowerCase()}`);
@@ -1160,10 +1681,11 @@ function materialSec(m) {
   const pick = el('select', { id: 'matPick', className: 'f', onchange: (e) => {
     const v = e.target.value;
     if (v === 'new') { (doc.materials ??= []).push({ name: `material ${mats.length}`, pbrMetallicRoughness: { baseColorFactor: [0.8, 0.8, 0.8, 1], metallicFactor: 0, roughnessFactor: 0.5 } }); m.material = doc.materials.length - 1; }
+    else if (v === 'lib') { (doc.materials ??= []).push({ name: `material ${mats.length}`, extensions: { [EXT]: { from: { uri: 'materials.gltf', material: 'name' } } } }); m.material = doc.materials.length - 1; note = 'Type the library file and the name of its material.'; }
     else if (v === '') delete m.material; else m.material = +v;
     commit();
   } }, el('option', { value: '', textContent: 'none (glTF default)', selected: k === undefined }),
-    ...mats.map((x, j) => el('option', { value: j, textContent: x?.name ?? `material ${j}`, selected: j === k })), el('option', { value: 'new', textContent: '+ New material' }));
+    ...mats.map((x, j) => el('option', { value: j, textContent: x?.name ?? `material ${j}`, selected: j === k })), el('option', { value: 'new', textContent: '+ New material' }), el('option', { value: 'lib', textContent: '+ From a library…' }));
   pick.setAttribute('aria-label', 'Material');
   const res = sec(h3('Material'), el('div', { className: 'vrow one' }, el('label', { htmlFor: 'matPick', textContent: 'Uses' }), pick));
   const mat = mats[k];
@@ -1183,7 +1705,10 @@ function materialSec(m) {
   const name = el('input', { id: 'matName', className: 'f', value: mat.name ?? '', placeholder: `material ${k}`, autocomplete: 'off',
     onchange: (e) => { const v = e.target.value.trim(); if (v) mat.name = v; else delete mat.name; commit(); } });
   name.setAttribute('aria-label', 'Material name');
-  res.append(el('div', { className: 'vrow one' }, el('label', { htmlFor: 'matName', textContent: 'Name' }), name),
+  put(res, el('div', { className: 'vrow one' }, el('label', { htmlFor: 'matName', textContent: 'Name' }), name));
+  const from = ext[EXT]?.from;
+  if (isObj(from)) { libSec(res, mat, from); return res; }
+  put(res, 
     ...(users > 1 ? [el('p', {}, `Used by ${users} meshes: a change here changes all of them.`)] : []),
     colorRow('baseColorFactor', 'Color', 4, now.baseColorFactor, val('baseColorFactor'), (v) => { x().baseColorFactor = v; }),
     num('metallicFactor', 'Metallic'), num('roughnessFactor', 'Roughness'),
@@ -1194,8 +1719,52 @@ function materialSec(m) {
     num('sheenRoughnessFactor', 'Sheen rough'),
     num('diffuseTransmissionFactor', 'Through'),
     colorRow('diffuseTransmissionColorFactor', 'Through color', 3, now.diffuseTransmissionColorFactor, val('diffuseTransmissionColorFactor'), (v) => { x().diffuseTransmissionColorFactor = v; }),
-    el('p', {}, 'Sheen is the soft rim of cloth. Through is diffuse transmission, light through thin skin or leaves; this viewer does not show it.'));
+    el('p', {}, 'Sheen is the soft rim of cloth. Through is diffuse transmission, light through thin skin or leaves; this viewer does not show it.'),
+    row('Alpha', choose('alphaMode', 'Alpha mode', [['OPAQUE', 'opaque'], ['MASK', 'mask (cut out)'], ['BLEND', 'blend']], mat.alphaMode ?? 'OPAQUE', (v) => { if (v === 'OPAQUE') delete mat.alphaMode; else mat.alphaMode = v; if (v !== 'MASK') delete mat.alphaCutoff; })),
+    mat.alphaMode === 'MASK' && row('Cutoff', field('alphaCutoff', mat.alphaCutoff ?? 0.5, undefined, (v) => { if (typeof v === 'number') mat.alphaCutoff = v; }, 'Alpha cutoff')),
+    row('2 sided', check('doubleSided', 'Double sided', mat.doubleSided, (v) => { if (v) mat.doubleSided = true; else delete mat.doubleSided; })),
+    ...TEX_SLOTS.map(([slot, label]) => texRow(mat, slot, label, x)),
+    R().physics && matPhysics(mat, x));
   return res;
+}
+// A library material (D-162..D-167): the file, the material's name there, and values for the library's parameters.
+function libSec(res, mat, from) {
+  const tw = mat.extensions[EXT], lib = files[from.uri], P = lib?.extensions?.[EXT]?.params ?? {};
+  const txt = (id, key, label) => el('input', { id, className: 'f', value: from[key] ?? '', spellcheck: false, autocomplete: 'off', ariaLabel: label,
+    onchange: async (e) => { const t = e.target.value.trim(); if (!t) return; from[key] = t; if (key === 'uri') await fetchFile(t); commit(); } });
+  const names = (lib?.materials ?? []).map((x) => x?.name).filter(isStr);
+  put(res, row('Library', txt('libUri', 'uri', 'Library file')),
+    names.length ? row('Material', choose('libMat', 'Library material', names.includes(from.material) ? names : [from.material, ...names], from.material, (v) => { from.material = v; })) : row('Material', txt('libMat', 'material', 'Library material name')),
+    ...Object.entries(P).filter(([k, p]) => isObj(p) && !k.startsWith('//')).map(([k, p]) => {
+      const f = field(`libv-${k}`, tw.values?.[k], undefined, (v) => { (tw.values ??= {})[k] = v; }, k);
+      f.placeholder = p.type === 'color' ? 'default colour' : String(p.default);
+      f.addEventListener('change', () => { if (f.value.trim() !== '' || tw.values?.[k] === undefined) return; delete tw.values[k]; if (!Object.keys(tw.values).length) delete tw.values; commit(); });
+      return row(k, f);
+    }),
+    btn('Unlink', () => { delete mat.extensions[EXT]; if (!Object.keys(mat.extensions).length) delete mat.extensions; note = 'The library link is gone: this is a plain material of your own now.'; commit(); }, 'Drop the library link; set the slots here'),
+    el('p', {}, `Comes whole from ${from.uri}${lib ? '' : ' (not loaded)'}: slots, textures, alpha. Values set the library's own parameters.`));
+}
+// Texture slots (D-81): an image (a file you pick goes in as a data: URI) and the transform twin, offset, turn, scale.
+const TEX_SLOTS = [['baseColorTexture', 'Color map'], ['metallicRoughnessTexture', 'Metal/rough'], ['normalTexture', 'Normal map'], ['occlusionTexture', 'Occlusion'], ['emissiveTexture', 'Emission map']];
+function texRow(mat, slot, label, x) {
+  const inPbr = slot === 'baseColorTexture' || slot === 'metallicRoughnessTexture', holder = () => (inPbr ? (mat.pbrMetallicRoughness ??= {}) : mat), cur = (inPbr ? mat.pbrMetallicRoughness : mat)?.[slot];
+  const texName = (t, j) => t?.name ?? doc.images?.[t?.source]?.name ?? doc.images?.[t?.source]?.uri?.slice(0, 60).split('/').pop() ?? `texture ${j}`;
+  const setTex = (j) => { holder()[slot] = { index: j }; };
+  const dropTwin = () => { const tw = mat.extensions?.[EXT]; if (!tw) return; delete tw[slot]; if (!Object.keys(tw).length) delete mat.extensions[EXT]; };
+  const S = el('div', {}, row(label, choose(`tex-${slot}`, label, [['', 'none'], ...(doc.textures ?? []).map((t, j) => [j, texName(t, j)]), ['file', '+ Image file…']], cur?.index ?? '', (v) => {
+    if (v === '') { delete holder()[slot]; dropTwin(); }
+    else if (v !== 'file') setTex(+v);
+    else pickFile('image/png,image/jpeg', (f) => { const rd = new FileReader(); rd.onload = () => {
+      (doc.images ??= []).push({ name: f.name, uri: rd.result }); (doc.textures ??= []).push({ source: doc.images.length - 1 }); setTex(doc.textures.length - 1);
+      note = `${f.name} is embedded as a data: URI.`; commit(); }; rd.readAsDataURL(f); });
+  })));
+  if (cur) {
+    const t = mat.extensions?.[EXT]?.[slot] ?? {}, tw = () => (x()[slot] ??= {});
+    const pair = (key, def, lab) => [0, 1].map((a) => field(`tex-${slot}-${key}${a}`, t[key]?.[a] ?? def, undefined, (v) => { const o = tw(); o[key] = [...(o[key] ?? [def, def])]; o[key][a] = v; }, `${label} ${lab} ${'uv'[a]}`));
+    put(S, el('div', { className: 'vrow q' }, el('span', { className: 'lbl', textContent: 'Off, scale' }), ...pair('offset', 0, 'offset'), ...pair('scale', 1, 'scale')),
+      row('Turn', field(`tex-${slot}-rot`, t.rotation ?? 0, undefined, (v) => { tw().rotation = v; }, `${label} rotation (radians)`)));
+  }
+  return S;
 }
 // A color slot: a picker (sRGB, as the parameter pickers), the value as linear channels or an expression, and a
 // list that links a color parameter in one click (D-91: the slot holds the parameter's name).
@@ -1222,15 +1791,12 @@ function colorRow(slot, label, n, src, value, set) {
 
 // Lathe (D-88): sides, caps, and the profile in the shape editor (also in the 3D view in Edit mode).
 function latheProps(l, om) {
-  const capSel = el('select', { id: 'caps', className: 'f', disabled: l.caps !== undefined && !isStr(l.caps), title: isStr(l.caps ?? '') ? '' : 'Per-end caps: edit them in the JSON',
-    onchange: (e) => { if (e.target.value === 'both') delete l.caps; else l.caps = e.target.value; commit(); } },
-    ...['both', 'start', 'end', 'none'].map((c) => el('option', { value: c, textContent: c, selected: (l.caps ?? 'both') === c })));
-  capSel.setAttribute('aria-label', 'Caps');
   const settings = sec(h3('Lathe'),
     el('div', { className: 'vrow one' }, el('label', { htmlFor: 'sides', textContent: 'Sides' }), field('sides', l.sides ?? 24, om?.sides, (v) => { l.sides = v; }, 'Sides')),
-    el('div', { className: 'vrow one' }, el('label', { htmlFor: 'caps', textContent: 'Caps' }), capSel),
-    el('p', {}, 'Caps close the ends off the axis; an end on the axis closes to a point.'));
-  return [settings, ...(plainPoints(l.profile) ? shapePanel('Profile', 'r is the distance from the y axis (≥ 0); press Tab to drag the profile in the 3D view.')
+    capsRow(l, ['flat', 'none']),
+    row('Wall', optField('thickness', l, 'thickness', 'Wall thickness', undefined, 'solid')),
+    el('p', {}, 'Caps close the ends off the axis; an end on the axis closes to a point. A wall needs an end off the axis with cap none.'));
+  return [settings, dentsSec(l), ...(plainPoints(l.profile) ? shapePanel('Profile', 'r is the distance from the y axis (≥ 0); press Tab to drag the profile in the 3D view.')
     : [sec(h3('Profile shape'), el('p', {}, 'A round form or an arc item: edit it in the JSON.'))])];
 }
 
@@ -1443,7 +2009,36 @@ function dragPoint(sh, j, dir, q) {
 function sketchUp() { if (sketchDrag) { sketchDrag = null; commit(); } }
 
 // ---------- parameters ----------
-let varOut = {}, sliderOut = {}, chosenSet = '';
+let varOut = {}, sliderOut = {}, chosenSet = '', openParam = '';
+// A parameter's kind (D-47, D-53, D-107, D-123) and hints (D-121, D-122). A new kind gets a valid default; sets and
+// tried values of the old kind are dropped, as they would no longer read.
+const KINDS = ['number', 'int', 'bool', 'choice', 'color'];
+function paramDetails(k, p) {
+  const r = R(), kind = p.type ?? 'number', ranged = kind === 'number' || kind === 'int';
+  const setKind = (to) => {
+    const n = typeof p.default === 'number' ? p.default : 0, keep = { ...(p.doc !== undefined && { doc: p.doc }), ...(p.live !== undefined && { live: p.live }) };
+    const lo = Math.min(p.min ?? 0, n), hi = Math.max(p.max ?? 1, n, lo + 1);
+    r.params[k] = to === 'number' ? { default: n, min: lo, max: hi, ...keep }
+      : to === 'int' ? { type: 'int', default: Math.round(n), min: Math.floor(lo), max: Math.ceil(hi), ...keep }
+      : to === 'bool' ? { type: 'bool', default: !!n, ...keep }
+      : to === 'choice' ? { type: 'choice', options: ['a', 'b'], default: 'a', ...keep }
+      : { type: 'color', default: [0.8, 0.8, 0.8, 1], ...keep };
+    delete values[k]; if (isObj(r.sets)) for (const s in r.sets) delete r.sets[s][k];
+    note = `${k} is a ${to} parameter now; sets no longer hold a value for it.`;
+  };
+  const opts = kind === 'choice' && el('input', { id: `p-opts-${k}`, className: 'f', value: (p.options ?? []).join(', '), spellcheck: false, autocomplete: 'off', ariaLabel: `${k} options`,
+    onchange: (e) => { const o = [...new Set(e.target.value.split(',').map((t) => t.trim()).filter(Boolean))]; if (o.length < 2) { note = 'A choice needs at least 2 options.'; return status(); } p.options = o; if (!o.includes(p.default)) p.default = o[0]; commit(); } });
+  const docIn = el('input', { id: `p-doc-${k}`, className: 'f', value: p.doc ?? '', placeholder: 'what it does', autocomplete: 'off', ariaLabel: `${k} note`,
+    onchange: (e) => { const t = e.target.value.trim(); if (t) p.doc = t; else delete p.doc; commit(); } });
+  return el('div', { className: 'pdet' },
+    el('label', { htmlFor: `p-kind-${k}`, textContent: 'Kind' }), choose(`p-kind-${k}`, `${k} kind`, KINDS, kind, setKind),
+    opts && el('label', { htmlFor: `p-opts-${k}`, textContent: 'Options' }), opts,
+    el('label', { htmlFor: `p-doc-${k}`, textContent: 'Note' }), docIn,
+    ranged && el('label', { htmlFor: `p-step-${k}`, textContent: 'Step' }), ranged && optField(`p-step-${k}`, p, 'step', `${k} step`, undefined, 'none'),
+    ranged && el('label', { htmlFor: `p-unit-${k}`, textContent: 'Unit' }), ranged && choose(`p-unit-${k}`, `${k} unit`, [['', 'none'], ['m', 'm'], ['deg', 'deg'], ['%', '%'], ['s', 's']], p.unit ?? '', (v) => { if (v) p.unit = v; else delete p.unit; }),
+    el('label', { htmlFor: `p-live-${k}`, textContent: 'Live' }), el('span', {}, check(`p-live-${k}`, `${k} promised live`, p.live, (v) => { if (v) p.live = true; else delete p.live; }),
+      el('small', { textContent: ' promise a game may change it every frame (an error if it reaches a baked mesh)' })));
+}
 // Color forms to type a color in. The file always holds linear [r, g, b, a] 0..1 (glTF, Blender); the others are
 // sRGB like a color picker: hex, 0..255 channels, HSV (h 0..360, s and v 0..100). Alpha is never converted.
 let colorForm = 'hex';
@@ -1498,6 +2093,9 @@ function params() {
     ...Object.keys(P).filter((k) => isObj(P[k])).flatMap((k) => {
       const p = P[k], now = out?.params?.[k]?.value ?? p.default;
       const row = paramRow(k, p, now);
+      row[0] = el('span', { className: 'pname' }, el('button', { type: 'button', className: 'x', textContent: openParam === k ? '▾' : '▸', title: 'Kind and hints', ariaLabel: `${k}: kind and hints`, ariaExpanded: String(openParam === k),
+        onclick: () => { openParam = openParam === k ? '' : k; params(); } }), row[0]);
+      if (openParam === k) row.push(paramDetails(k, p));
       // draft f25: the parameter's note as a tooltip on its name; draft f26: a mark when it changes the baked meshes
       const bakes = out?.params?.[k]?.live === false;
       row[0].classList.toggle('bake', bakes);
@@ -1571,7 +2169,7 @@ function params() {
   const clipBar = pickClip && el('div', { className: 'setbar' }, el('label', { htmlFor: 'clip-pick', textContent: 'Clip' }), pickClip,
     btn(playing ? 'Stop' : 'Play', () => (playing ? stopClip() : playClip(clips.find((c) => c.name === chosenClip) ?? clips[0])), 'Play the clip: it sets its parameters as time runs'),
     scrub());
-  $('#paneParams').replaceChildren(...[setBar, clipBar].filter(Boolean), grid1, grid2);
+  $('#paneParams').replaceChildren(...[setBar, clipBar].filter(Boolean), grid1, grid2, clipEditor());
   // A time slider: the clip held at one moment (try values; Play or a set puts them back).
   function scrub() {
     const c = clips.find((x) => x.name === chosenClip) ?? clips[0];
@@ -1583,6 +2181,34 @@ function params() {
   }
 }
 let chosenClip = '', playing = null, scrubT = 0; // playing: { clip, start, saved }
+// Clips (D-152, D-153): the chosen clip's length, fps, loop and the live parameters it drives, as expressions of t and u.
+function clipEditor() {
+  const r = R(), C = isObj(r.clips) ? r.clips : {}, names = Object.keys(C).filter((n) => !n.startsWith('//'));
+  const name = names.includes(chosenClip) ? chosenClip : names[0], c = C[name];
+  const live = Object.entries(out?.params ?? {}).filter(([, p]) => p.live !== false && p.type !== 'choice').map(([k]) => k);
+  const add = btn('+ Clip', () => {
+    if (!live.length) { note = 'A clip drives live parameters: add one that changes no baked mesh (a turn, a colour) first.'; return status(); }
+    const n = fresh('clip', new Set(names));
+    r.clips = { ...C, [n]: { length: 1, loop: true, values: { [live[0]]: `${out.params[live[0]].value ?? 0}` } } }; chosenClip = n; commit();
+  }, 'Motion: live parameters as expressions of time t (seconds) and u (0..1 over the clip)');
+  const box = el('div', { className: 'vtable' }, el('span', { className: 'gh' }, 'Clips · live parameters over time: t seconds, u = t / length'));
+  if (!c) { box.append(el('div', { style: 'grid-column:1/-1' }, add)); return box; }
+  const nm = el('input', { id: 'clip-name', className: 'f', value: name, autocomplete: 'off', spellcheck: false, ariaLabel: 'Clip name',
+    onchange: (e) => { const to = e.target.value.trim(); if (!to || to.includes('/') || to in C) return; r.clips = renamed(C, name, to); chosenClip = to; commit(); } });
+  box.append(
+    choose('clip-edit', 'Clip to edit', names, name, (v) => { chosenClip = v; }), nm, el('span'), el('button', { type: 'button', className: 'x', textContent: '×', title: `Remove clip ${name}`, ariaLabel: `Remove clip ${name}`, onclick: () => { delete C[name]; if (!Object.keys(C).length) delete r.clips; commit(); } }),
+    el('span', { className: 'hd' }, 'length s, fps'), el('span', { className: 'pname' }, field('clip-len', c.length, undefined, (v) => { c.length = v; }, 'Length (s)'), optField('clip-fps', c, 'fps', 'Keys per second', undefined, 30)),
+    el('span', {}, check('clip-loop', 'Loop', c.loop, (v) => { if (v) c.loop = true; else delete c.loop; }), el('small', { textContent: ' loop' })), el('span'),
+    ...Object.entries(c.values ?? {}).filter(([k]) => !k.startsWith('//')).flatMap(([k, v]) => [
+      choose(`clip-p-${k}`, `${name}: parameter`, [...new Set([k, ...live])], k, (to) => { if (to !== k && !(to in c.values)) c.values = renamed(c.values, k, to); }),
+      field(`clip-v-${k}`, v, undefined, (x) => { c.values[k] = String(x); }, `${k} over time`), el('span'),
+      el('button', { type: 'button', className: 'x', textContent: '×', title: `Stop driving ${k}`, ariaLabel: `Stop driving ${k}`, onclick: () => {
+        if (Object.keys(c.values).length < 2) { note = 'A clip drives at least one parameter: remove the clip instead.'; return status(); }
+        delete c.values[k]; commit(); } })]),
+    el('div', { className: 'acts', style: 'grid-column:1/-1' }, add,
+      btn('+ Drive a parameter', () => { const k = live.find((x) => !(x in c.values)); if (!k) { note = 'Every live parameter is driven already.'; return status(); } c.values[k] = '0'; commit(); }, 'Another live parameter this clip sets')));
+  return box;
+}
 function playClip(clip) {
   chosenClip = clip.name;
   playing = { clip: structuredClone(clip), start: performance.now(), saved: structuredClone(values) };
@@ -1620,7 +2246,7 @@ function live() {
 // ---------- edits ----------
 function addShape(kind) {
   const r = R();
-  r.meshes = [...(r.meshes ?? []), kind === 'box' ? { box: { size: [0.4, 0.4, 0.4] } }
+  if (kind !== 'empty') r.meshes = [...(r.meshes ?? []), kind === 'box' ? { box: { size: [0.4, 0.4, 0.4] } }
     : kind === 'extrude' ? { extrude: { outline: [[-0.2, -0.2], [0.2, -0.2], [0.2, 0.2], [-0.2, 0.2]], holes: [circle(0.1)], depth: 0.05 } }
     : kind === 'text' ? { text: { text: 'JIG', size: 0.2, depth: 0.02 } }
     : kind === 'cylinder' ? { cylinder: { radius: 0.15, height: 0.4 } }
@@ -1631,11 +2257,11 @@ function addShape(kind) {
     : { loft: { path: [[0, 0, 0], [0, 0.4, 0], [0.2, 0.7, 0]], sections: [{ t: 0, points: circle(0.1) }, { t: 1, points: circle(0.04) }] } }];
   const mesh = r.meshes.length - 1, at = out ? -out.floor : 0;
   doc.nodes = doc.nodes ?? [];
-  doc.nodes.push({ name: `${kind} ${mesh}`, extensions: { [EXT]: { mesh, translation: [0.9, r4(kind === 'loft' || kind === 'lathe' ? at : at + 0.2), 0.4] } } });
+  doc.nodes.push(kind === 'empty' ? { name: `empty ${doc.nodes.length}` } : { name: `${kind} ${mesh}`, extensions: { [EXT]: { mesh, translation: [0.9, r4(kind === 'loft' || kind === 'lathe' ? at : at + 0.2), 0.4] } } });
   doc.scenes ??= [{ nodes: [] }]; doc.scene ??= 0;
   (doc.scenes[doc.scene].nodes ??= []).push(doc.nodes.length - 1);
   sel = { node: doc.nodes.length - 1 }; mode = 'object'; gizmo = 'translate';
-  note = `Added a ${kind}. Drag the arrows to place it.`;
+  note = `Added ${kind === "empty" ? "an" : "a"} ${kind}. Drag the arrows to place it.`;
   commit();
 }
 const circle = (r, n = 8) => Array.from({ length: n }, (_, i) => [r4(r * Math.cos((2 * Math.PI * i) / n)), r4(r * Math.sin((2 * Math.PI * i) / n))]);
@@ -1703,7 +2329,7 @@ function toolbar() {
     : !loftOf(sel.node) ? [] : [tb('ePath', 'Path', '', editTool === 'path', () => { editTool = 'path'; sel = { node: sel.node }; update(); }), tb('eSec', 'Sections', '', editTool === 'sections', () => { editTool = 'sections'; sel = { node: sel.node }; update(); })]));
   if (secGizmo()) $('#tools').append(tb('gT', 'Slide', 'G', gizmo === 'translate', () => setGizmo('translate')), tb('gR', 'Twist', 'R', gizmo === 'rotate', () => setGizmo('rotate')), tb('gS', 'Scale', 'S', gizmo === 'scale', () => setGizmo('scale')));
   $('#tools').querySelectorAll('kbd:empty').forEach((k) => k.remove());
-  $('#vpMode').textContent = mode === 'pose' ? `Pose mode · ${activePose || 'no pose'}` : mode === 'object' ? 'Object mode' : `Edit mode · ${loftOf(sel.node) ? (editTool === 'path' ? 'Path' : 'Sections') : latheOf(sel.node) ? 'Profile' : extrudeOf(sel.node) ? 'Extrude' : 'Box'}`;
+  $('#vpMode').textContent = mode === 'pose' ? `Pose mode · ${activePose || 'no pose'}` : mode === 'object' ? 'Object mode' : `Edit mode · ${loftOf(sel.node) ? (editTool === 'path' ? 'Path' : 'Sections') : latheOf(sel.node) ? 'Profile' : extrudeOf(sel.node) ? 'Extrude' : meshOf(sel.node) !== undefined ? shapeKind(R().meshes[meshOf(sel.node)]) : 'Handles'}`;
   $('#vpSel').textContent = sel ? `${doc.nodes[sel.node]?.extensions?.[EXT]?.name ?? doc.nodes[sel.node]?.name ?? `node ${sel.node}`}${sel.point !== undefined ? ` · point ${sel.point}` : ''}${sel.section !== undefined ? ` · section ${sel.section}` : ''}` : 'nothing selected';
 }
 function setGizmo(g) { gizmo = g; update(); }
@@ -1713,7 +2339,7 @@ function hint() {
   if (note) return note;
   const lockMsg = locked[0] === 'rotation' ? 'Rotation is a quaternion holding expressions, so the gizmo is off. Edit it in Properties.'
     : locked[0] === 'matrix' ? 'This node uses a matrix. Edit it in Source.'
-    : locked[0] === 'on' ? 'This node is placed on a loft (on). Edit t and u in Source.'
+    : locked[0] === 'on' ? 'This node is placed on a loft (on). Edit t and u in Properties.'
     : locked[0] === 'nopose' ? 'No pose to turn the joint in: press + Pose in Properties.'
     : locked[0] === 'noname' ? 'A pose turns joints by name: give this joint a name of its own (Object mode, Properties).'
     : locked[0] === 'weight' ? `The weight of ${activePose} is 0 here, so a turn would not show: raise it in Properties.` : '';
@@ -1726,7 +2352,7 @@ function hint() {
     ? '<b>Click</b> a point to select it · drag the arrows to move it · click the curve to add a point · <b>Del</b> removes it · <b>Tab</b> back'
     : '<b>Click</b> a ring to select a section · <b>G R S</b> slide, twist, scale it · click one of its points to move it in its plane · click the curve to add a section · <b>Tab</b> back');
   if (!sel) return '<b>Click</b> an object to select it · <b>Shift A</b> add · drag to orbit, right-drag to pan';
-  return lockMsg || `<b>G R S</b> move, rotate, scale${editable(sel.node) ? ` · <b>Tab</b> edit the ${shapeKind(R().meshes[meshOf(sel.node)])}` : ''} · <b>Shift D</b> duplicate · <b>Del</b> delete`;
+  return lockMsg || `<b>G R S</b> move, rotate, scale${editable(sel.node) ? ` · <b>Tab</b> edit the ${meshOf(sel.node) !== undefined ? shapeKind(R().meshes[meshOf(sel.node)]) : 'handles'}` : ''} · <b>Shift D</b> duplicate · <b>Del</b> delete`;
 }
 function status() {
   const h = $('#hint'); h.innerHTML = hint(); h.title = h.textContent;
@@ -1743,7 +2369,7 @@ function update() {
   // A point is a section's (in the Sections tool), a path point, or a lathe profile point; dir picks one of its handles.
   const ex = extrudeOf(sel?.node), loop = ex && (Math.min(sel.loop ?? 0, (ex.holes ?? []).length) ? ex.holes[Math.min(sel.loop ?? 0, ex.holes.length) - 1] : ex.outline);
   const ptsOf = () => (sel.section !== undefined ? loftOf(sel.node).sections[sel.section].points : loftOf(sel.node)?.path ?? latheOf(sel.node)?.profile ?? loop);
-  if (sel?.grip && !(mode === 'edit' && (R().meshes[meshOf(sel.node)]?.box || ex))) { const { grip, ...rest } = sel; sel = rest; }
+  if (sel?.grip && !(mode === 'edit' && (R().meshes[meshOf(sel.node)]?.box || ex || sel.grip.startsWith('item:')))) { const { grip, ...rest } = sel; sel = rest; }
   if (sel?.point !== undefined && !(Array.isArray(ptsOf()) && sel.point < ptsOf().length)) { const { point, dir, ...rest } = sel; sel = rest; }
   if (sel?.dir && !(ptsOf()[sel.point]?.length >= 4)) { const { dir, ...rest } = sel; sel = rest; }
   if (mode === 'edit' && !(sel && editable(sel.node))) mode = 'object';
@@ -1873,6 +2499,10 @@ function frame() {
   orbit.target.copy(s.center); camera.position.copy(s.center).add(dir.multiplyScalar(dist)); orbit.update();
 }
 const VIEWS = { front: [0, 0, 1], side: [1, 0, 0], top: [0, 1, 0.0001] };
+$('#showPlace').setAttribute('aria-pressed', showPlace);
+$('#showPhys').setAttribute('aria-pressed', showPhys);
+$('#showPhys').onclick = (e) => { showPhys = !showPhys; e.currentTarget.setAttribute('aria-pressed', showPhys); draw(); };
+$('#showPlace').onclick = (e) => { showPlace = !showPlace; e.currentTarget.setAttribute('aria-pressed', showPlace); draw(); };
 for (const b of document.querySelectorAll('[data-view]')) b.onclick = () => (b.dataset.view === 'frame' ? frame() : view(VIEWS[b.dataset.view]));
 
 addEventListener('keydown', (e) => {
@@ -1905,8 +2535,28 @@ addEventListener('keydown', (e) => {
 });
 
 theme();
-const asked = new URLSearchParams(location.search).get('example');
+const asked = new URLSearchParams(location.search).get('example'), panels = new URLSearchParams(location.search).has('panels');
 await openExample(examples[asked] ? asked : 'new', true);
+// ?panels (tools/check.mjs): every example, each node's Properties in Object and Edit mode, Pose mode and the
+// parameter details drawn once; a failure goes to the console.
+if (panels) {
+  for (const name of Object.keys(examples)) {
+    await openExample(name, true); console.log(`panels ${name}`);
+    const step = (what, f) => { try { f(); } catch (e) { console.error(`Error panels ${name} ${what}: ${e.stack}`); } };
+    if (err) console.error(`Error panels ${name}: ${err}`);
+    for (let i = 0; i < (doc.nodes?.length ?? 0); i++) step(`node ${i}`, () => { mode = 'object'; sel = { node: i }; props(); if (editable(i)) { mode = 'edit'; props(); } }); // props alone: a redraw per node is too slow for the grandpa
+    for (let i = 0; i < (doc.nodes?.length ?? 0); i++) if (hasHandles(i)) step(`handles ${i}`, () => { // each grip selected and dragged where it is
+      mode = 'edit'; sel = { node: i }; update();
+      for (const g of itemEdit?.grips ?? []) { sel = { node: i, grip: g.grip }; update(); proxy.position.copy(g.p); onGizmo(); }
+      if (!itemEdit?.grips.length) console.error(`Error panels ${name} handles ${i}: none drawn`);
+      else if (err) console.error(`Error panels ${name} handles ${i}: a drag in place broke the document: ${err}`);
+      else console.log(`panels ${name} handles ${i}: ${itemEdit.grips.length} grips, ${JSON.stringify(Object.fromEntries(['clearance', 'opening', 'support', 'joint'].filter((k) => X(i)[k]).map((k) => [k, X(i)[k]])))}`);
+    });
+    step('pose', () => { mode = 'object'; select(null); if (joints().size) $('#mPose').click(); });
+    step('params', () => { mode = 'object'; for (const k of Object.keys(R().params ?? {})) { openParam = k; params(); } });
+  }
+  console.log('panels done');
+}
 </script>
 </body>
 </html>

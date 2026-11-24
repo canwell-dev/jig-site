@@ -11,7 +11,7 @@ export const UNITS = ['m', 'deg', '%', 's']; // draft f25: a value is stored in 
 // `instances` are { node, mesh, matrix, rec, model } for every shape drawn in the default scene, matrix = world
 // transform, column-major as in glTF; `node` is the node of this document that draws or places it.
 // `files` (draft f10): file name -> document, for a model's relative `uri`, as if all were in one folder.
-export function read(doc, values = {}, { files = {}, stack = [], rest = false } = {}) {
+export function read(doc, values = {}, { files = {}, stack = [], rest = false, memo = new Map() } = {}) {
   need(isObj(doc), '', 'document must be an object');
   need(isObj(doc.asset) && doc.asset.version === '2.0', '/asset/version', 'must be "2.0" (a glTF 2.0 document)');
   need(Array.isArray(doc.extensionsUsed) && doc.extensionsUsed.includes(EXT), '/extensionsUsed', `must list "${EXT}"`);
@@ -20,7 +20,7 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
   const rat = `/extensions/${EXT}`;
   const r = doc.extensions?.[EXT];
   need(isObj(r), rat, 'must be an object');
-  only(r, ['version', 'params', 'sets', 'vars', 'floor', 'meshes', 'models', 'skins', 'character', 'clips', 'poses', 'baked_values', 'baked_set'], rat);
+  only(r, ['version', 'params', 'sets', 'vars', 'floor', 'meshes', 'models', 'skins', 'character', 'clips', 'poses', 'placement', 'physics', 'baked_values', 'baked_set'], rat);
   need(r.version === VERSION, `${rat}/version`, `must be "${VERSION}"`);
 
   need(r.params === undefined || isObj(r.params), `${rat}/params`, 'must be an object');
@@ -75,7 +75,7 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
     params[name] = { ...p, value: Math.min(p.max, Math.max(p.min, int ? Math.sign(v) * Math.round(Math.abs(v)) : v)) };
   }
   // D-96: well-known parameters a host may set by name; the reader checks their kind only, not what the model does.
-  for (const k of ['seed', 'width', 'height', 'depth', 'lod']) {
+  for (const k of ['seed', 'width', 'height', 'depth', 'wall', 'lod']) { // wall: draft f36, the thickness of the wall a model is mounted on
     const p = params[k], at = `${rat}/params/${k}`;
     if (!p) continue;
     if (k === 'lod') { // draft f25: 0 is full detail, higher is coarser; the model picks max
@@ -132,7 +132,7 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
     }
     if (x === undefined || isBaked(m)) return null;
     need(isObj(x), at, 'must be an object');
-    only(x, [...Object.keys(MATERIAL_SLOTS), ...Object.keys(TEXTURE_SLOTS)], at);
+    only(x, [...Object.keys(MATERIAL_SLOTS), ...Object.keys(TEXTURE_SLOTS), 'physics'], at); // physics: draft f37, read by physicsOf
     const unit = (v) => Math.min(1, Math.max(0, v));
     const o = {};
     if (x.baseColorFactor !== undefined) o.baseColorFactor = color(x.baseColorFactor, 4, scope, `${at}/baseColorFactor`);
@@ -192,7 +192,7 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
         const { extensions: { [EXT]: _, ...ext } = {}, ...rest } = structuredClone(own.materials[j]);
         const mat = slots({ ...rest, ...(Object.keys(ext).length && { extensions: ext }) }, o);
         delete m.material;
-        m.placed = addPlaced(lift(mat, ownTexture(own), '', `${rat}/meshes/${i}/material`));
+        m.placed = addPlaced(lift(mat, ownTexture(own), '', `${rat}/meshes/${i}/material`), physMaterial(doc.materials[j], j, s));
       }
     }
     return intern(m, `${i} ${JSON.stringify(m)}`, i);
@@ -204,6 +204,7 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
   const valueSinks = new Map(); // draft f26: placed values that reach a bake slot of the placed document, path -> expression
   const skinnedPlaced = new Set(); // draft f26 (D-134): nodes placing a document with skins
   const placed = [], placedKey = new Map(); // draft f10 (D-78): materials of placed documents, as finished glTF materials
+  const placedPhys = []; // draft f37: each placed material's physical material (library or placed document's), or null
   // Draft f11: the textures those materials use, each { texture, image, sampler } with the image's uri made relative
   // to this document; a placed material's texture slots index this list.
   const placedTextures = [], textureKey = new Map();
@@ -218,9 +219,9 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
     }
     return mat;
   };
-  const addPlaced = (mat) => {
-    const key = JSON.stringify(mat);
-    if (!placedKey.has(key)) placedKey.set(key, placed.push(mat) - 1);
+  const addPlaced = (mat, phys = null) => {
+    const key = JSON.stringify([mat, phys]);
+    if (!placedKey.has(key)) { placedKey.set(key, placed.push(mat) - 1); placedPhys.push(phys); }
     return placedKey.get(key);
   };
   // Draft f23 (D-113): the document's own KHR_lights_punctual lights (static glTF values), then those of placed
@@ -261,6 +262,13 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
     need(Object.hasOwn(files, uri), at, `no file "${uri}" next to this document`);
     return { doc: files[uri], label: uri, dir: uri.slice(0, uri.lastIndexOf('/') + 1) };
   };
+  // A placed or library document, read once per values within the outermost read: 6820 reads of one library in the
+  // station scene. The result is shared, so a caller that changes its records copies them first.
+  const readOnce = (d, vals, opts) => {
+    const byDoc = memo.get(d) ?? memo.set(d, new Map()).get(d), key = `${opts.stack.length} ${!!opts.rest} ${JSON.stringify(vals)}`;
+    if (!byDoc.has(key)) byDoc.set(key, read(d, vals, { ...opts, memo }));
+    return byDoc.get(key);
+  };
   // Draft f34 (D-162..D-166): stub material j, in scope s, as the index of a finished material in `placed`: the
   // library's material named `from.material`, whole, read at the stub's `values` over the library's defaults.
   const stubAt = (j, s) => {
@@ -276,8 +284,8 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
     need(names.indexOf(name, k + 1) < 0, `${fat}/material`, `more than one material "${name}" in ${lib.label}`);
     const vals = valuesOf(lib, x.values, s, `${at}/values`);
     let sub;
-    try { sub = read(lib.doc, vals, { files, stack: [...stack, doc] }); } catch (e) { need(false, fat, `in ${lib.label}: ${e.message}`); }
-    return addPlaced(lift(sub.finished(k), (i) => sub.placedTextures[i], lib.dir ?? '', fat));
+    try { sub = readOnce(lib.doc, vals, { files, stack: [...stack, doc] }); } catch (e) { need(false, fat, `in ${lib.label}: ${e.message}`); }
+    return addPlaced(lift(sub.finished(k), (i) => sub.placedTextures[i], lib.dir ?? '', fat), sub.materialPhys(k));
   };
   const models = (r.models ?? []).map((m, k) => {
     const at = `${rat}/models/${k}`;
@@ -382,7 +390,8 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
   // mesh, bound }; a repeat of 0 still evaluates copy 0, unshown, so its errors surface. `nodes[i]` is node i's
   // first copy. `bound` is { rec, skin }: the joint a shape is bound to, the nearest joint at or above its node.
   // A placed document's tree hangs under the placing record, marked `foreign`.
-  const nodes = [], instances = [];
+  const nodes = [], instances = [], projections = new Map(); // §5.10: projection mesh -> the copy that draws it
+  const clipNames = isObj(r.clips) ? Object.keys(r.clips).filter((k) => !k.startsWith('//')) : [];
   // Draft f20 (D-106): `on` places the node on a loft, taken where the node's parent puts its origin; the node's own
   // transform applies after the placement.
   const nodeAt = (raw, s, at) => {
@@ -416,6 +425,7 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
       if (turn.has(i)) { n.rotation = qmul(n.rotation, eulerQuat(turn.get(i))); n.matrix = compose(n.translation, n.rotation, n.scale); }
       const vis = shown && (!rep || k < rep.count) && n.visible;
       if (n.mesh !== undefined) n.mesh = meshAt(n.mesh, sk);
+      if (n.mesh !== undefined && meshes[n.mesh].project) { if (projections.has(n.mesh)) n.mesh = meshes.push({ ...meshes[n.mesh] }) - 1; projections.set(n.mesh, null); } // §5.10: one per copy
       nodes[i] ??= { ...n, repeated: repeated.has(i), scope: sk }; // scope: the first copy's, for editor drags
       const world = mul(parent, n.matrix);
       // drawn: baked, shown or not; hidden: its own visible is 0 (D-130: baked with KHR_node_visibility false)
@@ -425,6 +435,9 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
       if (jointOf.has(i)) { b = { rec, skin: jointOf.get(i) }; if (vis) skins[b.skin].push(rec); }
       if (n.mesh !== undefined && b) rec.bound = b;
       if (n.jig.blend !== undefined || n.jig.blend_joints !== undefined) rec.blend = blendOf(n.jig, sk, xat, b, rec.bound);
+      if (PLACE_KEYS.some((k) => n.jig[k] !== undefined)) rec.place = placeOf(n.jig, sk, xat, clipNames);
+      if (PHYS_KEYS.some((k) => n.jig[k] !== undefined)) rec.phys = physOf(n.jig, sk, xat);
+      if (projections.has(n.mesh)) projections.set(n.mesh, rec);
       if (vis && n.mesh !== undefined) instances.push({ node: i, mesh: n.mesh, matrix: world, copy: c, rec });
       // Draft f24 (D-118): the placed model first, so the node's children see its bounds.
       const kids = n.children.filter((ch) => !isBaked(src[ch])), p = n.jig.model === undefined ? null : place(n.jig, sk, xat, rec, vis && n.modelVisible, c, b, kids.length > 0);
@@ -458,7 +471,7 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
     need(m.doc !== doc && !stack.includes(m.doc) && stack.length < 16, `${xat}/model`, 'places itself, or nests deeper than 16');
     const vals = valuesOf(m, x.values, s, `${xat}/values`);
     let sub;
-    try { sub = read(m.doc, vals, { files, stack: [...stack, doc] }); } catch (e) { need(false, `${xat}/model`, `in ${m.label}: ${e.message}`); }
+    try { sub = readOnce(m.doc, vals, { files, stack: [...stack, doc], rest }); } catch (e) { need(false, `${xat}/model`, `in ${m.label}: ${e.message}`); }
     for (const k of Object.keys(vals)) if (!sub.params[k].live) valueSinks.set(`${xat}/values/${k}`, x.values[k]); // draft f26: reaches a bake slot there
     if (sub.skins.length) skinnedPlaced.add(rec.i);
     // Its materials come along (D-78): each one a shape uses, at this copy's values, as a finished glTF material.
@@ -467,17 +480,18 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
     const own = ownTexture(sd, `${xat}/model`, `in ${m.label}: `); // a texture of the placed document itself
     // Its shapes join this document's, shared with equal shapes placed before (D-92).
     const remap = sub.meshes.map(({ material, placed: pm, stub: _, ...mesh }) => {
-      if (pm !== undefined) mesh.placed = addPlaced(lift(structuredClone(sub.placed[pm]), (i) => sub.placedTextures[i], dir, `${xat}/model`));
+      if (pm !== undefined) mesh.placed = addPlaced(lift(structuredClone(sub.placed[pm]), (i) => sub.placedTextures[i], dir, `${xat}/model`), sub.placedPhys[pm]);
       else if (material !== undefined) {
         const { extensions: { [EXT]: _, ...ext } = {}, ...rest } = structuredClone(sd.materials[material]);
         const mat = slots({ ...rest, ...(Object.keys(ext).length && { extensions: ext }) }, sub.materials[material] ?? {});
-        mesh.placed = addPlaced(lift(mat, own, dir, `${xat}/model`));
+        mesh.placed = addPlaced(lift(mat, own, dir, `${xat}/model`), sub.materialPhys(material));
       }
       return intern(mesh, `placed ${JSON.stringify(mesh)}`);
     });
     const skinAt = sub.skins.map((_, k) => (bone ? bone.skin : (skinBlend.push(sub.skinBlend[k]), skins.push([]) - 1)));
     const lightAt = sub.lights.map(addLight);
-    if (vis) sub.skins.forEach((js, k) => skins[skinAt[k]].push(...js));
+    const copy = structuredClone({ tree: sub.tree, instances: sub.instances, skins: sub.skins }); // the read is shared (readOnce): these records are this copy's
+    if (vis) copy.skins.forEach((js, k) => skins[skinAt[k]].push(...js));
     const relink = (r) => {
       r.foreign = true; r.world = mul(rec.world, r.world);
       if (rec.name !== undefined && r.name !== undefined) r.name = `${rec.name}/${r.name}`; // D-79: the placing copy's name first
@@ -485,17 +499,22 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
       if (r.mesh !== undefined) { r.mesh = remap[r.mesh]; r.bound = r.bound ? { rec: r.bound.rec, skin: skinAt[r.bound.skin] } : bone ?? undefined; }
       r.kids.forEach(relink);
     };
-    sub.tree.forEach(relink);
-    if (!vis) sub.tree.forEach(function hide(r) { r.shown = false; r.kids.forEach(hide); }); // model_visible 0 (D-118)
-    if (!rec.drawn) sub.tree.forEach(function drop(r) { r.drawn = false; r.kids.forEach(drop); });
-    if (!rec.node.modelVisible) sub.tree.forEach((r) => { r.hidden = true; }); // baked hidden (D-130)
-    const inst = vis ? sub.instances.map((si) => ({ node: rec.i, mesh: si.rec.mesh, matrix: mul(rec.world, si.matrix), copy: [...c, ...si.copy], rec: si.rec, model: true })) : [];
-    return { tree: sub.tree, inst, bounds: wantBounds ? modelBounds(sub) : null };
+    copy.tree.forEach(relink);
+    if (!vis) copy.tree.forEach(function hide(r) { r.shown = false; r.kids.forEach(hide); }); // model_visible 0 (D-118)
+    if (!rec.drawn) copy.tree.forEach(function drop(r) { r.drawn = false; r.kids.forEach(drop); });
+    if (!rec.node.modelVisible) copy.tree.forEach((r) => { r.hidden = true; }); // baked hidden (D-130)
+    const inst = vis ? copy.instances.map((si) => ({ node: rec.i, mesh: si.rec.mesh, matrix: mul(rec.world, si.matrix), copy: [...c, ...si.copy], rec: si.rec, model: true })) : [];
+    return { tree: copy.tree, inst, bounds: wantBounds ? modelBounds(sub) : null };
   };
   const tree = roots.flatMap((i) => walk(i, IDENTITY, scope, true, true, [], null));
   src.forEach((n, i) => { if (!nodes[i] && !isBaked(n)) nodes[i] = nodeAt(n, scope, `/nodes/${i}`); });
   for (let i = 0; i < recipeMeshes.length; i++) if (meshes[i] === undefined) meshAt(i, scope); // drawn by no copy
   for (const e of pending.values()) throw e; // used by no copy, and wrong at the parameters
+  // §5.10 (D-195): projected outlines, once every shape is in the tree; one drawn by no copy, in the model's frame.
+  const pj = new Set(meshes.flatMap((m, j) => (m?.project ? [j] : [])));
+  // A rest read (a clip key, a rest or bind pose) draws no projection: a clip key bakes no shapes, the poses need frames.
+  // shortcut: a projection bound to a joint is empty at its bind pose; upgrade when a skinned model projects itself
+  for (const j of pj) meshes[j] = rest ? { type: 'extrude', pieces: [], frame: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], depth: meshes[j].depth } : projectMesh(meshes[j], projections.get(j), tree, meshes, src.length, pj);
   // Draft f34: material i as a finished glTF material whose textures index `placedTextures`, for a referring document.
   const finished = (i) => {
     if (isStub(doc.materials[i])) return structuredClone(placed[stubAt(i, scope)]);
@@ -517,12 +536,30 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false } 
   for (const p of Object.values(params)) p.live ??= true;
   const clips = stack.length ? [] : clipsOf(r.clips, params, scope, rat); // draft f31: the outermost document's
   let low;
-  const out = { params, sets, vars, get floor() { return floor ?? (low ??= lowestOnAxis(meshes, instances)); }, materials, meshes, nodes, instances, tree, skins, skinBlend, character, clips, placed, placedTextures, lights, finished };
+  // Draft f36: the model's mounts, tags and wall gap (a placed document's are ignored, as its floor), and the
+  // placement items of shown nodes, each with its node's world matrix (feet of a use point at its origin, facing +z).
+  const items = [];
+  (function all(recs) { for (const x of recs) if (x.shown) { if (x.place) items.push({ node: x.i, name: x.name, world: x.world, foreign: !!x.foreign, ...x.place }); all(x.kids); } })(tree);
+  const placement = { ...(stack.length ? {} : modelPlacement(r.placement, scope, `${rat}/placement`)), items };
+  // Draft f37: bodies, colliders and joints, when the recipe switches physics on; done by the outermost document.
+  let physics;
+  if (!stack.length && !rest) {
+    if (r.physics !== undefined) {
+      const live = Object.entries(params).filter(([, p]) => p.live && JSON.stringify(p.value) !== JSON.stringify(p.default));
+      const restTree = live.length ? read(doc, { ...values, ...Object.fromEntries(live.map(([k, p]) => [k, p.default])) }, { files, stack, rest: true, memo }).tree : tree;
+      const restWorld = new Map();
+      (function pair(a, b) { a.forEach((x, k) => { restWorld.set(x, b[k]?.world ?? x.world); pair(x.kids, b[k]?.kids ?? []); }); })(tree, restTree);
+      physics = physicsOf(r.physics, tree, meshes, doc, scope, rat, items, restWorld, placedPhys);
+    }
+    else (function none(recs) { for (const x of recs) { need(!x.phys || x.foreign, `/nodes/${x.i}/extensions/${EXT}`, `${Object.keys(x.phys ?? {})[0]} needs ${rat}/physics`); none(x.kids); } })(tree);
+  }
+  const materialPhys = (i) => (isStub(doc.materials[i]) ? placedPhys[stubAt(i, scope)] : physMaterial(doc.materials[i], i, scope));
+  const out = { params, sets, vars, placement, physics, materialPhys, placedPhys, get floor() { return floor ?? (low ??= lowestOnAxis(meshes, instances)); }, materials, meshes, nodes, instances, tree, skins, skinBlend, character, clips, placed, placedTextures, lights, finished };
   // Draft f28 (D-146): skinned shapes are built and weighted at the bind pose, every live parameter at its default,
   // and follow their joints from there. Done once, by the outermost document.
   if (!stack.length && !rest && skins.some((js) => js.length)) {
     const live = Object.entries(params).filter(([, p]) => p.live && JSON.stringify(p.value) !== JSON.stringify(p.default));
-    skinPose(out, live.length ? read(doc, { ...values, ...Object.fromEntries(live.map(([k, p]) => [k, p.default])) }, { files, stack, rest: true }) : out);
+    skinPose(out, live.length ? read(doc, { ...values, ...Object.fromEntries(live.map(([k, p]) => [k, p.default])) }, { files, stack, rest: true, memo }) : out);
   }
   return out;
 }
@@ -842,9 +879,10 @@ function node(n, meshCount, scope, at) {
   const xat = `${at}/extensions/${EXT}`;
   const x = n.extensions?.[EXT] ?? {};
   need(isObj(x), xat, 'must be an object');
-  only(x, ['name', 'mesh', 'translation', 'rotation', 'euler', 'scale', 'repeat', 'model', 'values', 'on', 'light', 'visible', 'model_visible', 'blend', 'blend_joints', 'role'], xat);
+  only(x, ['name', 'mesh', 'translation', 'rotation', 'euler', 'scale', 'repeat', 'model', 'values', 'on', 'light', 'visible', 'visible_for', 'model_visible', 'blend', 'blend_joints', 'role', ...PLACE_KEYS, ...PHYS_KEYS], xat);
   need(x.values === undefined || x.model !== undefined, `${xat}/values`, 'needs model');
   need(x.model_visible === undefined || x.model !== undefined, `${xat}/model_visible`, 'needs model');
+  need(x.visible_for === undefined || (Array.isArray(x.visible_for) && x.visible_for.every((k) => typeof k === 'string' && k !== '')), `${xat}/visible_for`, 'must be a list of projection keys (non-empty strings)');
   need(x.rotation === undefined || x.euler === undefined, `${xat}/euler`, 'cannot stand next to rotation');
   if (x.mesh !== undefined) {
     need(Number.isInteger(x.mesh) && x.mesh >= 0 && x.mesh < meshCount, `${xat}/mesh`, `must be a recipe mesh index 0..${meshCount - 1}`);
@@ -883,6 +921,322 @@ function node(n, meshCount, scope, at) {
   const visible = x.visible === undefined || num(x.visible, scope, `${xat}/visible`) !== 0;
   const modelVisible = x.model_visible === undefined || num(x.model_visible, scope, `${xat}/model_visible`) !== 0;
   return { name, mesh: x.mesh, translation, rotation, scale, matrix: n.matrix ?? compose(translation, rotation, scale), children, jig: x, visible, modelVisible };
+}
+
+// Draft f36 (sketch): placement and use points, keys on a node, in its frame.
+const PLACE_KEYS = ['use', 'clearance', 'opening', 'support'];
+const PURPOSES = ['use', 'movement', 'access', 'maintenance'], LEVELS = ['required', 'recommended'], MOUNTS = ['floor', 'wall', 'ceiling', 'surface'];
+function placeOf(x, s, xat, clipNames) {
+  const o = {}, text = (v, at) => { need(typeof v === 'string' && v !== '', at, 'must be non-empty text'); return v; };
+  const box = (v, n, at) => { const b = vec(v, n, s, at); b.forEach((c, a) => need(c > 0, `${at}/${a}`, `must be > 0, is ${c}`)); return b; };
+  const pick = (k, keys, f) => {
+    const v = x[k], at = `${xat}/${k}`;
+    if (v === undefined) return;
+    need(isObj(v), at, 'must be an object');
+    only(v, keys, at);
+    o[k] = f(v, at);
+  };
+  // A use point: a person's feet at the node's origin, facing its +z (Unreal Smart Object slot, Sims routing slot).
+  pick('use', ['role', 'group', 'pose', 'clip', 'seat'], (v, at) => {
+    const u = {};
+    for (const k of ['role', 'group', 'pose']) if (v[k] !== undefined) u[k] = text(v[k], `${at}/${k}`);
+    if (v.clip !== undefined) { u.clip = text(v.clip, `${at}/clip`); need(clipNames.includes(u.clip), `${at}/clip`, `no clip "${u.clip}" in this document's clips`); }
+    if (v.seat !== undefined) { // OMI_seat: where the back, knees and feet go, in the node's frame; angle between back and thighs
+      const sat = `${at}/seat`;
+      need(isObj(v.seat), sat, 'must be { back, knee, foot, angle }');
+      only(v.seat, ['back', 'knee', 'foot', 'angle'], sat);
+      u.seat = Object.fromEntries(['back', 'knee', 'foot'].map((k) => [k, vec(v.seat[k], 3, s, `${sat}/${k}`)]));
+      u.seat.angle = v.seat.angle === undefined ? 90 : num(v.seat.angle, s, `${sat}/angle`);
+      need(u.seat.angle > 0 && u.seat.angle < 180, `${sat}/angle`, `must be between 0 and 180 degrees, is ${u.seat.angle}`);
+    }
+    return u;
+  });
+  // A clearance: space kept free, a box centred on the node (IFC Clearance); may overlap another model's clearance.
+  pick('clearance', ['size', 'purpose', 'level'], (v, at) => {
+    need(PURPOSES.includes(v.purpose), `${at}/purpose`, `must be one of ${JSON.stringify(PURPOSES)}`);
+    need(v.level === undefined || LEVELS.includes(v.level), `${at}/level`, `must be one of ${JSON.stringify(LEVELS)}`);
+    return { size: box(v.size, 3, `${at}/size`), purpose: v.purpose, level: v.level ?? 'required' };
+  });
+  // An opening: a box the host cuts from the wall the model is mounted on (IFC IfcOpeningElement); a passage lets people through.
+  pick('opening', ['size', 'passage'], (v, at) => {
+    need(v.passage === undefined || typeof v.passage === 'boolean', `${at}/passage`, 'must be true or false');
+    return { size: box(v.size, 3, `${at}/size`), passage: v.passage ?? false };
+  });
+  // A support: a flat area facing the node's +y that others may stand on, size along x and z.
+  pick('support', ['size', 'clear_height'], (v, at) => {
+    const h = v.clear_height === undefined ? undefined : num(v.clear_height, s, `${at}/clear_height`);
+    need(h === undefined || h > 0, `${at}/clear_height`, `must be > 0, is ${h}`);
+    return { size: box(v.size, 2, `${at}/size`), ...(h !== undefined && { clear_height: h }) };
+  });
+  return o;
+}
+function modelPlacement(p, s, at) {
+  if (p === undefined) return {};
+  need(isObj(p), at, 'must be an object');
+  only(p, ['mounts', 'tags', 'wall_gap'], at);
+  const o = {};
+  if (p.mounts !== undefined) {
+    list(p.mounts, `${at}/mounts`).forEach((m, k) => need(MOUNTS.includes(m), `${at}/mounts/${k}`, `must be one of ${JSON.stringify(MOUNTS)}`));
+    need(new Set(p.mounts).size === p.mounts.length, `${at}/mounts`, 'must not repeat a mount');
+    o.mounts = [...p.mounts];
+  }
+  if (p.tags !== undefined) {
+    list(p.tags, `${at}/tags`).forEach((t, k) => need(typeof t === 'string' && t !== '', `${at}/tags/${k}`, 'must be non-empty text'));
+    o.tags = [...p.tags];
+  }
+  if (p.wall_gap !== undefined) { o.wall_gap = num(p.wall_gap, s, `${at}/wall_gap`); need(o.wall_gap >= 0, `${at}/wall_gap`, `must be >= 0, is ${o.wall_gap}`); }
+  return o;
+}
+
+// Draft f37 (sketch): physics. The recipe's `physics` switches colliders on for every shape (a node opts out with
+// `collider: false`); the root is a body, a node with `body` or `joint` starts another, and the colliders below it
+// that start none are its (KHR_physics_rigid_bodies' rule). Mass is density × volume, density from the node, else
+// its mesh's material, else 600 kg/m³.
+const PHYS_KEYS = ['collider', 'body', 'joint', 'density'];
+const MOTIONS = ['static', 'dynamic', 'kinematic'], COMBINES = ['average', 'minimum', 'maximum', 'multiply'];
+const COLLIDER_SHAPES = ['box', 'sphere', 'cylinder', 'cone', 'capsule'], AXES = ['x', 'y', 'z'];
+const PHYS_MATERIAL = { density: 600, static_friction: 0.6, dynamic_friction: 0.6, restitution: 0, friction_combine: 'average', restitution_combine: 'average' };
+function filterOf(f, at) {
+  need(isObj(f), at, 'must be { systems, collide_with or not_collide_with }');
+  only(f, ['systems', 'collide_with', 'not_collide_with'], at);
+  need(f.collide_with === undefined || f.not_collide_with === undefined, at, 'takes collide_with or not_collide_with, not both');
+  const o = {};
+  for (const k of ['systems', 'collide_with', 'not_collide_with']) if (f[k] !== undefined) {
+    list(f[k], `${at}/${k}`).forEach((x, i) => need(typeof x === 'string' && x !== '', `${at}/${k}/${i}`, 'must be non-empty text'));
+    o[k] = [...f[k]];
+  }
+  return o;
+}
+function bodySpec(b, s, at, keys) {
+  need(isObj(b), at, `must be an object: { ${keys.join(', ')} }`);
+  only(b, keys, at);
+  need(b.motion === undefined || MOTIONS.includes(b.motion), `${at}/motion`, `must be one of ${JSON.stringify(MOTIONS)}`);
+  const o = { motion: b.motion };
+  if (b.mass !== undefined) { o.mass = num(b.mass, s, `${at}/mass`); need(o.mass > 0, `${at}/mass`, `must be > 0 kg, is ${o.mass}`); }
+  if (b.filter !== undefined) o.filter = filterOf(b.filter, `${at}/filter`);
+  return o;
+}
+function physOf(x, s, xat) {
+  const o = {};
+  if (x.density !== undefined) { o.density = num(x.density, s, `${xat}/density`); need(o.density > 0, `${xat}/density`, `must be > 0 kg/m³, is ${o.density}`); }
+  if (x.collider !== undefined) {
+    const v = x.collider, at = `${xat}/collider`;
+    if (v === false || v === 'auto' || v === 'hull' || v === 'box') o.collider = { from: v === false ? 'none' : v };
+    else {
+      need(isObj(v), at, 'must be false, "auto", "hull", "box", or { box | sphere | cylinder | cone | capsule, trigger, filter }');
+      only(v, [...COLLIDER_SHAPES, 'trigger', 'filter'], at);
+      const k = COLLIDER_SHAPES.filter((c) => v[c] !== undefined);
+      need(k.length <= 1, at, 'has more than one shape');
+      need(v.trigger === undefined || typeof v.trigger === 'boolean', `${at}/trigger`, 'must be true or false');
+      o.collider = { from: k.length ? 'shape' : 'auto', ...(k.length && { shape: mesh({ [k[0]]: v[k[0]] }, s, at, 0) }), trigger: v.trigger ?? false,
+        ...(v.filter !== undefined && { filter: filterOf(v.filter, `${at}/filter`) }) };
+    }
+  }
+  if (x.body !== undefined) o.body = bodySpec(x.body, s, `${xat}/body`, ['motion', 'mass', 'filter']);
+  if (x.joint !== undefined) o.joint = jointSpec(x.joint, s, `${xat}/joint`);
+  return o;
+}
+// A joint as per-axis limits: turn (degrees) and slide (metres) about and along the node's x, y, z; each false
+// (locked), [min, max] or true (free). hinge, slider, ball and fixed are shorthands for them.
+function jointSpec(j, s, at) {
+  need(isObj(j), at, 'must be an object: hinge, slider, ball or fixed, or turn and slide');
+  only(j, ['hinge', 'slider', 'ball', 'fixed', 'turn', 'slide', 'drive', 'collide'], at);
+  const kinds = ['hinge', 'slider', 'ball', 'fixed'].filter((k) => j[k] !== undefined);
+  need(kinds.length <= 1 && !(kinds.length && (j.turn !== undefined || j.slide !== undefined)), at, 'takes one of hinge, slider, ball and fixed, or turn and slide');
+  const limit = (v, a) => {
+    if (v === false || v === true) return v;
+    const r = vec(v, 2, s, a);
+    need(r[0] <= r[1], a, `needs min <= max, is [${r}]`);
+    return r;
+  };
+  const turn = [false, false, false], slide = [false, false, false], k = kinds[0], kat = `${at}/${k}`;
+  if (k === 'fixed') need(j.fixed === true, kat, 'must be true');
+  else if (k === 'ball') {
+    need(j.ball === true || isObj(j.ball), kat, 'must be true or { limits }');
+    if (isObj(j.ball)) only(j.ball, ['limits'], kat);
+    turn.fill(j.ball.limits === undefined ? true : limit(j.ball.limits, `${kat}/limits`));
+  } else if (k) {
+    const h = j[k];
+    need(isObj(h), kat, 'must be { axis, limits }');
+    only(h, ['axis', 'limits'], kat);
+    need(AXES.includes(h.axis), `${kat}/axis`, 'must be "x", "y" or "z"');
+    (k === 'hinge' ? turn : slide)[AXES.indexOf(h.axis)] = h.limits === undefined ? true : limit(h.limits, `${kat}/limits`);
+  } else for (const [key, arr] of [['turn', turn], ['slide', slide]]) {
+    if (j[key] === undefined) continue;
+    need(Array.isArray(j[key]) && j[key].length === 3, `${at}/${key}`, 'must be [x, y, z], each false (locked), [min, max] or true (free)');
+    j[key].forEach((v, a) => { arr[a] = limit(v, `${at}/${key}/${a}`); });
+  }
+  // A drive per axis that is not locked (turn_x .. slide_z): pulls it towards target (degrees, metres) or moves it
+  // at velocity (degrees or metres per second), with KHR's formula.
+  const drives = [];
+  if (j.drive !== undefined) {
+    const dat = `${at}/drive`, names = ['turn', 'slide'].flatMap((k) => AXES.map((a) => `${k}_${a}`));
+    need(isObj(j.drive), dat, `must be an object: axis (${names.join(', ')}) -> { stiffness, damping, target, velocity, max_force, mode }`);
+    only(j.drive, names, dat);
+    for (const [name, d] of Object.entries(j.drive)) {
+      if (name.startsWith('//')) continue;
+      const nat = `${dat}/${name}`, [kind, ax] = name.split('_'), a = AXES.indexOf(ax);
+      need((kind === 'turn' ? turn : slide)[a] !== false, nat, `the joint locks ${kind} about ${ax}: there is nothing to drive`);
+      need(isObj(d), nat, 'must be { stiffness, damping, target, velocity, max_force, mode }');
+      only(d, ['stiffness', 'damping', 'target', 'velocity', 'max_force', 'mode'], nat);
+      const o = { kind, axis: a };
+      for (const key of ['stiffness', 'damping', 'max_force']) if (d[key] !== undefined) { o[key] = num(d[key], s, `${nat}/${key}`); need(o[key] >= 0, `${nat}/${key}`, `must be >= 0, is ${o[key]}`); }
+      for (const key of ['target', 'velocity']) if (d[key] !== undefined) o[key] = num(d[key], s, `${nat}/${key}`);
+      need(d.mode === undefined || ['force', 'acceleration'].includes(d.mode), `${nat}/mode`, 'must be "force" or "acceleration"');
+      o.mode = d.mode ?? 'force';
+      drives.push(o);
+    }
+  }
+  need(j.collide === undefined || typeof j.collide === 'boolean', `${at}/collide`, 'must be true or false');
+  return { turn, slide, drives, collide: j.collide ?? false };
+}
+function physMaterial(m, i, scope) {
+  const x = m?.extensions?.[EXT]?.physics, at = `/materials/${i}/extensions/${EXT}/physics`;
+  if (x === undefined || isBaked(m)) return null;
+  need(isObj(x), at, 'must be an object');
+  only(x, Object.keys(PHYS_MATERIAL), at);
+  const o = {};
+  for (const k of ['density', 'static_friction', 'dynamic_friction', 'restitution']) if (x[k] !== undefined) {
+    o[k] = num(x[k], scope, `${at}/${k}`);
+    need(k === 'density' ? o[k] > 0 : o[k] >= 0, `${at}/${k}`, `must be ${k === 'density' ? '> 0' : '>= 0'}, is ${o[k]}`);
+  }
+  for (const k of ['friction_combine', 'restitution_combine']) if (x[k] !== undefined) { need(COMBINES.includes(x[k]), `${at}/${k}`, `must be one of ${JSON.stringify(COMBINES)}`); o[k] = x[k]; }
+  return o;
+}
+// The implicit shape a recipe mesh is, or null: box, cylinder (a cone too), sphere, capsule.
+function implicitOf(m) {
+  if (m.type === 'box') return { type: 'box', size: [...m.size] };
+  if (m.type !== 'lathe' || !m.kind) return null;
+  const ys = m.profile.map((q) => q[1]), r = Math.max(...m.profile.map((q) => q[0])), h = Math.max(...ys) - Math.min(...ys);
+  if (m.kind === 'sphere') return { type: 'sphere', radius: r };
+  if (m.kind === 'capsule') return { type: 'capsule', radius: r, height: h };
+  return { type: 'cylinder', height: h, radiusBottom: m.profile[0][0], radiusTop: m.profile[1][0] };
+}
+function physicsOf(p, tree, meshes, doc, scope, rat, items, restWorld, placedPhys) {
+  const at = `${rat}/physics`, root = bodySpec(p, scope, at, ['motion', 'mass', 'filter']);
+  const mats = (doc.materials ?? []).map((m, i) => physMaterial(m, i, scope));
+  root.motion ??= 'static';
+  need(root.motion === 'static' || tree.length === 1, `${at}/motion`, 'a moving root body needs the scene to have one root node, which carries it');
+  const bodies = [{ node: tree.length === 1 ? tree[0].i : null, rec: tree.length === 1 ? tree[0] : null, parent: null, world: tree.length === 1 ? tree[0].world : IDENTITY, motion: root.motion, mass: root.mass, filter: root.filter, colliders: [], at }];
+  (function walk(recs, b, density, up) {
+    for (const rec of recs) {
+      if (!rec.shown) continue;
+      const ph = rec.phys ?? {}, xat = `/nodes/${rec.i}/extensions/${EXT}`;
+      let body = b;
+      if (ph.body || ph.joint) {
+        const motion = ph.body?.motion ?? 'dynamic';
+        need(!(motion === 'static' && b.motion !== 'static'), `${xat}/body/motion`, 'a static body cannot sit inside a moving one');
+        need(!ph.joint || up, `${xat}/joint`, 'a joint needs a parent node: it joins this body to the one its parent is in');
+        body = { node: rec.i, rec, parent: b, up, world: rec.world, motion, mass: ph.body?.mass, filter: ph.body?.filter ?? b.filter, joint: ph.joint, colliders: [], at: `${xat}/${ph.joint ? 'joint' : 'body'}` };
+        bodies.push(body);
+      }
+      const dens = ph.density ?? density, c = ph.collider ?? { from: 'auto' };
+      if (c.from === 'shape' || (c.from !== 'none' && rec.mesh !== undefined && !rec.bound)) { // shortcut: a skinned shape infers no collider; declare one on its joint
+        const m = c.shape ?? meshes[rec.mesh], g = geometry(m);
+        let shape = c.from === 'hull' ? null : implicitOf(m), local = IDENTITY, geo = g;
+        if (c.from === 'box') {
+          const [lo, hi] = boundsOf(g.positions);
+          shape = { type: 'box', size: hi.map((v, a) => v - lo[a]) };
+          local = compose(lo.map((v, a) => (v + hi[a]) / 2), [0, 0, 0, 1], [1, 1, 1]);
+          geo = geometry({ type: 'box', size: shape.size });
+        }
+        shape ??= { type: 'hull', mesh: rec.mesh };
+        const ms = meshes[rec.mesh], own = ms?.material === undefined ? (ms?.placed === undefined ? null : placedPhys[ms.placed]) : mats[ms.material];
+        const mat = { ...PHYS_MATERIAL, ...own, ...(dens !== undefined && { density: dens }) };
+        const world = mul(rec.world, local);
+        body.colliders.push({ node: rec.i, rec, shape, local, world, matrix: mul(invert(body.world), world), material: mat, trigger: c.trigger ?? false, filter: c.filter ?? body.filter, geo });
+      }
+      walk(rec.kids, body, dens, rec);
+    }
+  })(tree, bodies[0], undefined, null);
+  for (const b of bodies) {
+    Object.assign(b, massOf(b.colliders.filter((c) => !c.trigger)));
+    if (b.motion !== 'static') need(b.volume > 1e-12 || b.mass !== undefined, b.at, 'a moving body whose colliders have no volume needs a mass');
+    if (b.mass !== undefined && b.weight) { const k = b.mass / b.weight; b.inertia = b.inertia.map((v) => v * k); }
+    b.mass ??= b.weight ?? 0;
+    delete b.weight;
+  }
+  // The swing of each joint as a movement clearance on its parent body, unless the node declares one (0.19 G.16).
+  const range = (v, deg) => (v === false ? [0] : v === true ? (deg ? Array.from({ length: 12 }, (_, k) => -180 + 30 * k) : [0]) : Array.from({ length: 9 }, (_, k) => v[0] + ((v[1] - v[0]) * k) / 8));
+  for (const b of bodies) {
+    if (!b.joint || b.rec.place?.clearance?.purpose === 'movement' || [...b.joint.turn, ...b.joint.slide].every((v) => v === false)) continue;
+    const pts = b.colliders.filter((c) => !c.trigger).flatMap((c) => cornersOf(c.geo, c.matrix));
+    if (!pts.length) continue;
+    const rest = (x) => (x.rec ? restWorld.get(x.rec) : x.world), toParent = mul(invert(rest(b.parent)), rest(b)), lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    const [tx, ty, tz] = b.joint.turn.map((v) => range(v, true)), [sx, sy, sz] = b.joint.slide.map((v) => range(v, false));
+    for (const ax of tx) for (const ay of ty) for (const az of tz) for (const lx of sx) for (const ly of sy) for (const lz of sz) {
+      const M = mul(toParent, compose([lx, ly, lz], eulerQuat([ax, ay, az]), [1, 1, 1]));
+      for (const q of pts) for (let a = 0; a < 3; a++) {
+        const v = M[a] * q[0] + M[4 + a] * q[1] + M[8 + a] * q[2] + M[12 + a];
+        lo[a] = Math.min(lo[a], v); hi[a] = Math.max(hi[a], v);
+      }
+    }
+    items.push({ node: b.parent.node, holder: b.parent.rec, jointed: b.rec, name: b.rec.name, world: mul(b.parent.world, compose(lo.map((v, a) => (v + hi[a]) / 2), [0, 0, 0, 1], [1, 1, 1])),
+      foreign: !!b.rec.foreign, clearance: { size: hi.map((v, a) => v - lo[a]), purpose: 'movement', level: 'required' }, inferred: true, from: b.node });
+  }
+  for (const b of bodies) if (b.joint) b.anchor = mul(invert(restWorld.get(b.up)), restWorld.get(b.rec));
+  return { bodies: bodies.map((b) => ({ ...b, parent: b.parent ? bodies.indexOf(b.parent) : null })) };
+}
+const boundsOf = (P) => [[0, 1, 2].map((a) => Math.min(...P.filter((_, i) => i % 3 === a))), [0, 1, 2].map((a) => Math.max(...P.filter((_, i) => i % 3 === a)))];
+// The 8 corners of a geometry's bounds, moved by matrix M.
+function cornersOf(g, M) {
+  const [lo, hi] = boundsOf(g.positions);
+  return [0, 1, 2, 3, 4, 5, 6, 7].map((k) => {
+    const q = [k & 1 ? hi[0] : lo[0], k & 2 ? hi[1] : lo[1], k & 4 ? hi[2] : lo[2]];
+    return [0, 1, 2].map((a) => M[a] * q[0] + M[4 + a] * q[1] + M[8 + a] * q[2] + M[12 + a]);
+  });
+}
+// Mass properties of colliders (each { geo, matrix, material.density }) in the body's frame, by Eberly's polyhedral
+// integrals over each closed triangle mesh. shortcut: a hull's volume is its mesh's, not its convex hull's; the same for
+// the convex shapes JIG makes, less for a hollow one; upgrade when a model's mass looks wrong. Returns { volume, weight,
+// com, inertia (principal moments), orientation (their frame, a quaternion) }.
+function massOf(colliders) {
+  const I = new Array(10).fill(0), mult = [1 / 6, 1 / 24, 1 / 24, 1 / 24, 1 / 60, 1 / 60, 1 / 60, 1 / 120, 1 / 120, 1 / 120];
+  let volume = 0;
+  const sub = (w0, w1, w2) => {
+    const t0 = w0 + w1, f1 = t0 + w2, t1 = w0 * w0, t2 = t1 + w1 * t0, f2 = t2 + w2 * f1, f3 = w0 * t1 + w1 * t2 + w2 * f2;
+    return [f1, f2, f3, f2 + w0 * (f1 + w0), f2 + w1 * (f1 + w1), f2 + w2 * (f1 + w2)];
+  };
+  for (const c of colliders) {
+    const { positions: P, indices: T } = c.geo, M = c.matrix, q = new Array(10).fill(0);
+    const det = M[0] * (M[5] * M[10] - M[9] * M[6]) - M[4] * (M[1] * M[10] - M[9] * M[2]) + M[8] * (M[1] * M[6] - M[5] * M[2]);
+    const at = (v) => [0, 1, 2].map((a) => M[a] * P[3 * v] + M[4 + a] * P[3 * v + 1] + M[8 + a] * P[3 * v + 2] + M[12 + a]);
+    for (let t = 0; t < T.length; t += 3) {
+      const [x0, y0, z0] = at(T[t]), [x1, y1, z1] = at(T[t + 1]), [x2, y2, z2] = at(T[t + 2]);
+      const a1 = x1 - x0, b1 = y1 - y0, c1 = z1 - z0, a2 = x2 - x0, b2 = y2 - y0, c2 = z2 - z0;
+      const d0 = b1 * c2 - b2 * c1, d1 = a2 * c1 - a1 * c2, d2 = a1 * b2 - a2 * b1;
+      const [f1x, f2x, f3x, g0x, g1x, g2x] = sub(x0, x1, x2), [, f2y, f3y, g0y, g1y, g2y] = sub(y0, y1, y2), [, f2z, f3z, g0z, g1z, g2z] = sub(z0, z1, z2);
+      q[0] += d0 * f1x; q[1] += d0 * f2x; q[2] += d1 * f2y; q[3] += d2 * f2z; q[4] += d0 * f3x; q[5] += d1 * f3y; q[6] += d2 * f3z;
+      q[7] += d0 * (y0 * g0x + y1 * g1x + y2 * g2x); q[8] += d1 * (z0 * g0y + z1 * g1y + z2 * g2y); q[9] += d2 * (x0 * g0z + x1 * g1z + x2 * g2z);
+    }
+    const sg = det < 0 ? -1 : 1; // a mirror turns the mesh inside out
+    volume += sg * q[0] * mult[0];
+    q.forEach((v, k) => { I[k] += sg * v * mult[k] * c.material.density; });
+  }
+  const m = I[0];
+  if (!(m > 1e-12)) return { volume, weight: undefined, com: [0, 0, 0], inertia: [0, 0, 0], orientation: [0, 0, 0, 1] };
+  const [cx, cy, cz] = [I[1] / m, I[2] / m, I[3] / m];
+  const xx = I[5] + I[6] - m * (cy * cy + cz * cz), yy = I[4] + I[6] - m * (cz * cz + cx * cx), zz = I[4] + I[5] - m * (cx * cx + cy * cy);
+  const xy = -(I[7] - m * cx * cy), yz = -(I[8] - m * cy * cz), xz = -(I[9] - m * cz * cx);
+  const { values, vectors } = eigen3([[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]]);
+  return { volume, weight: m, com: [cx, cy, cz], inertia: values, orientation: frameQuat(...vectors) };
+}
+// Eigenvalues and right-handed unit eigenvectors (as columns) of a symmetric 3×3 matrix, by Jacobi rotations.
+function eigen3(A) {
+  const a = A.map((r) => [...r]), v = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  for (let sweep = 0; sweep < 32; sweep++) {
+    if (Math.abs(a[0][1]) + Math.abs(a[0][2]) + Math.abs(a[1][2]) <= 1e-15 * (Math.abs(a[0][0]) + Math.abs(a[1][1]) + Math.abs(a[2][2]))) break;
+    for (const [p, q] of [[0, 1], [0, 2], [1, 2]]) {
+      if (a[p][q] === 0) continue;
+      const th = (a[q][q] - a[p][p]) / (2 * a[p][q]), t = (th < 0 ? -1 : 1) / (Math.abs(th) + Math.sqrt(th * th + 1)), c = 1 / Math.sqrt(t * t + 1), s = t * c;
+      for (let k = 0; k < 3; k++) { const kp = a[k][p], kq = a[k][q]; a[k][p] = c * kp - s * kq; a[k][q] = s * kp + c * kq; }
+      for (let k = 0; k < 3; k++) { const pk = a[p][k], qk = a[q][k]; a[p][k] = c * pk - s * qk; a[q][k] = s * pk + c * qk; }
+      for (let k = 0; k < 3; k++) { const kp = v[k][p], kq = v[k][q]; v[k][p] = c * kp - s * kq; v[k][q] = s * kp + c * kq; }
+    }
+  }
+  const cols = [0, 1, 2].map((j) => [v[0][j], v[1][j], v[2][j]]), [x, y] = cols;
+  cols[2] = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]]; // right-handed
+  return { values: [a[0][0], a[1][1], a[2][2]], vectors: cols };
 }
 
 // Euler angles in degrees about glTF's (Y-up) axes: x, then y, then z, each about the fixed axes (matrix Rz·Ry·Rx), as a
@@ -944,7 +1298,9 @@ function animatable(g, at) {
     m.set(`pointer ${at}/pbrMetallicRoughness/metallicFactor`, pbr.metallicFactor ?? 1);
     m.set(`pointer ${at}/pbrMetallicRoughness/roughnessFactor`, pbr.roughnessFactor ?? 1);
     m.set(`pointer ${at}/emissiveFactor`, mt.emissiveFactor ?? [0, 0, 0]);
-    m.set(`?material ${i}'s extensions or texture transforms (emissive strength, transmission, ior)`, JSON.stringify([mt.extensions, pbr.baseColorTexture, pbr.metallicRoughnessTexture, mt.normalTexture, mt.occlusionTexture, mt.emissiveTexture]));
+    for (const [k, [e, def]] of Object.entries(EXT_SLOTS)) m.set(`pointer ${at}/extensions/${e}/${k}`, mt.extensions?.[e]?.[k] ?? def); // draft f38: twin slots
+    const rest = Object.fromEntries(Object.entries(mt.extensions ?? {}).map(([e, v]) => [e, Object.fromEntries(Object.entries(v).filter(([k]) => EXT_SLOTS[k]?.[0] !== e))]).filter(([, v]) => Object.keys(v).length));
+    m.set(`?material ${i}'s other extensions or texture transforms`, JSON.stringify([rest, pbr.baseColorTexture, pbr.metallicRoughnessTexture, mt.normalTexture, mt.occlusionTexture, mt.emissiveTexture]));
   });
   lights.forEach((l, i) => {
     m.set(`pointer /extensions/KHR_lights_punctual/lights/${i}/color`, l.color ?? [1, 1, 1]);
@@ -961,6 +1317,81 @@ export const VRM_BONES = [...VRM_REQUIRED, 'chest', 'upperChest', 'neck', 'leftE
   ...['left', 'right'].flatMap((s) => [`${s}ThumbMetacarpal`, `${s}ThumbProximal`, `${s}ThumbDistal`,
     ...['Index', 'Middle', 'Ring', 'Little'].flatMap((f) => [`${s}${f}Proximal`, `${s}${f}Intermediate`, `${s}${f}Distal`])])];
 const KHR_LIGHTS = 'KHR_lights_punctual';
+const JIG_PLACEMENT = 'JIG_placement', OMI_SEAT = 'OMI_seat';
+// Draft f37: physics written both as Khronos' drafts and as OMI's, from the same bodies.
+const KHR_RB = 'KHR_physics_rigid_bodies', KHR_IS = 'KHR_implicit_shapes', OMI_BODY = 'OMI_physics_body', OMI_SHAPE = 'OMI_physics_shape', OMI_JOINT = 'OMI_physics_joint';
+const PHYS_EXTS = [KHR_RB, KHR_IS, OMI_BODY, OMI_SHAPE, OMI_JOINT];
+// A rigid matrix's translation and unit quaternion, rounded so a rebake writes the same bytes.
+const trs = (m) => [[m[12], m[13], m[14]].map((v) => +v.toFixed(9)), frameQuat([m[0], m[1], m[2]], [m[4], m[5], m[6]], [m[8], m[9], m[10]]).map((v) => +v.toFixed(9))];
+function writePhysics(d, phys, nodeAt, meshAt, add) {
+  const khrShapes = [], omiShapes = [], mats = [], filters = [], joints = [];
+  const index = (list, o) => { const k = JSON.stringify(o), i = list.findIndex((x) => JSON.stringify(x) === k); return i >= 0 ? i : list.push(o) - 1; };
+  const ext = (i, e, v) => { const n = d.nodes[i]; n.extensions = { ...n.extensions, [e]: { ...n.extensions?.[e], ...v } }; };
+  const filterAt = (f) => f && index(filters, { ...(f.systems && { collisionSystems: f.systems }), ...(f.collide_with && { collideWithSystems: f.collide_with }), ...(f.not_collide_with && { notCollideWithSystems: f.not_collide_with }) });
+  // a capsule's height between its caps' centres, as OMI's; shortcut: KHR_implicit_shapes does not say yet, check when it is ratified
+  const shapeOf = (sh, omi) => sh.type === 'box' ? { type: 'box', box: { size: sh.size } } : sh.type === 'sphere' ? { type: 'sphere', sphere: { radius: sh.radius } }
+    : sh.type === 'capsule' ? { type: 'capsule', capsule: { height: sh.height - 2 * sh.radius, radiusTop: sh.radius, radiusBottom: sh.radius } }
+    : sh.type === 'cylinder' ? { type: 'cylinder', cylinder: { height: sh.height, radiusTop: sh.radiusTop, radiusBottom: sh.radiusBottom } }
+    : omi ? { type: 'convex', convex: { mesh: meshAt[sh.mesh] } } : null;
+  const bodyNode = phys.bodies.map((b) => nodeAt(b.rec));
+  phys.bodies.forEach((b, k) => {
+    const bn = bodyNode[k];
+    if (b.motion !== 'static') {
+      const motion = { mass: b.mass, centerOfMass: b.com, inertiaDiagonal: b.inertia, inertiaOrientation: b.orientation };
+      ext(bn, KHR_RB, { motion: { isKinematic: b.motion === 'kinematic', ...motion } });
+      ext(bn, OMI_BODY, { motion: { type: b.motion, ...motion } });
+    }
+    for (const c of b.colliders) {
+      let cn = nodeAt(c.rec);
+      if (c.local !== IDENTITY) { // a box round a mesh's bounds sits off the node's origin: a node of its own
+        const child = add('nodes', { name: 'collider', translation: [c.local[12], c.local[13], c.local[14]] });
+        (d.nodes[cn].children ??= []).push(child);
+        cn = child;
+      }
+      const material = c.trigger ? {} : { physicsMaterial: index(mats, { staticFriction: c.material.static_friction, dynamicFriction: c.material.dynamic_friction, restitution: c.material.restitution,
+        frictionCombine: c.material.friction_combine, restitutionCombine: c.material.restitution_combine }) };
+      const filter = c.filter ? { collisionFilter: filterAt(c.filter) } : {}, kind = c.trigger ? 'trigger' : 'collider';
+      const khr = shapeOf(c.shape, false);
+      ext(cn, KHR_RB, { [kind]: { geometry: khr ? { shape: index(khrShapes, khr) } : { mesh: meshAt[c.shape.mesh], convexHull: true }, ...material, ...filter } });
+      ext(cn, OMI_BODY, { [kind]: { shape: index(omiShapes, shapeOf(c.shape, true)), ...material, ...filter } });
+    }
+    if (!b.joint) return;
+    // The joint on a node of its own at the body's origin (OMI asks for one), joined to the node above the body.
+    const rad = (v) => (v * Math.PI) / 180, limits = [], drives = [];
+    for (const [key, angular] of [['turn', true], ['slide', false]]) b.joint[key].forEach((v, a) => {
+      if (v === true) return;
+      const [lo, hi] = v === false ? [0, 0] : angular ? v.map(rad) : v;
+      limits.push({ [angular ? 'angularAxes' : 'linearAxes']: [a], min: lo, max: hi });
+    });
+    for (const dr of b.joint.drives) {
+      const angular = dr.kind === 'turn', u = (v) => (angular ? rad(v) : v);
+      drives.push({ type: angular ? 'angular' : 'linear', mode: dr.mode, axis: dr.axis, ...(dr.max_force !== undefined && { maxForce: dr.max_force }),
+        ...(dr.target !== undefined && { positionTarget: u(dr.target) }), ...(dr.velocity !== undefined && { velocityTarget: u(dr.velocity) }),
+        stiffness: dr.stiffness ?? 0, damping: dr.damping ?? 0 });
+    }
+    // The connected side: the joint's frame at rest, fixed under the node above, so limits count from rest (Q-3).
+    const [t, q] = trs(b.anchor), up = nodeAt(b.up);
+    const anchor = add('nodes', { name: 'joint anchor', ...(String(t) !== '0,0,0' && { translation: t }), ...(String(q) !== '0,0,0,1' && { rotation: q }) });
+    (d.nodes[up].children ??= []).push(anchor);
+    const joint = index(joints, { limits, ...(drives.length && { drives }) }), link = { connectedNode: anchor, joint, enableCollision: b.joint.collide };
+    const jn = add('nodes', { name: 'joint', extensions: { [KHR_RB]: { joint: link }, [OMI_JOINT]: link } });
+    (d.nodes[bn].children ??= []).push(jn);
+  });
+  const root = (e, o) => { const kept = Object.fromEntries(Object.entries(o).filter(([, v]) => v.length)); if (Object.keys(kept).length) d.extensions[e] = kept; };
+  const physicsMaterials = mats, collisionFilters = filters;
+  root(KHR_IS, { shapes: khrShapes });
+  root(KHR_RB, { physicsMaterials, collisionFilters, physicsJoints: joints });
+  root(OMI_SHAPE, { shapes: omiShapes });
+  root(OMI_BODY, { physicsMaterials, collisionFilters });
+  root(OMI_JOINT, { physicsJoints: joints });
+  for (const e of PHYS_EXTS) if (JSON.stringify([d.nodes, d.extensions]).includes(`"${e}"`) && !d.extensionsUsed.includes(e)) d.extensionsUsed.push(e);
+}
+// Draft f36: a node's baked placement, and a seat use point as OMI_seat (angle in radians, as OMI's).
+const placeExt = (p) => {
+  const { seat, ...use } = p.use ?? {}, o = { [JIG_PLACEMENT]: { ...p, ...(p.use && { use }) } };
+  if (seat) o[OMI_SEAT] = { back: seat.back, foot: seat.foot, knee: seat.knee, angle: (seat.angle * Math.PI) / 180 };
+  return o;
+};
 const KHR_NV = 'KHR_node_visibility';
 const KHR_ES = 'KHR_materials_emissive_strength';
 // Recipe slots kept in a material extension: [extension, default]; the bake writes the extension only off the default.
@@ -1024,7 +1455,15 @@ export function strip(doc) {
     if (isObj(x)) for (const k of ['name', 'mesh', 'translation', 'rotation', 'scale']) if (twin(x, k) !== undefined) delete n[k];
     if (x?.light !== undefined && isObj(n.extensions)) delete n.extensions[KHR_LIGHTS]; // its twin (D-113)
     if (x?.visible !== undefined && isObj(n.extensions)) delete n.extensions[KHR_NV]; // its twin (D-130)
+    if (isObj(x) && PLACE_KEYS.some((k) => x[k] !== undefined) && isObj(n.extensions)) { delete n.extensions[JIG_PLACEMENT]; delete n.extensions[OMI_SEAT]; } // draft f36
   }
+  if (d.extensions?.[EXT]?.placement !== undefined) delete d.extensions[JIG_PLACEMENT];
+  if (d.extensions?.[EXT]?.physics !== undefined) { // draft f37: all physics comes from the recipe
+    for (const n of Array.isArray(d.nodes) ? d.nodes : []) if (isObj(n?.extensions)) for (const e of PHYS_EXTS) delete n.extensions[e];
+    for (const e of PHYS_EXTS) delete d.extensions[e];
+    if (Array.isArray(d.extensionsUsed)) d.extensionsUsed = d.extensionsUsed.filter((e) => !PHYS_EXTS.includes(e));
+  }
+  for (const e of [JIG_PLACEMENT, OMI_SEAT]) if (Array.isArray(d.extensionsUsed) && !JSON.stringify([d.nodes, d.extensions]).includes(`"${e}"`)) d.extensionsUsed = d.extensionsUsed.filter((u) => u !== e);
   if (Array.isArray(d.extensionsUsed) && !(d.nodes ?? []).some((n) => n?.extensions?.[KHR_NV])) d.extensionsUsed = d.extensionsUsed.filter((e) => e !== KHR_NV);
   const lx = d.extensions?.[KHR_LIGHTS];
   if (Array.isArray(lx?.lights)) { // the lights of placed documents (D-113)
@@ -1105,7 +1544,7 @@ export function bake(doc, values = {}, { uri, set, files, quick = false } = {}) 
     return l;
   };
   names.forEach((name, v) => {
-    const so = read(d, { ...r.baked_values, ...out.sets[name] }, { files }), mats = so.materials;
+    const so = read(d, { ...r.baked_values, ...out.sets[name] }, { files, rest: true }), mats = so.materials; // materials only: no projections, physics or skin pose
     // Draft f34 (D-167): a stub's material at the set's values, per baked mesh, matched node by node in tree order.
     const a = shapes(out), b = shapes(so), sat = `/extensions/${EXT}/sets/${name}`;
     a.forEach((x, k) => {
@@ -1196,6 +1635,7 @@ export function bake(doc, values = {}, { uri, set, files, quick = false } = {}) 
     if (rec.mesh !== undefined && !rec.bound) b.mesh = meshAt[rec.mesh];
     if (rec.light !== undefined) b.extensions = { [KHR_LIGHTS]: { light: rec.light } };
     if (rec.hidden) b.extensions = { ...b.extensions, [KHR_NV]: { visible: false } };
+    if (rec.place) b.extensions = { ...b.extensions, ...placeExt(rec.place) };
     for (const [k, id] of [['translation', '0,0,0'], ['rotation', '0,0,0,1'], ['scale', '1,1,1']]) if (String(n[k]) !== id) b[k] = n[k];
     if (kids.length) b.children = kids;
     const i = add('nodes', b);
@@ -1217,13 +1657,30 @@ export function bake(doc, values = {}, { uri, set, files, quick = false } = {}) 
     if (!d.extensionsUsed.includes(KHR_LIGHTS)) d.extensionsUsed.push(KHR_LIGHTS);
   }
   const place = (recs) => recs.forEach((rec) => {
-    if (!rec.rep && !rec.foreign) { nodeOf.set(rec, rec.i); return place(rec.kids); }
+    if (!rec.rep && !rec.foreign) {
+      nodeOf.set(rec, rec.i);
+      if (rec.place && rec.drawn) Object.assign(d.nodes[rec.i].extensions, placeExt(rec.place)); // draft f36
+      return place(rec.kids);
+    }
     if (rec.drawn) (d.nodes[nodeOf.get(rec.parent) ?? rec.i].children ??= []).push(copyOf(rec));
   });
   const parents = (recs, parent) => recs.forEach((rec) => { if (rec.foreign && !parent?.foreign) rec.parent = parent; parents(rec.kids, rec); });
   parents(out.tree, null);
   place(out.tree);
   if (drawn.some((rec) => rec.hidden) && !d.extensionsUsed.includes(KHR_NV)) d.extensionsUsed.push(KHR_NV);
+  if (out.physics) writePhysics(d, out.physics, (rec) => (rec ? nodeOf.get(rec) : undefined), meshAt, add);
+  // Draft f36 (sketch): placement as evaluated values, so a host that runs no JIG reader has them.
+  // Draft f37 (Q-5): an inferred swing clearance on a baked node under its parent body's node (or a scene root).
+  for (const it of out.placement.items) {
+    if (!it.inferred) continue;
+    const local = it.holder ? mul(invert(it.holder.world), it.world) : it.world;
+    const n = add('nodes', { name: `swing of ${it.name ?? `node ${it.from}`}`, translation: [local[12], local[13], local[14]].map((v) => +v.toFixed(9)),
+      extensions: { [JIG_PLACEMENT]: { clearance: it.clearance, inferred: true, from: nodeOf.get(it.jointed) } } });
+    if (it.holder) (d.nodes[nodeOf.get(it.holder)].children ??= []).push(n); else d.scenes[d.scene].nodes.push(n);
+  }
+  const { items: _, ...model } = out.placement;
+  if (Object.keys(model).length) d.extensions[JIG_PLACEMENT] = model;
+  for (const e of [JIG_PLACEMENT, OMI_SEAT]) if (JSON.stringify([d.nodes, d.extensions]).includes(`"${e}"`) && !d.extensionsUsed.includes(e)) d.extensionsUsed.push(e);
 
   // Skins (draft f10, D-77): glTF skins with the joints' baked nodes and inverse bind matrices at this pose. The
   // shapes bound to a skin are one baked mesh, a primitive per shape, in model space at the bind pose, each vertex
@@ -1300,6 +1757,12 @@ export function bake(doc, values = {}, { uri, set, files, quick = false } = {}) 
         channels.push({ sampler, target: { path: 'pointer', extensions: { [KHR_AP]: { pointer: path } } } });
         const nv = path.match(/^\/nodes\/(\d+)\/extensions\/KHR_node_visibility\/visible$/); // the pointer needs the property there
         if (nv) { const n = d.nodes[+nv[1]]; n.extensions = { ...n.extensions, [KHR_NV]: { visible: n.extensions?.[KHR_NV]?.visible ?? true } }; }
+        const mx = path.match(/^\/materials\/(\d+)\/extensions\/([^/]+)\/([^/]+)$/); // draft f38: a twin slot's extension, written even at its default
+        if (mx) {
+          const mt = d.materials[+mx[1]], [e, k] = [mx[2], mx[3]];
+          mt.extensions = { ...mt.extensions, [e]: { ...mt.extensions?.[e], [k]: mt.extensions?.[e]?.[k] ?? EXT_SLOTS[k][1] } };
+          if (!d.extensionsUsed.includes(e)) d.extensionsUsed.push(e);
+        }
       } else channels.push({ sampler, target: { node: +path, path: kind } });
     }
     if (!channels.length) continue; // a clip that changes nothing writes no animation
@@ -1323,7 +1786,14 @@ export function bake(doc, values = {}, { uri, set, files, quick = false } = {}) 
 // TEXCOORD_0 in glTF's convention (draft f11, D-80): `"uv": "fit"` (default) fractions 0..1 of the shape, "meters"
 // the same layout in meters.
 const NO_GEOMETRY = { positions: new Float32Array(0), normals: new Float32Array(0), uvs: new Float32Array(0), indices: new Uint32Array(0) };
+// A shape's triangles, built once per shape object (read makes fresh ones; callers only read the arrays).
+const GEOMETRY = new WeakMap();
 export function geometry(m) {
+  let g = GEOMETRY.get(m);
+  if (!g) GEOMETRY.set(m, (g = buildGeometry(m)));
+  return g;
+}
+function buildGeometry(m) {
   const fit = (m.uv ?? 'fit') === 'fit';
   if (m.type === 'loft' || m.type === 'lathe') {
     const { tu, length, ...g } = (m.type === 'loft' ? loftGeometry : latheGeometry)(m, fit);
@@ -1893,6 +2363,7 @@ function arcPoints(p, scope, at) {
 function extrude(e, scope, at) {
   need(isObj(e), at, 'must be an object');
   only(e, ['outline', 'holes', 'depth', 'bevel'], at);
+  if (isObj(e.outline) && e.outline.project !== undefined) return projected(e, scope, at);
   const out = points(e.outline, scope, `${at}/outline`);
   const holes = e.holes === undefined ? [] : list(e.holes, `${at}/holes`).map((h, i) => points(h, scope, `${at}/holes/${i}`));
   const poly = outline(out);
@@ -1906,7 +2377,7 @@ function extrude(e, scope, at) {
   const bevel = e.bevel === undefined ? 0 : num(e.bevel, scope, `${at}/bevel`);
   need(bevel >= 0 && bevel <= depth / 2, `${at}/bevel`, `must be in 0..depth / 2 (${depth / 2}), is ${bevel}`);
   const m = { type: 'extrude', outline: out, holes, depth, ...(bevel > 0 && { bevel }) };
-  try { extrudeGeometry(m); } catch (err) { need(false, at, err.message.replace(/^\/: /, '')); } // caps that cannot be triangulated (D-66)
+  try { geometry(m); } catch (err) { need(false, at, err.message.replace(/^\/: /, '')); } // caps that cannot be triangulated (D-66)
   return m;
 }
 // Names the first two edges of the outline and holes that cross: `…/outline/3: its edge to point 4 crosses the edge
@@ -1926,10 +2397,10 @@ function crossings(loops, at) {
 }
 // The point where segments ab and cd cross, not just touch at an end; else null.
 function crossAt(a, b, c, d) {
-  const r = sub(b, a), q = sub(d, c), den = r[0] * q[1] - r[1] * q[0];
+  const r0 = b[0] - a[0], r1 = b[1] - a[1], q0 = d[0] - c[0], q1 = d[1] - c[1], den = r0 * q1 - r1 * q0; // no arrays: called O(n²) times
   if (Math.abs(den) < 1e-15) return null;
-  const ca = sub(c, a), t = (ca[0] * q[1] - ca[1] * q[0]) / den, u = (ca[0] * r[1] - ca[1] * r[0]) / den, e = 1e-9;
-  return t > e && t < 1 - e && u > e && u < 1 - e ? [a[0] + t * r[0], a[1] + t * r[1]] : null;
+  const c0 = c[0] - a[0], c1 = c[1] - a[1], t = (c0 * q1 - c1 * q0) / den, u = (c0 * r1 - c1 * r0) / den, e = 1e-9;
+  return t > e && t < 1 - e && u > e && u < 1 - e ? [a[0] + t * r0, a[1] + t * r1] : null;
 }
 // An inset ring with its swallowtails cut out: where an edge crosses a later one (an inset deeper than the curve's
 // radius there), the points between move to the crossing, so the ring keeps its point count for the walls.
@@ -1956,6 +2427,7 @@ const inside = ([x, y], poly) => poly.reduce((c, p, i) => {
 // the walls by a quarter circle of BEVEL_STEPS rings.
 const BEVEL_STEPS = 4;
 function extrudeGeometry(m, fit = true) {
+  if (m.pieces) return framed(joinGeometry(m.pieces.map((p) => extrudeGeometry({ depth: m.depth, bevel: m.bevel, outline: p.outline, holes: p.holes }, fit))), m.frame);
   const loops = [m.outline, ...m.holes].map((pts, i) => {
     const { poly, starts } = flatten(pts);
     const hard = new Set(starts.filter((_, k) => corner(pts[k])));
@@ -1972,7 +2444,8 @@ function extrudeGeometry(m, fit = true) {
       const e0 = l.edge[(k + L - 1) % L], e1 = l.edge[k], bis = norm(e0.map((c, q) => c + e1[q]));
       return scale(bis, 1 / Math.max(0.2, dot(bis, e1))); // shortcut: miters capped at 5x; insets of sharp spikes overlap
     });
-    l.inset = (d) => (d === 0 ? l.poly : untangle(l.poly.map((p, k) => [p[0] - d * l.miter[k][0], p[1] - d * l.miter[k][1]])));
+    const insets = new Map(); // the bevel's rings come in pairs, top and bottom
+    l.inset = (d) => (d === 0 ? l.poly : insets.get(d) ?? insets.set(d, untangle(l.poly.map((p, k) => [p[0] - d * l.miter[k][0], p[1] - d * l.miter[k][1]]))).get(d));
   }
   const flat = loops.flatMap((l) => l.inset(r));
   const tris = triangulate(loops.map((l) => l.inset(r)));
@@ -2010,6 +2483,230 @@ function extrudeGeometry(m, fit = true) {
     }
   }
   return { positions: new Float32Array(positions), normals: new Float32Array(normals), uvs: new Float32Array(uvs), indices: new Uint32Array(indices) };
+}
+
+// --- Projection (§5.10, D-186..D-195) ---
+// An extrude outline `{ "project": { of, direction, key, cut, fill, line, cell, gap } }`: the region node `of`'s
+// subtree covers seen along `direction` (the silhouette), or with `cut` where the plane that far back against the
+// rays slices it. Read here, worked out by projectMesh once the whole tree is read. The extrude lies across the
+// rays, its depth back toward where they come from.
+function projected(e, scope, at) {
+  const oat = `${at}/outline`, pat = `${oat}/project`, p = e.outline.project;
+  only(e.outline, ['project'], oat);
+  need(isObj(p), pat, 'must be an object');
+  only(p, ['of', 'direction', 'key', 'cut', 'fill', 'line', 'cell', 'gap'], pat);
+  need(Number.isInteger(p.of) && p.of >= 0, `${pat}/of`, 'must be a node index');
+  need(Array.isArray(p.direction) && p.direction.length === 3, `${pat}/direction`, 'must be [x, y, z]');
+  const direction = p.direction.map((c, a) => num(c, scope, `${pat}/direction/${a}`));
+  need(Math.hypot(...direction) > 1e-12, `${pat}/direction`, 'must not be all zero');
+  need(p.key === undefined || (typeof p.key === 'string' && p.key !== ''), `${pat}/key`, 'must be a non-empty string');
+  need(p.fill === undefined || typeof p.fill === 'boolean', `${pat}/fill`, 'must be true or false');
+  const opt = (k, ok, what) => {
+    if (p[k] === undefined) return undefined;
+    const v = num(p[k], scope, `${pat}/${k}`);
+    need(ok(v), `${pat}/${k}`, `must be ${what}, is ${v}`);
+    return v;
+  };
+  const cut = opt('cut', () => true, 'a number'), line = opt('line', (v) => v > 0, '> 0'), cell = opt('cell', (v) => v > 0, '> 0');
+  const gap = opt('gap', (v) => v >= 0, '>= 0') ?? 0;
+  need(e.holes === undefined, `${at}/holes`, 'cannot stand next to a projected outline');
+  const depth = num(e.depth, scope, `${at}/depth`);
+  need(depth > 0, `${at}/depth`, `must be > 0, is ${depth}`);
+  const bevel = e.bevel === undefined ? 0 : num(e.bevel, scope, `${at}/bevel`);
+  need(bevel >= 0 && bevel <= depth / 2, `${at}/bevel`, `must be in 0..depth / 2 (${depth / 2}), is ${bevel}`);
+  return { type: 'extrude', project: { of: p.of, direction, key: p.key, cut, fill: !!p.fill, line, cell, gap, at: pat }, depth, ...(bevel > 0 && { bevel }) };
+}
+
+// A projection's extrude, from the read tree: the shapes under every drawn copy of node `of` (placed models too),
+// in the frame of the copy that draws the projection (`rec`; none: the model's). Shown shapes count; under a node with
+// `visible_for`, shapes count, shown or hidden, exactly when it names the projection's key (D-196). Copies a repeat
+// leaves out never count, nor do other projections.
+function projectMesh(m, rec, tree, meshes, nodeCount, skip) {
+  const p = m.project;
+  need(p.of < nodeCount, `${p.at}/of`, `must be a node index 0..${nodeCount - 1}`);
+  const inv = invert(rec ? rec.world : IDENTITY), d = norm(p.direction), w = scale(d, -1);
+  let u = sub([1, 0, 0], scale(w, w[0]));
+  if (Math.hypot(...u) < 1e-6) u = sub([0, 0, -1], scale(w, -w[2])); // looking along x: u is −z
+  u = norm(u);
+  const v = cross(w, u), tris = [], geo = new Map();
+  // forced: what the nearest `visible_for` above says for this key (D-196); without one, shown shapes count
+  const take = (r, forced, shown) => {
+    if (!r.drawn) return;
+    const vf = r.node.jig?.visible_for;
+    if (vf) forced = vf.includes(p.key);
+    const own = shown && !r.hidden, here = forced ?? own;
+    if (here && r.mesh !== undefined && !skip.has(r.mesh)) {
+      if (!geo.has(r.mesh)) geo.set(r.mesh, geometry(meshes[r.mesh]));
+      const { positions: q, indices: ix } = geo.get(r.mesh), M = mul(inv, r.world);
+      const at = (k) => {
+        const x = q[3 * k], y = q[3 * k + 1], z = q[3 * k + 2];
+        const s = [0, 1, 2].map((a) => M[a] * x + M[4 + a] * y + M[8 + a] * z + M[12 + a]);
+        return [dot(s, u), dot(s, v), dot(s, w)];
+      };
+      for (let t = 0; t < ix.length; t += 3) tris.push([at(ix[t]), at(ix[t + 1]), at(ix[t + 2])]);
+    }
+    for (const k of r.kids) take(k, forced, k.owner !== r.owner ? own && r.node.modelVisible !== false : own); // a placed model's records have its owner
+  };
+  (function find(recs) { for (const r of recs) { if (r.i === p.of && !r.foreign) take(r, undefined, true); else find(r.kids); } })(tree);
+  const pieces = tris.length ? traceRegion(tris, p) : [];
+  const out = { type: 'extrude', pieces, frame: [u, v, w], depth: m.depth, ...(m.bevel && { bevel: m.bevel }) };
+  try { geometry(out); } catch (err) { need(false, p.at, `its outline can't be built (${err.message.replace(/^\/: /, '')}); try a larger cell or line`); }
+  return out;
+}
+
+// The covered region of triangles [[u, v, w] × 3] on a grid: a cell counts when its centre is inside a triangle
+// (silhouette), or when an odd number of triangles lie above the cut plane w = cut there (inside the solid, which
+// needs closed shapes). Then: gaps up to `gap` closed, holes filled (`fill`), only a band `line` wide along the edges
+// kept (`line`); traced along cell edges and simplified to a cell. Returns [{ outline, holes }].
+function traceRegion(tris, { cut, fill, line, cell, gap, at }) {
+  const lo = [Infinity, Infinity], hi = [-Infinity, -Infinity];
+  for (const t of tris) for (const q of t) for (const a of [0, 1]) { lo[a] = Math.min(lo[a], q[a]); hi[a] = Math.max(hi[a], q[a]); }
+  const c = cell ?? Math.max(1e-4, Math.max(hi[0] - lo[0], hi[1] - lo[1]) / 256);
+  const pad = 2 + Math.ceil(gap / c), W = Math.ceil((hi[0] - lo[0]) / c) + 2 * pad, H = Math.ceil((hi[1] - lo[1]) / c) + 2 * pad;
+  need(W * H <= 4e6, `${at}/cell`, `makes a grid of ${W} x ${H} cells; give a larger cell (now ${c})`);
+  const U = (i) => lo[0] + (i - pad + 0.5) * c, V = (j) => lo[1] + (j - pad + 0.5) * c;
+  let mask = new Uint8Array(W * H);
+  for (const [a, b, e] of tris) {
+    const ar = (b[0] - a[0]) * (e[1] - a[1]) - (b[1] - a[1]) * (e[0] - a[0]);
+    if (Math.abs(ar) < 1e-14) { // edge-on (a sheet seen along its plane): its edges mark a silhouette, never a cut
+      if (cut !== undefined) continue;
+      for (const [s, f] of [[a, b], [b, e], [e, a]]) {
+        const n = Math.ceil(Math.hypot(f[0] - s[0], f[1] - s[1]) / (c / 2)) + 1;
+        for (let k = 0; k <= n; k++) mask[(Math.floor((s[1] + (f[1] - s[1]) * k / n - lo[1]) / c) + pad) * W + Math.floor((s[0] + (f[0] - s[0]) * k / n - lo[0]) / c) + pad] = 1;
+      }
+      continue;
+    }
+    const i0 = Math.floor((Math.min(a[0], b[0], e[0]) - lo[0]) / c) + pad, i1 = Math.ceil((Math.max(a[0], b[0], e[0]) - lo[0]) / c) + pad;
+    const j0 = Math.floor((Math.min(a[1], b[1], e[1]) - lo[1]) / c) + pad, j1 = Math.ceil((Math.max(a[1], b[1], e[1]) - lo[1]) / c) + pad;
+    for (let j = Math.max(0, j0); j <= Math.min(H - 1, j1); j++) for (let i = Math.max(0, i0); i <= Math.min(W - 1, i1); i++) {
+      const x = U(i), y = V(j);
+      const l1 = ((b[0] - x) * (e[1] - y) - (b[1] - y) * (e[0] - x)) / ar, l2 = ((e[0] - x) * (a[1] - y) - (e[1] - y) * (a[0] - x)) / ar, l3 = 1 - l1 - l2;
+      if (l1 < 0 || l2 < 0 || l3 < 0) continue;
+      if (cut === undefined) mask[j * W + i] = 1;
+      else if (l1 * a[2] + l2 * b[2] + l3 * e[2] > cut) mask[j * W + i] ^= 1;
+    }
+  }
+  const grow = (m, r, val) => { // dilate (val 1) or erode (val 0) by a disc of r cells; outside the grid counts as 0
+    const out = val === 0 ? 0 : Infinity, g = new Float64Array(W * H); // g: cells along the row to the nearest val
+    for (let j = 0; j < H; j++) {
+      for (let i = 0, d = out; i < W; i++) { d = m[j * W + i] === val ? 0 : d + 1; g[j * W + i] = d; }
+      for (let i = W - 1, d = out; i >= 0; i--) { d = m[j * W + i] === val ? 0 : d + 1; if (d < g[j * W + i]) g[j * W + i] = d; }
+    }
+    const o = m.slice();
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+      if (m[j * W + i] === val) continue;
+      for (let dj = -r; dj <= r; dj++) {
+        const jj = j + dj, h = jj < 0 || jj >= H ? out : g[jj * W + i];
+        if (h * h + dj * dj <= r * r) { o[j * W + i] = val; break; }
+      }
+    }
+    return o;
+  };
+  const rg = Math.round(gap / c);
+  if (rg > 0) mask = grow(grow(mask, rg, 1), rg, 0);
+  if (fill) { // what a flood from the border does not reach is inside
+    const seen = new Uint8Array(W * H), st = [0];
+    seen[0] = 1;
+    while (st.length) {
+      const k = st.pop(), i = k % W, j = (k - i) / W;
+      for (const [ii, jj] of [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]]) {
+        const kk = jj * W + ii;
+        if (ii >= 0 && jj >= 0 && ii < W && jj < H && !seen[kk] && !mask[kk]) { seen[kk] = 1; st.push(kk); }
+      }
+    }
+    for (let k = 0; k < W * H; k++) if (!seen[k]) mask[k] = 1;
+  }
+  unpinch(mask, W, H);
+  if (line !== undefined) {
+    const inner = grow(mask, Math.max(1, Math.round(line / c)), 0);
+    for (let k = 0; k < W * H; k++) if (inner[k]) mask[k] = 0;
+    unpinch(mask, W, H);
+  }
+  const label = new Int32Array(W * H).fill(-1);
+  let n = 0;
+  for (let k0 = 0; k0 < W * H; k0++) {
+    if (!mask[k0] || label[k0] >= 0) continue;
+    const st = [k0];
+    label[k0] = n;
+    while (st.length) {
+      const k = st.pop(), i = k % W, j = (k - i) / W;
+      for (const [ii, jj] of [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]]) {
+        const kk = jj * W + ii;
+        if (ii >= 0 && jj >= 0 && ii < W && jj < H && mask[kk] && label[kk] < 0) { label[kk] = n; st.push(kk); }
+      }
+    }
+    n++;
+  }
+  const pieces = Array.from({ length: n }, () => ({ outline: null, holes: [] }));
+  const metres = (pts) => simplifyLoop(pts.map(([i, j]) => [lo[0] + (i - pad) * c, lo[1] + (j - pad) * c]), c);
+  for (const { cell: k, pts } of cellLoops(mask, W, H)) {
+    const piece = pieces[label[k]], a = area(pts);
+    if (a > 0) piece.outline = metres(pts); // counter-clockwise: the outer edge; clockwise: a hole
+    else if (a < 0) piece.holes.push(metres(pts));
+  }
+  return pieces.filter((q) => q.outline && q.outline.length >= 3).map((q) => ({ outline: q.outline, holes: q.holes.filter((h) => h.length >= 3) }));
+}
+// cells that touch only at a corner would make two loops share it: join them
+function unpinch(m, W, H) {
+  for (let again = true; again;) {
+    again = false;
+    for (let j = 0; j + 1 < H; j++) for (let i = 0; i + 1 < W; i++) {
+      const a = m[j * W + i], b = m[j * W + i + 1], c = m[(j + 1) * W + i], d = m[(j + 1) * W + i + 1];
+      if (a === d && b === c && a !== b) { m[j * W + i] = m[j * W + i + 1] = m[(j + 1) * W + i] = m[(j + 1) * W + i + 1] = 1; again = true; }
+    }
+  }
+}
+// The boundary loops of a 0/1 grid along cell edges, the region on the left (outer edges counter-clockwise), each
+// with one of its region's cells.
+function cellLoops(m, W, H) {
+  const on = (i, j) => i >= 0 && j >= 0 && i < W && j < H && m[j * W + i] === 1;
+  const next = new Map(), cellOf = new Map(), key = (i, j) => j * (W + 1) + i;
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+    if (!on(i, j)) continue;
+    const add = (a, b) => { next.set(key(...a), b); cellOf.set(key(...a), j * W + i); };
+    if (!on(i, j - 1)) add([i, j], [i + 1, j]);
+    if (!on(i + 1, j)) add([i + 1, j], [i + 1, j + 1]);
+    if (!on(i, j + 1)) add([i + 1, j + 1], [i, j + 1]);
+    if (!on(i - 1, j)) add([i, j + 1], [i, j]);
+  }
+  const out = [];
+  for (const [k0] of next) {
+    if (!next.has(k0)) continue;
+    const pts = [], cell = cellOf.get(k0);
+    let k = k0;
+    while (next.has(k)) { const b = next.get(k); next.delete(k); pts.push([k % (W + 1), Math.floor(k / (W + 1))]); k = key(...b); }
+    out.push({ cell, pts });
+  }
+  return out;
+}
+// Douglas-Peucker on a closed loop, split at the point farthest from its first.
+function simplifyLoop(p, tol) {
+  const dp = (a) => {
+    if (a.length < 3) return a;
+    const [x0, y0] = a[0], [x1, y1] = a[a.length - 1], L = Math.hypot(x1 - x0, y1 - y0) || 1e-12;
+    let best = 0, bi = 0;
+    for (let i = 1; i < a.length - 1; i++) { const dd = Math.abs((x1 - x0) * (y0 - a[i][1]) - (x0 - a[i][0]) * (y1 - y0)) / L; if (dd > best) { best = dd; bi = i; } }
+    return best <= tol ? [a[0], a[a.length - 1]] : [...dp(a.slice(0, bi + 1)).slice(0, -1), ...dp(a.slice(bi))];
+  };
+  let far = 0;
+  for (let i = 1; i < p.length; i++) if (Math.hypot(p[i][0] - p[0][0], p[i][1] - p[0][1]) > Math.hypot(p[far][0] - p[0][0], p[far][1] - p[0][1])) far = i;
+  const r = [...dp(p.slice(0, far + 1)).slice(0, -1), ...dp([...p.slice(far), p[0]]).slice(0, -1)];
+  return r.map(([x, y]) => [+x.toFixed(6), +y.toFixed(6)]);
+}
+// Shapes joined into one, and turned by a frame [u, v, w] (the columns: where x, y and z go).
+function joinGeometry(gs) {
+  const cat = (k, T) => { const o = new T(gs.reduce((s, g) => s + g[k].length, 0)); let at = 0; for (const g of gs) { o.set(g[k], at); at += g[k].length; } return o; };
+  const indices = new Uint32Array(gs.reduce((s, g) => s + g.indices.length, 0));
+  let at = 0, base = 0;
+  for (const g of gs) { for (let k = 0; k < g.indices.length; k++) indices[at + k] = g.indices[k] + base; at += g.indices.length; base += g.positions.length / 3; }
+  return { positions: cat('positions', Float32Array), normals: cat('normals', Float32Array), uvs: cat('uvs', Float32Array), indices };
+}
+function framed(g, [u, v, w]) {
+  for (const k of ['positions', 'normals']) {
+    const a = g[k];
+    for (let i = 0; i < a.length; i += 3) { const x = a[i], y = a[i + 1], z = a[i + 2]; for (let c = 0; c < 3; c++) a[i + c] = u[c] * x + v[c] * y + w[c] * z; }
+  }
+  return g;
 }
 
 // --- Lathe (draft f13, D-88) ---
