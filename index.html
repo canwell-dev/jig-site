@@ -288,12 +288,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION, VRM_BONES, VRM_REQUIRED } from './jig.js?v=f3fd7a1';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION, VRM_BONES, VRM_REQUIRED } from './jig.js?v=ecb099f';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=f3fd7a1', loft: 'examples/loft.gltf?v=f3fd7a1', star: 'examples/star.gltf?v=f3fd7a1', bench: 'examples/bench.gltf?v=f3fd7a1', lathe: 'examples/lathe.gltf?v=f3fd7a1', lantern: 'examples/lantern.gltf?v=f3fd7a1', paths: 'examples/paths.gltf?v=f3fd7a1', ends: 'examples/ends.gltf?v=f3fd7a1', cushion: 'examples/cushion.gltf?v=f3fd7a1',
-  sign: 'examples/sign.gltf?v=f3fd7a1', chest: 'examples/chest.gltf?v=f3fd7a1', door: 'examples/door.gltf?v=f3fd7a1', finger: 'examples/finger.gltf?v=f3fd7a1', hand: 'examples/hand.gltf?v=f3fd7a1', grandpa: 'examples/grandpa.gltf?v=f3fd7a1', head: 'examples/head.gltf?v=f3fd7a1', plan: 'examples/plan.gltf?v=f3fd7a1' };
+const examples = { box: 'examples/box.gltf?v=ecb099f', loft: 'examples/loft.gltf?v=ecb099f', star: 'examples/star.gltf?v=ecb099f', bench: 'examples/bench.gltf?v=ecb099f', lathe: 'examples/lathe.gltf?v=ecb099f', lantern: 'examples/lantern.gltf?v=ecb099f', paths: 'examples/paths.gltf?v=ecb099f', ends: 'examples/ends.gltf?v=ecb099f', cushion: 'examples/cushion.gltf?v=ecb099f',
+  sign: 'examples/sign.gltf?v=ecb099f', chest: 'examples/chest.gltf?v=ecb099f', door: 'examples/door.gltf?v=ecb099f', finger: 'examples/finger.gltf?v=ecb099f', hand: 'examples/hand.gltf?v=ecb099f', grandpa: 'examples/grandpa.gltf?v=ecb099f', head: 'examples/head.gltf?v=ecb099f', plan: 'examples/plan.gltf?v=ecb099f' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -467,7 +467,8 @@ for (const el of document.querySelectorAll('.gut')) {
 
 let geos = [], mats = [], edit = null; // edit: { curve, group, mesh, rings } of the loft being edited
 // Draft f11: a material slot's texture as three.js does it for glTF (GLTFLoader): image by uri relative to the
-// document (an example's URL; a file opened from disk resolves against the page, so only data: URIs work there),
+// document (an example's URL or the folder a document was opened from, see openFromFolder; a file opened with the
+// plain picker resolves against the page, so only data: URIs work there),
 // glTF's wrap modes, no flip, KHR_texture_transform as offset, rotation and repeat. Images are cached by URL.
 let docBase = null;
 const images = new Map(), loader = new THREE.ImageLoader(), WRAP = { 33071: THREE.ClampToEdgeWrapping, 33648: THREE.MirroredRepeatWrapping };
@@ -476,9 +477,10 @@ function textureOf(slot, placed, transform, srgb) {
   const e = placed ? out.placedTextures[slot.index]
     : { image: doc.images?.[doc.textures?.[slot.index]?.source], sampler: doc.samplers?.[doc.textures?.[slot.index]?.sampler] };
   if (typeof e?.image?.uri !== 'string') return null;
-  const url = new URL(e.image.uri, docBase ?? location.href).href, t = new THREE.Texture();
-  if (!images.has(url)) images.set(url, new Promise((ok) => loader.load(url, ok, undefined, () => ok(null))));
-  images.get(url).then((img) => { if (img) { t.image = img; t.needsUpdate = true; redraw(); } });
+  const img = (url) => new Promise((ok) => loader.load(url, ok, undefined, () => ok(null))), t = new THREE.Texture();
+  const key = docBase?.root ? `${docBase.dir.join('/')}|${e.image.uri}` : new URL(e.image.uri, docBase ?? location.href).href;
+  if (!images.has(key)) images.set(key, docBase?.root ? folderFile(docBase, e.image.uri).then((f) => img(URL.createObjectURL(f)), () => null) : img(key));
+  images.get(key).then((img) => { if (img) { t.image = img; t.needsUpdate = true; redraw(); } });
   t.flipY = false; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
   t.wrapS = WRAP[e.sampler?.wrapS] ?? THREE.RepeatWrapping; t.wrapT = WRAP[e.sampler?.wrapT] ?? THREE.RepeatWrapping;
   if (transform?.offset) t.offset.fromArray(transform.offset);
@@ -503,7 +505,7 @@ const PLACE_COLORS = { use: 0x2f9e44, movement: 0xe8590c, access: 0x1c7ed6, main
 const people = new Map();
 function person(pose) {
   if (!people.has(pose)) people.set(pose, (async () => {
-    const url = new URL('examples/grandpa.gltf?v=f3fd7a1', location.href), gd = JSON.parse(await (await fetch(url)).text());
+    const url = new URL('examples/grandpa.gltf?v=ecb099f', location.href), gd = JSON.parse(await (await fetch(url)).text());
     const o = read(gd, gd.extensions[EXT].params?.[pose] ? { [pose]: 1 } : {}, { files: await loadFiles(gd, async (f) => (await fetch(new URL(f, url))).text()) });
     const hipsNode = o.character?.roles.find((r) => r.role === 'hips')?.node;
     let hips = [0, 0, 0];
@@ -1492,7 +1494,9 @@ function jointSec(i, j) {
 // files holds each fetched document by uri, as loadFiles fills it.
 async function fetchFile(uri) {
   if (uri.startsWith('data:') || Object.hasOwn(files, uri)) return;
-  await loadFiles({ extensions: { [EXT]: { models: [{ uri }] } } }, async (u) => { const res = await fetch(new URL(u, docBase ?? location.href)); if (!res.ok) throw new Error(`${res.status}`); return res.text(); }, files)
+  const get = docBase?.root ? async (u) => (await folderFile(docBase, u)).text()
+    : async (u) => { const res = await fetch(new URL(u, docBase ?? location.href)); if (!res.ok) throw new Error(`${res.status}`); return res.text(); };
+  await loadFiles({ extensions: { [EXT]: { models: [{ uri }] } } }, get, files)
     .catch((e) => { note = `Could not load ${uri}: ${e.message}. Use "From file…" for a file on your computer.`; });
 }
 function pickFile(accept, then) {
@@ -2452,15 +2456,55 @@ async function openExample(name, fresh = false) {
   catch (e) { note = `Open example ${name}: ${e.message}`; return status(); }
   history.replaceState(null, '', `?example=${name}`); // a reload keeps the example
 }
-const save = () => { download(fileName, stringify(doc)); note = `Saved ${fileName} (recipe, no baked meshes).`; status(); };
-function bakeDownload() {
-  let gltf;
-  try { gltf = bake(doc, values, { set: chosenSet || null, files }).gltf; } catch (e) { note = `Bake: ${e.message}`; return status(); }
-  download(fileName, stringify(gltf));
+// Open from a folder (File System Access API, Chrome and Edge): the folder is asked for once, then the document is
+// picked inside it; its relative files are read from the folder and Save and Bake write the file back in place.
+// Elsewhere Open is the plain file picker. docBase is then { root, dir, handle }: the folder, the document's
+// folder inside it as names, the document's file.
+let folder = null;
+async function openFromFolder() {
+  try {
+    folder ??= await showDirectoryPicker({ id: 'jig', mode: 'readwrite' });
+    const [handle] = await showOpenFilePicker({ startIn: folder, types: [{ description: 'glTF', accept: { 'model/gltf+json': ['.gltf'] } }] });
+    const path = await folder.resolve(handle);
+    if (!path) { folder = null; note = `${handle.name} is not inside the opened folder; Open again and pick a folder that holds it.`; return status(); }
+    const base = { root: folder, dir: path.slice(0, -1), handle }, text = await (await handle.getFile()).text();
+    images.clear(); // a file may have changed on disk since
+    load(text, handle.name, false, await loadFiles(JSON.parse(text), async (u) => (await folderFile(base, u)).text()), base);
+    history.replaceState(null, '', location.pathname);
+  } catch (e) { if (e.name !== 'AbortError') { note = `Open: ${e.message}`; status(); } }
+}
+// A uri relative to the document, as a File from the opened folder (absolute and data: URIs are fetched).
+async function folderFile({ root, dir }, uri) {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(uri)) { const res = await fetch(uri); if (!res.ok) throw new Error(`${res.status}`); return res.blob(); }
+  const parts = [...dir];
+  for (const s of uri.split(/[?#]/)[0].split('/').map(decodeURIComponent)) {
+    if (s === '..') { if (!parts.length) throw new Error(`${uri} is outside the opened folder`); parts.pop(); }
+    else if (s && s !== '.') parts.push(s);
+  }
+  let h = root;
+  for (const s of parts.slice(0, -1)) h = await h.getDirectoryHandle(s);
+  return (await h.getFileHandle(parts.at(-1))).getFile();
+}
+const openDoc = () => (window.showOpenFilePicker ? openFromFolder() : $('#open').click());
+// Write the document's file back when it was opened from a folder, else download it. Returns the verb for the note.
+async function writeOut(text) {
+  if (!docBase?.handle) { download(fileName, text); return 'downloaded'; }
+  const w = await docBase.handle.createWritable();
+  await w.write(text + '\n'); await w.close();
+  return 'wrote';
+}
+const save = async () => {
+  try { note = `${await writeOut(stringify(doc)) === 'wrote' ? 'Wrote' : 'Saved'} ${fileName} (recipe, no baked meshes).`; }
+  catch (e) { note = `Save ${fileName}: ${e.message}`; }
+  status();
+};
+async function bakeDownload() {
+  let gltf, verb;
+  try { gltf = bake(doc, values, { set: chosenSet || null, files }).gltf; verb = await writeOut(stringify(gltf)); } catch (e) { note = `Bake: ${e.message}`; return status(); }
   // The bake records the slider values as baked_values; keep them in the document.
   const r = strip(gltf).extensions[EXT];
   if (r.baked_values) R().baked_values = r.baked_values;
-  note = `Baked and downloaded ${fileName} at the current parameter values.`;
+  note = `Baked and ${verb} ${fileName} at the current parameter values.`;
   commit();
 }
 function copyText() {
@@ -2469,7 +2513,7 @@ function copyText() {
   try { navigator.clipboard.writeText(text).then(() => { note = 'Copied the glTF text.'; status(); }, fallback); } catch { fallback(); }
 }
 const fileActions = {
-  new: () => openExample('new'), open: () => $('#open').click(), save, bake: bakeDownload, copy: copyText,
+  new: () => openExample('new'), open: openDoc, save, bake: bakeDownload, copy: copyText,
 };
 const exHead = $('#exHead');
 exHead.after(...Object.keys(examples).map((name) => el('button', { type: 'button', role: 'menuitem', textContent: name, onclick: () => { closeMenus(); openExample(name); } })));
@@ -2509,7 +2553,7 @@ addEventListener('keydown', (e) => {
   const tag = document.activeElement?.tagName, typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) && document.activeElement.type !== 'range';
   const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
   if (mod && k === 's') { e.preventDefault(); document.activeElement?.blur?.(); return save(); } // blur first: a field commits on change
-  if (mod && k === 'o') { e.preventDefault(); return $('#open').click(); }
+  if (mod && k === 'o') { e.preventDefault(); return openDoc(); }
   if (e.key === 'Escape' && anyMenu()) return closeMenus();
   if (typing) return; // native undo and keys while typing
   if (mod && k === 'z') { e.preventDefault(); return e.shiftKey ? redo() : undo(); }

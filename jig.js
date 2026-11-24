@@ -510,11 +510,13 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false, m
   src.forEach((n, i) => { if (!nodes[i] && !isBaked(n)) nodes[i] = nodeAt(n, scope, `/nodes/${i}`); });
   for (let i = 0; i < recipeMeshes.length; i++) if (meshes[i] === undefined) meshAt(i, scope); // drawn by no copy
   for (const e of pending.values()) throw e; // used by no copy, and wrong at the parameters
-  // §5.10 (D-195): projected outlines, once every shape is in the tree; one drawn by no copy, in the model's frame.
+  // §5.10 (D-195): projected outlines, once every shape is in the tree. Only a shown copy's is worked out (D-197): a
+  // hidden one, or one no copy draws, is empty. A rest read (a clip key, a rest or bind pose) draws none either: a clip
+  // key bakes no shapes, the poses need frames.
   const pj = new Set(meshes.flatMap((m, j) => (m?.project ? [j] : [])));
-  // A rest read (a clip key, a rest or bind pose) draws no projection: a clip key bakes no shapes, the poses need frames.
+  for (const j of pj) need(meshes[j].project.of < src.length, `${meshes[j].project.at}/of`, `must be a node index 0..${src.length - 1}`); // shown or not
   // shortcut: a projection bound to a joint is empty at its bind pose; upgrade when a skinned model projects itself
-  for (const j of pj) meshes[j] = rest ? { type: 'extrude', pieces: [], frame: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], depth: meshes[j].depth } : projectMesh(meshes[j], projections.get(j), tree, meshes, src.length, pj);
+  for (const j of pj) meshes[j] = rest || !projections.get(j)?.shown ? { type: 'extrude', pieces: [], frame: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], depth: meshes[j].depth } : projectMesh(meshes[j], projections.get(j), tree, meshes, src.length, pj);
   // Draft f34: material i as a finished glTF material whose textures index `placedTextures`, for a referring document.
   const finished = (i) => {
     if (isStub(doc.materials[i])) return structuredClone(placed[stubAt(i, scope)]);
@@ -753,9 +755,11 @@ function bakeSlots(r, src, valueSinks, params, jointOf, skinnedPlaced) {
   const underJoint = (i) => i !== undefined && (jointOf.has(i) || underJoint(parent.get(i)));
   const skinned = (i, x) => skinnedPlaced.has(i) || (x?.model !== undefined && underJoint(i)); // its placed document
   const carries = (i) => { const x = src[i]?.extensions?.[EXT]; return skinned(i, x) || (x?.mesh !== undefined && underJoint(i)) || (src[i]?.children ?? []).some(carries); };
+  // D-197: a projection is worked out only where it is shown, so what shows it changes the baked shape
+  const projects = (i) => isObj(r.meshes?.[src[i]?.extensions?.[EXT]?.mesh]?.extrude?.outline?.project) || (src[i]?.children ?? []).some(projects);
   src.forEach((n, i) => {
     const x = n?.extensions?.[EXT], xat = `/nodes/${i}/extensions/${EXT}`;
-    if (x?.visible !== undefined && carries(i)) sink(`${xat}/visible`, reads(x.visible));
+    if (x?.visible !== undefined && (carries(i) || projects(i))) sink(`${xat}/visible`, reads(x.visible));
     if (x?.model_visible !== undefined && skinned(i, x)) sink(`${xat}/model_visible`, reads(x.model_visible));
     if (x?.model !== undefined && underJoint(i)) for (const [k, v] of Object.entries(isObj(x.values) ? x.values : {})) sink(`${xat}/values/${k}`, reads(v));
     if (x?.blend !== undefined) sink(`${xat}/blend`, reads(x.blend)); // draft f28: weights are baked
