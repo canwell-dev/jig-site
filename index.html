@@ -158,6 +158,13 @@ input.f.expr { color: var(--expr); border-color: color-mix(in srgb, var(--expr) 
 #err.bad { color: var(--err); cursor: pointer; }
 #propsBody p.bad { color: var(--err); }
 #err.ok::before { content: "● "; color: var(--ax1); }
+/* Loading: shown only after 300 ms, so quick reads never flash it. */
+#busy { display: none; white-space: nowrap; }
+#st.busy #busy { display: inline; animation: busyIn 0s 0.3s both; }
+#busy::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -1px; animation: spin 0.8s linear infinite; }
+@keyframes busyIn { from { visibility: hidden; } }
+@keyframes spin { to { transform: rotate(1turn); } }
+@media (prefers-reduced-motion: reduce) { #busy::before { animation: none; } }
 @media (max-width: 860px) {
   html, body { height: auto; }
   #app { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 56vh auto auto auto auto;
@@ -274,7 +281,7 @@ if (!HTMLScriptElement.supports?.('importmap')) addEventListener('DOMContentLoad
     </div>
   </section>
 
-  <footer id="st"><span id="hint"></span><span id="err"></span></footer>
+  <footer id="st"><span id="hint"></span><span id="busy" role="status">Loading…</span><span id="err"></span></footer>
 </div>
 
 <script type="importmap">
@@ -288,12 +295,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION, VRM_BONES, VRM_REQUIRED } from './jig.js?v=eef4c21';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION, VRM_BONES, VRM_REQUIRED } from './jig.js?v=7aea33a';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=eef4c21', loft: 'examples/loft.gltf?v=eef4c21', star: 'examples/star.gltf?v=eef4c21', bench: 'examples/bench.gltf?v=eef4c21', lathe: 'examples/lathe.gltf?v=eef4c21', lantern: 'examples/lantern.gltf?v=eef4c21', paths: 'examples/paths.gltf?v=eef4c21', ends: 'examples/ends.gltf?v=eef4c21', cushion: 'examples/cushion.gltf?v=eef4c21',
-  sign: 'examples/sign.gltf?v=eef4c21', chest: 'examples/chest.gltf?v=eef4c21', door: 'examples/door.gltf?v=eef4c21', finger: 'examples/finger.gltf?v=eef4c21', hand: 'examples/hand.gltf?v=eef4c21', grandpa: 'examples/grandpa.gltf?v=eef4c21', head: 'examples/head.gltf?v=eef4c21', plan: 'examples/plan.gltf?v=eef4c21' };
+const examples = { box: 'examples/box.gltf?v=7aea33a', loft: 'examples/loft.gltf?v=7aea33a', star: 'examples/star.gltf?v=7aea33a', bench: 'examples/bench.gltf?v=7aea33a', lathe: 'examples/lathe.gltf?v=7aea33a', lantern: 'examples/lantern.gltf?v=7aea33a', paths: 'examples/paths.gltf?v=7aea33a', ends: 'examples/ends.gltf?v=7aea33a', cushion: 'examples/cushion.gltf?v=7aea33a',
+  sign: 'examples/sign.gltf?v=7aea33a', chest: 'examples/chest.gltf?v=7aea33a', door: 'examples/door.gltf?v=7aea33a', finger: 'examples/finger.gltf?v=7aea33a', hand: 'examples/hand.gltf?v=7aea33a', grandpa: 'examples/grandpa.gltf?v=7aea33a', head: 'examples/head.gltf?v=7aea33a', plan: 'examples/plan.gltf?v=7aea33a' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -487,7 +494,7 @@ function textureOf(slot, placed, transform, srgb) {
   if (typeof e?.image?.uri !== 'string') return null;
   const img = (url) => new Promise((ok) => loader.load(url, ok, undefined, () => ok(null))), t = new THREE.Texture();
   const key = docBase?.root ? `${docBase.dir.join('/')}|${e.image.uri}` : new URL(e.image.uri, docBase ?? location.href).href;
-  if (!images.has(key)) images.set(key, docBase?.root ? folderFile(docBase, e.image.uri).then((f) => img(URL.createObjectURL(f)), () => null) : img(key));
+  if (!images.has(key)) images.set(key, busy(docBase?.root ? folderFile(docBase, e.image.uri).then((f) => img(URL.createObjectURL(f)), () => null) : img(key)));
   images.get(key).then((img) => { if (img) { t.image = img; t.needsUpdate = true; redraw(); } });
   t.flipY = false; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
   t.wrapS = WRAP[e.sampler?.wrapS] ?? THREE.RepeatWrapping; t.wrapT = WRAP[e.sampler?.wrapT] ?? THREE.RepeatWrapping;
@@ -512,8 +519,8 @@ const PLACE_COLORS = { use: 0x2f9e44, movement: 0xe8590c, access: 0x1c7ed6, main
 // `sit` parameter drives his `sit` pose); plain colours, no textures. pose -> Promise<{ parts, hips }>.
 const people = new Map();
 function person(pose) {
-  if (!people.has(pose)) people.set(pose, (async () => {
-    const url = new URL('examples/grandpa.gltf?v=eef4c21', location.href), gd = JSON.parse(await (await fetch(url)).text());
+  if (!people.has(pose)) people.set(pose, busy((async () => {
+    const url = new URL('examples/grandpa.gltf?v=7aea33a', location.href), gd = JSON.parse(await (await fetch(url)).text());
     const o = read(gd, gd.extensions[EXT].params?.[pose] ? { [pose]: 1 } : {}, { files: await loadFiles(gd, async (f) => (await fetch(new URL(f, url))).text()) });
     const hipsNode = o.character?.roles.find((r) => r.role === 'hips')?.node;
     let hips = [0, 0, 0];
@@ -526,7 +533,7 @@ function person(pose) {
       geo: x.deformed ? bufferGeometry(x.deformed) : (geos.get(x.mesh) ?? geos.set(x.mesh, bufferGeometry(geometry(o.meshes[x.mesh]))).get(x.mesh)),
       color: colorOf(o.meshes[x.mesh]), matrix: x.matrix }));
     return { parts, hips };
-  })().catch((e) => { console.warn(`no person for pose ${pose}: ${e.message}`); return null; }));
+  })().catch((e) => { console.warn(`no person for pose ${pose}: ${e.message}`); return null; })));
   return people.get(pose);
 }
 // Draft f37 (sketch): each collider's edges (hulls show their mesh), coloured by its body's motion, triggers dashed;
@@ -1510,7 +1517,8 @@ function jointSec(i, j) {
 }
 // Placed documents (§6.2): the recipe's models, by uri (fetched beside this document, or a file you pick) or embedded.
 // files holds each fetched document by uri, as loadFiles fills it.
-async function fetchFile(uri) {
+function fetchFile(uri) { return busy(fetchFileNow(uri)); }
+async function fetchFileNow(uri) {
   if (uri.startsWith('data:') || Object.hasOwn(files, uri)) return;
   const get = docBase?.root ? async (u) => (await folderFile(docBase, u)).text()
     : async (u) => { const res = await fetch(new URL(u, docBase ?? location.href)); if (!res.ok) throw new Error(`${res.status}`); return res.text(); };
@@ -2376,6 +2384,14 @@ function hint() {
   if (!sel) return '<b>Click</b> an object to select it · <b>Shift A</b> add · drag to orbit, right-drag to pan';
   return lockMsg || `<b>G R S</b> move, rotate, scale${editable(sel.node) ? ` · <b>Tab</b> edit the ${meshOf(sel.node) !== undefined ? shapeKind(R().meshes[meshOf(sel.node)]) : 'handles'}` : ''} · <b>Shift D</b> duplicate · <b>Del</b> delete`;
 }
+// Loading indicator: busy(promise) shows it in the status line until every pending promise settles.
+let pending = 0;
+function busy(p) {
+  $('#st').classList.toggle('busy', ++pending > 0);
+  const done = () => $('#st').classList.toggle('busy', --pending > 0);
+  p.then(done, done);
+  return p;
+}
 function status() {
   const h = $('#hint'); h.innerHTML = hint(); h.title = h.textContent;
   const e = $('#err');
@@ -2465,7 +2481,8 @@ function load(text, name, fresh = false, placed = {}, base = null) {
   else { note = `Opened ${name}. Undo brings the previous document back.`; commit(); }
   frame();
 }
-async function openExample(name, fresh = false) {
+function openExample(name, fresh) { return busy(openExampleNow(name, fresh)); }
+async function openExampleNow(name, fresh = false) {
   if (name === 'new') { load(stringify(clean), 'model.gltf', fresh); history.replaceState(null, '', location.pathname); return; }
   try {
     const url = new URL(examples[name], location.href), text = await (await fetch(url)).text();
@@ -2485,9 +2502,9 @@ async function openFromFolder() {
     const [handle] = await showOpenFilePicker({ startIn: folder, types: [{ description: 'glTF', accept: { 'model/gltf+json': ['.gltf'] } }] });
     const path = await folder.resolve(handle);
     if (!path) { folder = null; note = `${handle.name} is not inside the opened folder; Open again and pick a folder that holds it.`; return status(); }
-    const base = { root: folder, dir: path.slice(0, -1), handle }, text = await (await handle.getFile()).text();
+    const base = { root: folder, dir: path.slice(0, -1), handle }, text = await busy(handle.getFile().then((f) => f.text()));
     images.clear(); // a file may have changed on disk since
-    load(text, handle.name, false, await loadFiles(JSON.parse(text), async (u) => (await folderFile(base, u)).text()), base);
+    load(text, handle.name, false, await busy(loadFiles(JSON.parse(text), async (u) => (await folderFile(base, u)).text())), base);
     history.replaceState(null, '', location.pathname);
   } catch (e) { if (e.name !== 'AbortError') { note = `Open: ${e.message}`; status(); } }
 }
