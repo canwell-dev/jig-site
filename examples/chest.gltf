@@ -495,11 +495,12 @@
     },
     {
       "name": "swing of lid",
-      "translation": [0, 0.712171648, -0.085411768],
+      "translation": [0, 0.491, -0.225],
+      "rotation": [0, 0, -0.707106781, 0.707106781],
       "extensions": {
         "JIG_placement": {
           "clearance": {
-            "size": [0.800000011920929, 0.4546560099644825, 0.6208235233075685],
+            "cylinder": { "radius": 0.4503598501438983, "height": 0.800000011920929 },
             "purpose": "movement",
             "level": "required"
           },

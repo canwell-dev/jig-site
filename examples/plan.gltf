@@ -151,8 +151,7 @@
       "extensions": {
         "JIG_recipe": { "mesh": 4, "visible": "view == 2" },
         "KHR_node_visibility": { "visible": false }
-      },
-      "mesh": 4
+      }
     },
     {
       "name": "elevation",
@@ -160,7 +159,6 @@
         "JIG_recipe": { "mesh": 5, "visible": "view == 3", "translation": [0, 0, -0.9] },
         "KHR_node_visibility": { "visible": false }
       },
-      "mesh": 5,
       "translation": [0, 0, -0.9]
     },
     {
@@ -224,24 +222,6 @@
         {
           "attributes": { "POSITION": 12, "NORMAL": 13, "TEXCOORD_0": 14 },
           "indices": 15
-        }
-      ],
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "primitives": [
-        {
-          "attributes": { "POSITION": 16, "NORMAL": 17, "TEXCOORD_0": 18 },
-          "indices": 19
-        }
-      ],
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "primitives": [
-        {
-          "attributes": { "POSITION": 20, "NORMAL": 21, "TEXCOORD_0": 22 },
-          "indices": 23
         }
       ],
       "extensions": { "JIG_recipe": { "baked": true } }
@@ -367,66 +347,6 @@
       "count": 864,
       "type": "SCALAR",
       "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "bufferView": 16,
-      "componentType": 5126,
-      "count": 0,
-      "type": "VEC3",
-      "min": [null, null, null],
-      "max": [null, null, null],
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "bufferView": 17,
-      "componentType": 5126,
-      "count": 0,
-      "type": "VEC3",
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "bufferView": 18,
-      "componentType": 5126,
-      "count": 0,
-      "type": "VEC2",
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "bufferView": 19,
-      "componentType": 5123,
-      "count": 0,
-      "type": "SCALAR",
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "bufferView": 20,
-      "componentType": 5126,
-      "count": 0,
-      "type": "VEC3",
-      "min": [null, null, null],
-      "max": [null, null, null],
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "bufferView": 21,
-      "componentType": 5126,
-      "count": 0,
-      "type": "VEC3",
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "bufferView": 22,
-      "componentType": 5126,
-      "count": 0,
-      "type": "VEC2",
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "bufferView": 23,
-      "componentType": 5123,
-      "count": 0,
-      "type": "SCALAR",
-      "extensions": { "JIG_recipe": { "baked": true } }
     }
   ],
   "bufferViews": [
@@ -539,62 +459,6 @@
       "buffer": 0,
       "byteOffset": 34704,
       "byteLength": 1728,
-      "target": 34963,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 36432,
-      "byteLength": 0,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 36432,
-      "byteLength": 0,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 36432,
-      "byteLength": 0,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 36432,
-      "byteLength": 0,
-      "target": 34963,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 36432,
-      "byteLength": 0,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 36432,
-      "byteLength": 0,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 36432,
-      "byteLength": 0,
-      "target": 34962,
-      "extensions": { "JIG_recipe": { "baked": true } }
-    },
-    {
-      "buffer": 0,
-      "byteOffset": 36432,
-      "byteLength": 0,
       "target": 34963,
       "extensions": { "JIG_recipe": { "baked": true } }
     }

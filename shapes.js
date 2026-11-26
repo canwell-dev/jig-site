@@ -13,8 +13,8 @@
 //    head). Then neighbouring regions that cost less as one shape are merged again.
 // 4. Relations: neighbours share welded vertices; a shape hangs under its largest larger neighbour (D-172: a child
 //    node), so the head carries the nose.
-import { read, geometry, EXT, VERSION } from './jig.js?v=7aea33a';
-import { weld, cutContours, scanPiece, scanLoft } from './scan.js?v=7aea33a';
+import { read, geometry, EXT, VERSION } from './jig.js?v=4bd987b';
+import { weld, cutContours, scanPiece, scanLoft } from './scan.js?v=4bd987b';
 
 export const DEFAULTS = { lambda: 0.01, perShape: 0.5, weight: 1, crease: 60, depth: 3, samples: 1500 };
 const PRIMITIVES = ['sphere', 'cylinder', 'capsule', 'cone', 'box'];

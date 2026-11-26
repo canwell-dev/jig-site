@@ -128,7 +128,7 @@
       "name": "globe",
       "extensions": {
         "JIG_recipe": { "mesh": 3, "translation": [0, 0.5, -0.035], "light": 0 },
-        "KHR_lights_punctual": { "light": 0 }
+        "KHR_lights_punctual": { "light": 1 }
       },
       "mesh": 3,
       "translation": [0, 0.5, -0.035]

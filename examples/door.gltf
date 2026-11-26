@@ -323,11 +323,11 @@
     },
     {
       "name": "swing of hinge",
-      "translation": [-0.103393634, 1.05, 0.51850932],
+      "translation": [-0.45, 1.05, 0.08],
       "extensions": {
         "JIG_placement": {
           "clearance": {
-            "size": [1.1007872622217347, 2.0899999141693115, 0.9170186389432072],
+            "cylinder": { "radius": 0.8972229346275765, "height": 2.0899999141693115 },
             "purpose": "movement",
             "level": "required"
           },

@@ -295,12 +295,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION, VRM_BONES, VRM_REQUIRED } from './jig.js?v=7aea33a';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION, VRM_BONES, VRM_REQUIRED } from './jig.js?v=4bd987b';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=7aea33a', loft: 'examples/loft.gltf?v=7aea33a', star: 'examples/star.gltf?v=7aea33a', bench: 'examples/bench.gltf?v=7aea33a', lathe: 'examples/lathe.gltf?v=7aea33a', lantern: 'examples/lantern.gltf?v=7aea33a', paths: 'examples/paths.gltf?v=7aea33a', ends: 'examples/ends.gltf?v=7aea33a', cushion: 'examples/cushion.gltf?v=7aea33a',
-  sign: 'examples/sign.gltf?v=7aea33a', chest: 'examples/chest.gltf?v=7aea33a', door: 'examples/door.gltf?v=7aea33a', finger: 'examples/finger.gltf?v=7aea33a', hand: 'examples/hand.gltf?v=7aea33a', grandpa: 'examples/grandpa.gltf?v=7aea33a', head: 'examples/head.gltf?v=7aea33a', plan: 'examples/plan.gltf?v=7aea33a' };
+const examples = { box: 'examples/box.gltf?v=4bd987b', loft: 'examples/loft.gltf?v=4bd987b', star: 'examples/star.gltf?v=4bd987b', bench: 'examples/bench.gltf?v=4bd987b', lathe: 'examples/lathe.gltf?v=4bd987b', lantern: 'examples/lantern.gltf?v=4bd987b', paths: 'examples/paths.gltf?v=4bd987b', ends: 'examples/ends.gltf?v=4bd987b', cushion: 'examples/cushion.gltf?v=4bd987b',
+  sign: 'examples/sign.gltf?v=4bd987b', chest: 'examples/chest.gltf?v=4bd987b', door: 'examples/door.gltf?v=4bd987b', finger: 'examples/finger.gltf?v=4bd987b', hand: 'examples/hand.gltf?v=4bd987b', grandpa: 'examples/grandpa.gltf?v=4bd987b', head: 'examples/head.gltf?v=4bd987b', bakker: 'examples/bakker.gltf?v=4bd987b', plan: 'examples/plan.gltf?v=4bd987b' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -324,7 +324,7 @@ const withUnit = (v, unit) => (unit === '%' ? `${fmt(v * 100)} %` : unit === 'de
 const fmt = (v) => (Array.isArray(v) ? `vec4(${v.map(fmt).join(', ')})` : v === undefined || !Number.isFinite(+v) ? '' : String(+(+v).toFixed(3)));
 const R = () => doc.extensions[EXT];
 const meshOf = (i) => doc.nodes?.[i]?.extensions?.[EXT]?.mesh;
-const shapeKind = (m) => ['loft', 'extrude', 'lathe', 'text', 'cylinder', 'cone', 'sphere', 'capsule'].find((k) => m?.[k]) ?? 'box';
+const shapeKind = (m) => ['loft', 'extrude', 'lathe', 'text', 'cylinder', 'cone', 'sphere', 'capsule', 'superellipsoid', 'torus'].find((k) => m?.[k]) ?? 'box';
 const loftOf = (i) => R().meshes?.[meshOf(i)]?.loft;
 const latheOf = (i) => R().meshes?.[meshOf(i)]?.lathe;
 const extrudeOf = (i) => { const e = R().meshes?.[meshOf(i)]?.extrude; return e?.outline?.project === undefined ? e : undefined; }; // §5.10: a projected outline has no points
@@ -339,6 +339,13 @@ const DEFAULTS = { translation: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1,
 const nodeSrc = (i, slot) => doc.nodes[i]?.extensions?.[EXT]?.[slot] ?? doc.nodes[i]?.[slot] ?? DEFAULTS[slot];
 const setNodeSlot = (i, slot, v) => { X(i)[slot] = v; delete doc.nodes[i][slot]; }; // the core slot would be a stale bake cache
 const SLOT = { translate: 'translation', rotate: 'rotation', scale: 'scale' };
+// A placed model's width, height and depth (spec: extents along x, y, z) stand in for scale x, y, z; null where it has none.
+function sizeKeys(i) {
+  const x = doc.nodes[i]?.extensions?.[EXT], P = x?.model !== undefined && docOf(R().models?.[x.model])?.extensions?.[EXT]?.params;
+  return ['width', 'height', 'depth'].map((k) => (isObj(P?.[k]) && (P[k].type ?? 'number') === 'number' ? P[k] : null));
+}
+const sizeNow = (i, k, p) => { const v = doc.nodes[i].extensions?.[EXT]?.values?.[k]; return isStr(v) ? evalExpr(v, out.nodes[i]?.scope ?? {}) : v ?? p.default; };
+let sizeDrag = null; // at a scale drag's start: each size's value and the node's scale
 // Rotation in degrees about glTF's axes, x then y then z (three.js order 'ZYX'); the editor writes it as euler, never as a quaternion.
 const eulerSrc = (i) => doc.nodes[i]?.extensions?.[EXT]?.euler;
 const toDeg = (q) => { const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(...q).normalize(), 'ZYX'); return [e.x, e.y, e.z].map((r) => +((r * 180) / Math.PI).toFixed(2)); };
@@ -520,7 +527,7 @@ const PLACE_COLORS = { use: 0x2f9e44, movement: 0xe8590c, access: 0x1c7ed6, main
 const people = new Map();
 function person(pose) {
   if (!people.has(pose)) people.set(pose, busy((async () => {
-    const url = new URL('examples/grandpa.gltf?v=7aea33a', location.href), gd = JSON.parse(await (await fetch(url)).text());
+    const url = new URL('examples/grandpa.gltf?v=4bd987b', location.href), gd = JSON.parse(await (await fetch(url)).text());
     const o = read(gd, gd.extensions[EXT].params?.[pose] ? { [pose]: 1 } : {}, { files: await loadFiles(gd, async (f) => (await fetch(new URL(f, url))).text()) });
     const hipsNode = o.character?.roles.find((r) => r.role === 'hips')?.node;
     let hips = [0, 0, 0];
@@ -572,7 +579,8 @@ function placementOverlay() {
     const solid = (geo, c, opacity) => { const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide })); m.renderOrder = 5; return m; };
     const edges = (geo, c) => { const l = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: c })); l.renderOrder = 6; return l; };
     const box = (size, c, opacity) => { const geo = new THREE.BoxGeometry(...size); g.add(solid(geo, c, opacity), edges(geo, c)); };
-    if (it.clearance) box(it.clearance.size, PLACE_COLORS[it.clearance.purpose], it.clearance.level === 'required' ? 0.16 : 0.07);
+    const cyl = (c, col, opacity) => { const geo = new THREE.CylinderGeometry(c.radius, c.radius, c.height, 32); g.add(solid(geo, col, opacity), edges(geo, col)); };
+    if (it.clearance) (it.clearance.cylinder ? cyl : box)(it.clearance.cylinder ?? it.clearance.size, PLACE_COLORS[it.clearance.purpose], it.clearance.level === 'required' ? 0.16 : 0.07);
     if (it.opening) box(it.opening.size, PLACE_COLORS.opening, it.opening.passage ? 0.12 : 0.25);
     if (it.support) {
       const geo = new THREE.PlaneGeometry(...it.support.size).rotateX(-Math.PI / 2);
@@ -765,7 +773,7 @@ function itemGrips(i) {
   const group = new THREE.Group(), grips = [], blue = new THREE.Color(css('--helper')), hot = new THREE.Color(css('--accent'));
   group.matrixAutoUpdate = false; group.matrix.fromArray(it?.world ?? body.world);
   const line = (pts, loop) => { const l = new (loop ? THREE.LineLoop : THREE.Line)(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: blue, depthTest: false, transparent: true })); l.renderOrder = 10; group.add(l); };
-  for (const k of ['clearance', 'opening']) if (it?.[k]) {
+  for (const k of ['clearance', 'opening']) if (it?.[k]?.size) {
     const half = it[k].size.map((c) => c / 2);
     for (const a of [0, 1, 2]) for (const sg of [1, -1]) grips.push({ grip: `item:${k}:${'xyz'[a]}${sg > 0 ? '+' : '-'}`, p: v3([0, 1, 2].map((b) => (b === a ? sg * half[a] : 0))), axis: a });
   }
@@ -888,6 +896,8 @@ function placeGizmo() {
     proxy.position.fromArray(n.translation); proxy.quaternion.fromArray(n.rotation); proxy.scale.fromArray(n.scale);
     const src = (gizmo === 'rotate' && eulerSrc(sel.node)) || nodeSrc(sel.node, SLOT[gizmo]);
     if (gizmo === 'rotate' && !eulerSrc(sel.node) && src.some(isStr)) { locked = ['rotation']; return; }
+    const sk = sizeKeys(sel.node);
+    sizeDrag = gizmo === 'scale' && sk.some(Boolean) ? { base: sk.map((p, a) => p && sizeNow(sel.node, ['width', 'height', 'depth'][a], p)), s0: [...n.scale] } : null;
     tc.setMode(gizmo);
   } else if (mode === 'pose') {
     // The joint turns in the active pose: own rotation · euler(other poses' turns + weight × this pose's euler).
@@ -960,6 +970,11 @@ function onGizmo() {
       const eu = eulerSrc(sel.node), was = eu ? eu.map((c) => (isStr(c) ? evalExpr(c, scope) : c)) : toDeg(nodeSrc(sel.node, 'rotation'));
       const deg = toDeg(proxy.quaternion.toArray()).map((d, k) => d + 360 * Math.round((was[k] - d) / 360));
       setEuler(sel.node, eu ? keep(eu, deg, 'rotation') : deg.map(r4));
+    } else if (slot === 'scale' && sizeDrag) {
+      // A sized axis sets the placed model's parameter (within its range); the others scale the node.
+      const sk = sizeKeys(sel.node), s = proxy.scale.toArray(), V = (X(sel.node).values ??= {});
+      sk.forEach((p, a) => { if (!p) return; const k = ['width', 'height', 'depth'][a], v = Math.min(p.max ?? Infinity, Math.max(p.min ?? -Infinity, sizeDrag.base[a] * s[a] / sizeDrag.s0[a])); V[k] = dragTo(V[k], v, k); });
+      setNodeSlot(sel.node, 'scale', src.map((c, a) => (sk[a] ? c : dragTo(c, s[a], `scale ${'xyz'[a]}`))));
     } else setNodeSlot(sel.node, slot, keep(src, slot === 'translation' ? proxy.position.toArray() : proxy.scale.toArray(), slot === 'translation' ? 'location' : 'scale'));
   } else if (mode === 'pose' && poseDrag) {
     // The whole turn the gizmo shows, each angle nearest its value at the drag's start; this pose's share of it.
@@ -1280,7 +1295,15 @@ function props() {
     const q = nodeSrc(i, 'rotation'), eu = eulerSrc(i);
     if (!eu && q.some(isStr)) t.append(vecRow('Rotation q', 'q', q, on?.rotation, (a) => setNodeSlot(i, 'rotation', a), 'q'));
     else t.append(vecRow('Rotation °', 'r', eu ?? toDeg(q), on && toDeg(on.rotation), (a) => setEuler(i, a)));
-    t.append(vecRow('Scale', 's', nodeSrc(i, 'scale'), on?.scale, (a) => setNodeSlot(i, 'scale', a)));
+    const sk = sizeKeys(i), s = nodeSrc(i, 'scale');
+    if (!sk.some(Boolean)) t.append(vecRow('Scale', 's', s, on?.scale, (a) => setNodeSlot(i, 'scale', a)));
+    else t.append(el('div', { className: 'vrow' }, el('label', { htmlFor: 's0', textContent: 'Size', title: 'The placed model\'s width, height, depth; scale where it has none' }),
+      ...sk.map((p, a) => { // a sized axis edits the placed model's parameter, as in Placed model below
+        const k = ['width', 'height', 'depth'][a], v = n.extensions[EXT].values?.[k];
+        if (!p) return field(`s${a}`, s[a], on?.scale?.[a], (x) => { const b = [...s]; b[a] = x; setNodeSlot(i, 'scale', b); }, `Scale ${'xyz'[a]}`, a);
+        const f = field(`s${a}`, v, sizeNow(i, k, p), (x) => { (X(i).values ??= {})[k] = x; }, k, a); f.placeholder = String(p.default); f.title ||= k;
+        return f;
+      })));
   }
   kids.push(t);
 
@@ -1327,6 +1350,14 @@ function props() {
     if (rk && rk !== 'sphere') put(ms, row('Height', field('height', rs.height, undefined, (v) => { rs.height = v; }, 'Height')));
     if (rk) put(ms, row('Sides', optField('sides', rs, 'sides', 'Sides', undefined, 24)));
     if (rk === 'cylinder' || rk === 'cone') put(ms, capsRow(rs, ['flat', 'none']));
+    if (m.torus) put(ms, ...[['radius', 'Radius'], ['tube', 'Tube']].map(([k, label]) => row(label, field(k, m.torus[k], undefined, (v) => { m.torus[k] = v; }, label))), // draft f43
+      row('Sides', optField('sides', m.torus, 'sides', 'Sides', undefined, 24)), row('Steps', optField('steps', m.torus, 'steps', 'Steps', undefined, 48)));
+    if (m.superellipsoid) { // draft f43
+      const se = m.superellipsoid, abc = () => (Array.isArray(se.radius) ? [...se.radius] : [se.radius, se.radius, se.radius]);
+      put(ms, el('div', { className: 'vrow' }, el('span', { className: 'lbl', textContent: 'Radius' }), ...[0, 1, 2].map((j) => field(`se_r${j}`, abc()[j], undefined, (v) => { se.radius = abc(); se.radius[j] = v; }, `Radius ${'abc'[j]}`))),
+        el('div', { className: 'vrow two' }, el('span', { className: 'lbl', textContent: 'Exponents' }), ...[0, 1].map((j) => field(`se_e${j}`, (se.exponents ?? [1, 1])[j], undefined, (v) => { se.exponents = [...(se.exponents ?? [1, 1])]; se.exponents[j] = v; }, `Exponent ${j + 1}`))),
+        row('Sides', optField('sides', se, 'sides', 'Sides', undefined, 24)));
+    }
     put(ms, row('UV', choose('uv', 'Surface coordinates', [['fit', 'fit (0..1)'], ['meters', 'meters (tiles)']], m.uv ?? 'fit', (v) => { if (v === 'fit') delete m.uv; else m.uv = v; })));
     kids.push(ms, materialSec(m));
     if (m.loft) kids.push(...loftProps(m.loft, om));
@@ -1354,7 +1385,7 @@ const xBtn = (title, onclick) => el('button', { type: 'button', className: 'x', 
 function placementDocSec() {
   const r = R(), pl = r.placement;
   if (!pl) return sec(h3('Placement'), btn('Say where it goes', () => { r.placement = { mounts: ['floor'] }; commit(); }, 'Mounts, tags and a wall gap for room builders (§6.5)'));
-  const MOUNTS = ['floor', 'wall', 'ceiling', 'surface'];
+  const MOUNTS = ['floor', 'wall', 'ceiling', 'surface', 'roof'];
   return sec(h3('Placement', xBtn('Remove placement', () => { delete r.placement; commit(); })),
     el('div', { className: 'acts' }, ...MOUNTS.map((m) => el('label', {}, check(`mount-${m}`, `Mounts on ${m}`, pl.mounts?.includes(m), (v) => {
       const ms = new Set(pl.mounts ?? []); if (v) ms.add(m); else ms.delete(m); if (ms.size) pl.mounts = MOUNTS.filter((x) => ms.has(x)); else delete pl.mounts; }), ` ${m}`))),
