@@ -288,12 +288,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION, VRM_BONES, VRM_REQUIRED } from './jig.js?v=1843184';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION, VRM_BONES, VRM_REQUIRED } from './jig.js?v=eef4c21';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=1843184', loft: 'examples/loft.gltf?v=1843184', star: 'examples/star.gltf?v=1843184', bench: 'examples/bench.gltf?v=1843184', lathe: 'examples/lathe.gltf?v=1843184', lantern: 'examples/lantern.gltf?v=1843184', paths: 'examples/paths.gltf?v=1843184', ends: 'examples/ends.gltf?v=1843184', cushion: 'examples/cushion.gltf?v=1843184',
-  sign: 'examples/sign.gltf?v=1843184', chest: 'examples/chest.gltf?v=1843184', door: 'examples/door.gltf?v=1843184', finger: 'examples/finger.gltf?v=1843184', hand: 'examples/hand.gltf?v=1843184', grandpa: 'examples/grandpa.gltf?v=1843184', head: 'examples/head.gltf?v=1843184', plan: 'examples/plan.gltf?v=1843184' };
+const examples = { box: 'examples/box.gltf?v=eef4c21', loft: 'examples/loft.gltf?v=eef4c21', star: 'examples/star.gltf?v=eef4c21', bench: 'examples/bench.gltf?v=eef4c21', lathe: 'examples/lathe.gltf?v=eef4c21', lantern: 'examples/lantern.gltf?v=eef4c21', paths: 'examples/paths.gltf?v=eef4c21', ends: 'examples/ends.gltf?v=eef4c21', cushion: 'examples/cushion.gltf?v=eef4c21',
+  sign: 'examples/sign.gltf?v=eef4c21', chest: 'examples/chest.gltf?v=eef4c21', door: 'examples/door.gltf?v=eef4c21', finger: 'examples/finger.gltf?v=eef4c21', hand: 'examples/hand.gltf?v=eef4c21', grandpa: 'examples/grandpa.gltf?v=eef4c21', head: 'examples/head.gltf?v=eef4c21', plan: 'examples/plan.gltf?v=eef4c21' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -370,8 +370,15 @@ function normalize() {
   const r = R();
   if (isObj(r.baked_values)) r.baked_values = Object.fromEntries(Object.keys(r.params ?? {}).map((k) => [k, r.baked_values[k] ?? r.params[k].default]));
 }
+// Placed documents read once per values across reads (files never change once loaded; new ones are new objects), and
+// no read at all when neither the document nor the values changed: a click only selects.
+const memo = new WeakMap();
+let evaluated = null;
 function evaluate() {
-  try { out = read(doc, values, { files }); err = ''; } catch (e) { err = e.message; }
+  const key = { text: `${stringify(doc)}\n${JSON.stringify(values)}`, files };
+  if (evaluated && evaluated.text === key.text && evaluated.files === files) return;
+  evaluated = key;
+  try { out = read(doc, values, { files, memo }); err = ''; } catch (e) { err = e.message; }
 }
 function commit() {
   normalize();
@@ -419,6 +426,7 @@ function theme() {
   const g = new THREE.Color(css('--line')), g2 = new THREE.Color(css('--mute'));
   grid = new THREE.GridHelper(4, 40, g2, g);
   scene.add(grid);
+  drawn = null; // the selection colour changed: rebuild the materials
   if (out) draw(); else redraw();
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', theme);
@@ -465,7 +473,7 @@ for (const el of document.querySelectorAll('.gut')) {
   el.ondblclick = () => { app.style.removeProperty(`--${k}`); saveGuts(); };
 }
 
-let geos = [], mats = [], edit = null; // edit: { curve, group, mesh, rings } of the loft being edited
+let geos = [], mats = [], drawn = null, edit = null; // drawn: { out, matOf } of the shapes in meshLayer // edit: { curve, group, mesh, rings } of the loft being edited
 // Draft f11: a material slot's texture as three.js does it for glTF (GLTFLoader): image by uri relative to the
 // document (an example's URL or the folder a document was opened from, see openFromFolder; a file opened with the
 // plain picker resolves against the page, so only data: URIs work there),
@@ -505,7 +513,7 @@ const PLACE_COLORS = { use: 0x2f9e44, movement: 0xe8590c, access: 0x1c7ed6, main
 const people = new Map();
 function person(pose) {
   if (!people.has(pose)) people.set(pose, (async () => {
-    const url = new URL('examples/grandpa.gltf?v=1843184', location.href), gd = JSON.parse(await (await fetch(url)).text());
+    const url = new URL('examples/grandpa.gltf?v=eef4c21', location.href), gd = JSON.parse(await (await fetch(url)).text());
     const o = read(gd, gd.extensions[EXT].params?.[pose] ? { [pose]: 1 } : {}, { files: await loadFiles(gd, async (f) => (await fetch(new URL(f, url))).text()) });
     const hipsNode = o.character?.roles.find((r) => r.role === 'hips')?.node;
     let hips = [0, 0, 0];
@@ -586,9 +594,14 @@ function placementOverlay() {
 }
 function draw() {
   redraw();
-  for (const g of [...geos, ...mats]) { g.dispose(); for (const k of ['map', 'normalMap', 'roughnessMap', 'aoMap', 'emissiveMap']) g[k]?.dispose(); }
   for (const c of helperLayer.children) c.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
-  meshLayer.clear(); helperLayer.clear(); edit = null;
+  helperLayer.clear(); edit = null;
+  if (out && drawn?.out === out) { // the same shapes (a new selection or mode): keep the meshes, swap their materials
+    for (const m of meshLayer.children) if (m.isMesh) m.material = drawn.matOf(out.meshes[m.userData.mesh], sel?.node === m.userData.node);
+    return drawHelpers();
+  }
+  for (const g of [...geos, ...mats]) { g.dispose(); for (const k of ['map', 'normalMap', 'roughnessMap', 'aoMap', 'emissiveMap']) g[k]?.dispose(); }
+  meshLayer.clear(); drawn = null;
   if (!out) return;
   geos = out.meshes.map((m) => bufferGeometry(geometry(m)));
   // A mesh's glTF material color (linear, as three.js works), from the recipe or the core material.
@@ -628,7 +641,7 @@ function draw() {
     const g = inst.deformed ? bufferGeometry(inst.deformed) : geos[inst.mesh]; // draft f28: a blended shape's own vertices
     if (inst.deformed) geos.push(g);
     const m = new THREE.Mesh(g, matOf(out.meshes[inst.mesh], sel?.node === inst.node));
-    m.matrixAutoUpdate = false; m.matrix.fromArray(inst.matrix); m.userData.node = inst.node;
+    m.matrixAutoUpdate = false; m.matrix.fromArray(inst.matrix); m.userData.node = inst.node; m.userData.mesh = inst.mesh;
     meshLayer.add(m);
   }
   // Draft f23 (D-113): the KHR_lights_punctual lights of shown nodes, as GLTFLoader makes them (shining along -z).
@@ -645,6 +658,11 @@ function draw() {
     lit(rec.kids);
   });
   lit(out.tree);
+  drawn = { out, matOf };
+  drawHelpers();
+}
+// Overlays and the edit handles of the selection, on top of the drawn shapes.
+function drawHelpers() {
   if (showPlace) placementOverlay();
   if (showPhys && out.physics) physicsOverlay();
   if (!dragging && !sketchDrag) model.position.y = -out.floor; // hold still while dragging, so the handle stays under the pointer
@@ -1813,7 +1831,7 @@ function newHole(e, om) {
   const holes = (e.holes ??= []);
   for (let n = 2; n <= 16; n *= 2) for (let i = 1; i < n; i += 2) for (let j = 1; j < n; j += 2) {
     holes.push(sq([lo[0] + ((hi[0] - lo[0]) * i) / n, lo[1] + ((hi[1] - lo[1]) * j) / n]));
-    try { read(doc, values, { files }); return; } catch { holes.pop(); }
+    try { read(doc, values, { files, memo }); return; } catch { holes.pop(); }
   }
   holes.push(sq([(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2])); // nothing fits: the reader's error says why
 }

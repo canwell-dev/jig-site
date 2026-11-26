@@ -177,7 +177,7 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false, m
   // a copy whose evaluated shape differs gets an entry after them. Equal evaluated shapes share one entry.
   const recipeMeshes = r.meshes === undefined ? [] : list(r.meshes, `${rat}/meshes`) /* D-166: a library may have none */, meshes = new Array(recipeMeshes.length), meshKey = new Map();
   const intern = (m, key, slot) => {
-    if (!meshKey.has(key)) meshKey.set(key, slot !== undefined && meshes[slot] === undefined ? (meshes[slot] = m, slot) : meshes.push(m) - 1);
+    if (!meshKey.has(key)) { meshKey.set(key, slot !== undefined && meshes[slot] === undefined ? (meshes[slot] = m, slot) : meshes.push(m) - 1); SHAPE_KEY.set(m, key); }
     return meshKey.get(key);
   };
   let own;
@@ -1192,30 +1192,48 @@ function cornersOf(g, M) {
 }
 // Mass properties of colliders (each { geo, matrix, material.density }) in the body's frame, by Eberly's polyhedral
 // integrals over each closed triangle mesh. shortcut: a hull's volume is its mesh's, not its convex hull's; the same for
-// the convex shapes JIG makes, less for a hollow one; upgrade when a model's mass looks wrong. Returns { volume, weight,
+// the convex shapes JIG makes, less for a hollow one; an open mesh's integrals depend on its frame (taken as its own);
+// upgrade when a model's mass looks wrong. Returns { volume, weight,
 // com, inertia (principal moments), orientation (their frame, a quaternion) }.
-function massOf(colliders) {
-  const I = new Array(10).fill(0), mult = [1 / 6, 1 / 24, 1 / 24, 1 / 24, 1 / 60, 1 / 60, 1 / 60, 1 / 120, 1 / 120, 1 / 120];
-  let volume = 0;
+// A geometry's integrals in its own frame, once per geometry (the station scene repeats one mesh in thousands of
+// colliders): [volume, ∫x, ∫y, ∫z, ∫x², ∫y², ∫z², ∫xy, ∫yz, ∫zx], signed as its triangles wind.
+const INTEGRALS = new WeakMap();
+function integralsOf(g) {
+  let q = INTEGRALS.get(g);
+  if (q) return q;
+  const mult = [1 / 6, 1 / 24, 1 / 24, 1 / 24, 1 / 60, 1 / 60, 1 / 60, 1 / 120, 1 / 120, 1 / 120], { positions: P, indices: T } = g;
   const sub = (w0, w1, w2) => {
     const t0 = w0 + w1, f1 = t0 + w2, t1 = w0 * w0, t2 = t1 + w1 * t0, f2 = t2 + w2 * f1, f3 = w0 * t1 + w1 * t2 + w2 * f2;
     return [f1, f2, f3, f2 + w0 * (f1 + w0), f2 + w1 * (f1 + w1), f2 + w2 * (f1 + w2)];
   };
+  q = new Array(10).fill(0);
+  for (let t = 0; t < T.length; t += 3) {
+    const i0 = 3 * T[t], i1 = 3 * T[t + 1], i2 = 3 * T[t + 2];
+    const x0 = P[i0], y0 = P[i0 + 1], z0 = P[i0 + 2], x1 = P[i1], y1 = P[i1 + 1], z1 = P[i1 + 2], x2 = P[i2], y2 = P[i2 + 1], z2 = P[i2 + 2];
+    const a1 = x1 - x0, b1 = y1 - y0, c1 = z1 - z0, a2 = x2 - x0, b2 = y2 - y0, c2 = z2 - z0;
+    const d0 = b1 * c2 - b2 * c1, d1 = a2 * c1 - a1 * c2, d2 = a1 * b2 - a2 * b1;
+    const [f1x, f2x, f3x, g0x, g1x, g2x] = sub(x0, x1, x2), [, f2y, f3y, g0y, g1y, g2y] = sub(y0, y1, y2), [, f2z, f3z, g0z, g1z, g2z] = sub(z0, z1, z2);
+    q[0] += d0 * f1x; q[1] += d0 * f2x; q[2] += d1 * f2y; q[3] += d2 * f2z; q[4] += d0 * f3x; q[5] += d1 * f3y; q[6] += d2 * f3z;
+    q[7] += d0 * (y0 * g0x + y1 * g1x + y2 * g2x); q[8] += d1 * (z0 * g0y + z1 * g1y + z2 * g2y); q[9] += d2 * (x0 * g0z + x1 * g1z + x2 * g2z);
+  }
+  q = q.map((v, k) => v * mult[k]);
+  INTEGRALS.set(g, q);
+  return q;
+}
+function massOf(colliders) {
+  const I = new Array(10).fill(0);
+  let volume = 0;
   for (const c of colliders) {
-    const { positions: P, indices: T } = c.geo, M = c.matrix, q = new Array(10).fill(0);
-    const det = M[0] * (M[5] * M[10] - M[9] * M[6]) - M[4] * (M[1] * M[10] - M[9] * M[2]) + M[8] * (M[1] * M[6] - M[5] * M[2]);
-    const at = (v) => [0, 1, 2].map((a) => M[a] * P[3 * v] + M[4 + a] * P[3 * v + 1] + M[8 + a] * P[3 * v + 2] + M[12 + a]);
-    for (let t = 0; t < T.length; t += 3) {
-      const [x0, y0, z0] = at(T[t]), [x1, y1, z1] = at(T[t + 1]), [x2, y2, z2] = at(T[t + 2]);
-      const a1 = x1 - x0, b1 = y1 - y0, c1 = z1 - z0, a2 = x2 - x0, b2 = y2 - y0, c2 = z2 - z0;
-      const d0 = b1 * c2 - b2 * c1, d1 = a2 * c1 - a1 * c2, d2 = a1 * b2 - a2 * b1;
-      const [f1x, f2x, f3x, g0x, g1x, g2x] = sub(x0, x1, x2), [, f2y, f3y, g0y, g1y, g2y] = sub(y0, y1, y2), [, f2z, f3z, g0z, g1z, g2z] = sub(z0, z1, z2);
-      q[0] += d0 * f1x; q[1] += d0 * f2x; q[2] += d1 * f2y; q[3] += d2 * f2z; q[4] += d0 * f3x; q[5] += d1 * f3y; q[6] += d2 * f3z;
-      q[7] += d0 * (y0 * g0x + y1 * g1x + y2 * g2x); q[8] += d1 * (z0 * g0y + z1 * g1y + z2 * g2y); q[9] += d2 * (x0 * g0z + x1 * g1z + x2 * g2z);
-    }
-    const sg = det < 0 ? -1 : 1; // a mirror turns the mesh inside out
-    volume += sg * q[0] * mult[0];
-    q.forEach((v, k) => { I[k] += sg * v * mult[k] * c.material.density; });
+    // The local integrals moved by M (x' = A x + t): V' = |det A| V, m' = |det A| (A m + t V),
+    // S' = |det A| (A S Aᵀ + (A m) tᵀ + t (A m)ᵀ + V t tᵀ); |det|, as a mirror turns the mesh inside out.
+    const M = c.matrix, q = integralsOf(c.geo), A = [[M[0], M[4], M[8]], [M[1], M[5], M[9]], [M[2], M[6], M[10]]], t = [M[12], M[13], M[14]];
+    const k = Math.abs(M[0] * (M[5] * M[10] - M[9] * M[6]) - M[4] * (M[1] * M[10] - M[9] * M[2]) + M[8] * (M[1] * M[6] - M[5] * M[2]));
+    const V = q[0], m = [q[1], q[2], q[3]], S = [[q[4], q[7], q[9]], [q[7], q[5], q[8]], [q[9], q[8], q[6]]];
+    const Am = A.map((r) => r[0] * m[0] + r[1] * m[1] + r[2] * m[2]), AS = A.map((r) => [0, 1, 2].map((j) => r[0] * S[0][j] + r[1] * S[1][j] + r[2] * S[2][j]));
+    const s = (a, b) => AS[a][0] * A[b][0] + AS[a][1] * A[b][1] + AS[a][2] * A[b][2] + Am[a] * t[b] + t[a] * Am[b] + V * t[a] * t[b];
+    const w = [V, Am[0] + t[0] * V, Am[1] + t[1] * V, Am[2] + t[2] * V, s(0, 0), s(1, 1), s(2, 2), s(0, 1), s(1, 2), s(2, 0)];
+    volume += k * V;
+    w.forEach((v, j) => { I[j] += k * v * c.material.density; });
   }
   const m = I[0];
   if (!(m > 1e-12)) return { volume, weight: undefined, com: [0, 0, 0], inertia: [0, 0, 0], orientation: [0, 0, 0, 1] };
@@ -1790,11 +1808,16 @@ export function bake(doc, values = {}, { uri, set, files, quick = false } = {}) 
 // TEXCOORD_0 in glTF's convention (draft f11, D-80): `"uv": "fit"` (default) fractions 0..1 of the shape, "meters"
 // the same layout in meters.
 const NO_GEOMETRY = { positions: new Float32Array(0), normals: new Float32Array(0), uvs: new Float32Array(0), indices: new Uint32Array(0) };
-// A shape's triangles, built once per shape object (read makes fresh ones; callers only read the arrays).
-const GEOMETRY = new WeakMap();
+// A shape's triangles, built once per shape object (callers only read the arrays), and once per evaluated shape across
+// reads: read makes fresh objects each time, so an interned shape also finds its triangles by its JSON (SHAPE_KEY).
+const GEOMETRY = new WeakMap(), SHAPE_KEY = new WeakMap(), BY_KEY = new Map();
 export function geometry(m) {
   let g = GEOMETRY.get(m);
-  if (!g) GEOMETRY.set(m, (g = buildGeometry(m)));
+  if (g) return g;
+  const key = SHAPE_KEY.get(m);
+  g = (key !== undefined && BY_KEY.get(key)) || buildGeometry(m);
+  GEOMETRY.set(m, g);
+  if (key !== undefined) { if (BY_KEY.size >= 20000) BY_KEY.clear(); BY_KEY.set(key, g); } // shortcut: dropped all at once when full, not LRU; upgrade if editing a big scene re-builds often
   return g;
 }
 function buildGeometry(m) {
