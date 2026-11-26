@@ -295,12 +295,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION, VRM_BONES, VRM_REQUIRED } from './jig.js?v=4bd987b';
+import { read, bake, strip, stringify, geometry, loftCurve, loftFrame, curveLength, outline, turn, sectionAt, mul, loadFiles, solveFor, profileLine, evaluate as evalExpr, EXT, VERSION, VRM_BONES, VRM_REQUIRED } from './jig.js?v=04ff82e';
 
 // ---------- document state ----------
 // The editor holds the recipe without the bake's cache (strip); Save writes it, Bake writes it with a fresh cache.
-const examples = { box: 'examples/box.gltf?v=4bd987b', loft: 'examples/loft.gltf?v=4bd987b', star: 'examples/star.gltf?v=4bd987b', bench: 'examples/bench.gltf?v=4bd987b', lathe: 'examples/lathe.gltf?v=4bd987b', lantern: 'examples/lantern.gltf?v=4bd987b', paths: 'examples/paths.gltf?v=4bd987b', ends: 'examples/ends.gltf?v=4bd987b', cushion: 'examples/cushion.gltf?v=4bd987b',
-  sign: 'examples/sign.gltf?v=4bd987b', chest: 'examples/chest.gltf?v=4bd987b', door: 'examples/door.gltf?v=4bd987b', finger: 'examples/finger.gltf?v=4bd987b', hand: 'examples/hand.gltf?v=4bd987b', grandpa: 'examples/grandpa.gltf?v=4bd987b', head: 'examples/head.gltf?v=4bd987b', bakker: 'examples/bakker.gltf?v=4bd987b', plan: 'examples/plan.gltf?v=4bd987b' };
+const examples = { box: 'examples/box.gltf?v=04ff82e', loft: 'examples/loft.gltf?v=04ff82e', star: 'examples/star.gltf?v=04ff82e', bench: 'examples/bench.gltf?v=04ff82e', lathe: 'examples/lathe.gltf?v=04ff82e', lantern: 'examples/lantern.gltf?v=04ff82e', paths: 'examples/paths.gltf?v=04ff82e', ends: 'examples/ends.gltf?v=04ff82e', cushion: 'examples/cushion.gltf?v=04ff82e',
+  sign: 'examples/sign.gltf?v=04ff82e', chest: 'examples/chest.gltf?v=04ff82e', door: 'examples/door.gltf?v=04ff82e', finger: 'examples/finger.gltf?v=04ff82e', hand: 'examples/hand.gltf?v=04ff82e', grandpa: 'examples/grandpa.gltf?v=04ff82e', head: 'examples/head.gltf?v=04ff82e', bakker: 'examples/bakker.gltf?v=04ff82e', plan: 'examples/plan.gltf?v=04ff82e' };
 // The clean model: the smallest valid document (meshes may not be empty), one unit box.
 const clean = { asset: { version: '2.0' }, extensionsUsed: [EXT], extensions: { [EXT]: { version: VERSION, meshes: [{ box: { size: [1, 1, 1] } }] } },
   scene: 0, scenes: [{ nodes: [0] }], nodes: [{ extensions: { [EXT]: { mesh: 0 } } }] };
@@ -527,7 +527,7 @@ const PLACE_COLORS = { use: 0x2f9e44, movement: 0xe8590c, access: 0x1c7ed6, main
 const people = new Map();
 function person(pose) {
   if (!people.has(pose)) people.set(pose, busy((async () => {
-    const url = new URL('examples/grandpa.gltf?v=4bd987b', location.href), gd = JSON.parse(await (await fetch(url)).text());
+    const url = new URL('examples/grandpa.gltf?v=04ff82e', location.href), gd = JSON.parse(await (await fetch(url)).text());
     const o = read(gd, gd.extensions[EXT].params?.[pose] ? { [pose]: 1 } : {}, { files: await loadFiles(gd, async (f) => (await fetch(new URL(f, url))).text()) });
     const hipsNode = o.character?.roles.find((r) => r.role === 'hips')?.node;
     let hips = [0, 0, 0];

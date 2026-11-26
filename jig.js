@@ -127,7 +127,7 @@ export function read(doc, values = {}, { files = {}, stack = [], rest = false, m
       try {
         const m = mesh({ ...hitMeshes[i], material: undefined }, scope, `${rat}/meshes/${i}`);
         if (m.to !== undefined || m.project) throw new Error(`hit: mesh ${i} depends on the scene (a loft's "to" or a projection)`);
-        hitGeo.set(i, geometry(m));
+        hitGeo.set(i, hitPrep(geometry(m)));
       } finally { hitting.delete(i); }
     }
     return rayHit(hitGeo.get(i), o, d);
@@ -4120,21 +4120,49 @@ const clamp01 = (v) => v.map((x) => (Number.isFinite(x) ? Math.min(1, Math.max(0
 const CHOICES = Symbol('choices'); // a scope's choice parameters → their options (draft f24)
 const USER = Symbol('functions'), ROOT = Symbol('root'), HIT = Symbol('hit'); // draft f43: recipe functions, the scope their bodies see, hit
 // Draft f43 Q-1: the distance from o along the unit direction of d to the nearest triangle of g, or -1 (Möller–Trumbore).
-function rayHit({ positions: P, indices: T }, o, d) {
-  const l = Math.hypot(...d);
+// The triangles as [a, b - a, c - a] per triangle, and a box per block of HIT_BLOCK neighbouring triangles, so a ray
+// skips the blocks it misses (a mesh's triangles come row by row, so a block is a small patch).
+const HIT_BLOCK = 32;
+function hitPrep({ positions: P, indices: T }) {
+  const n = T.length / 3, tri = new Float64Array(9 * n), box = new Float64Array(6 * Math.ceil(n / HIT_BLOCK));
+  for (let k = 0; k < n; k++) {
+    const b = k / HIT_BLOCK | 0;
+    if (k % HIT_BLOCK === 0) box.set([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], 6 * b);
+    for (let q = 0; q < 3; q++) {
+      const a = P[3 * T[3 * k] + q], v1 = P[3 * T[3 * k + 1] + q], v2 = P[3 * T[3 * k + 2] + q];
+      tri[9 * k + q] = a; tri[9 * k + 3 + q] = v1 - a; tri[9 * k + 6 + q] = v2 - a;
+      box[6 * b + q] = Math.min(box[6 * b + q], a, v1, v2); box[6 * b + 3 + q] = Math.max(box[6 * b + 3 + q], a, v1, v2);
+    }
+  }
+  return { tri, box, n };
+}
+function rayHit({ tri, box, n }, [ox, oy, oz], [dx, dy, dz]) {
+  const l = Math.hypot(dx, dy, dz);
   if (!(l > 0)) throw new Error('hit: the direction must not be 0');
-  d = d.map((c) => c / l);
+  dx /= l; dy /= l; dz /= l;
+  const ix = 1 / dx, iy = 1 / dy, iz = 1 / dz, e = 1e-9;
   let best = Infinity;
-  for (let k = 0; k < T.length; k += 3) {
-    const a = [0, 1, 2].map((q) => P[3 * T[k] + q]), e1 = [0, 1, 2].map((q) => P[3 * T[k + 1] + q] - a[q]), e2 = [0, 1, 2].map((q) => P[3 * T[k + 2] + q] - a[q]);
-    const p = cross(d, e2), det = dot(e1, p);
-    if (Math.abs(det) < 1e-15) continue;
-    const s = sub(o, a), u = dot(s, p) / det;
-    if (u < 0 || u > 1) continue;
-    const q = cross(s, e1), v = dot(d, q) / det;
-    if (v < 0 || u + v > 1) continue;
-    const t = dot(e2, q) / det;
-    if (t > 1e-9 && t < best) best = t;
+  for (let b = 0; b * HIT_BLOCK < n; b++) { // slab test: the ray's span inside the block's box (grown a little)
+    const B = 6 * b;
+    let t0 = 0, t1 = best;
+    for (const [o, inv, lo, hi] of [[ox, ix, box[B] - e, box[B + 3] + e], [oy, iy, box[B + 1] - e, box[B + 4] + e], [oz, iz, box[B + 2] - e, box[B + 5] + e]]) {
+      if (!Number.isFinite(inv)) { if (o < lo || o > hi) { t0 = Infinity; break; } continue; }
+      const a = (lo - o) * inv, c = (hi - o) * inv;
+      t0 = Math.max(t0, Math.min(a, c)); t1 = Math.min(t1, Math.max(a, c));
+      if (t0 > t1) break;
+    }
+    if (t0 > t1) continue;
+    for (let k = b * HIT_BLOCK, end = Math.min(n, k + HIT_BLOCK); k < end; k++) { // Möller–Trumbore
+      const K = 9 * k, e1x = tri[K + 3], e1y = tri[K + 4], e1z = tri[K + 5], e2x = tri[K + 6], e2y = tri[K + 7], e2z = tri[K + 8];
+      const px = dy * e2z - dz * e2y, py = dz * e2x - dx * e2z, pz = dx * e2y - dy * e2x, det = e1x * px + e1y * py + e1z * pz;
+      if (Math.abs(det) < 1e-15) continue;
+      const sx = ox - tri[K], sy = oy - tri[K + 1], sz = oz - tri[K + 2], u = (sx * px + sy * py + sz * pz) / det;
+      if (u < 0 || u > 1) continue;
+      const qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x, v = (dx * qx + dy * qy + dz * qz) / det;
+      if (v < 0 || u + v > 1) continue;
+      const t = (e2x * qx + e2y * qy + e2z * qz) / det;
+      if (t > 1e-9 && t < best) best = t;
+    }
   }
   return best === Infinity ? -1 : best;
 }
